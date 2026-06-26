@@ -39,5 +39,6 @@ mypy
 
 ## Status
 
-Slice 01 — pipeline skeleton with seeded single-item margin. See
-[`docs/issues/01-pipeline-skeleton-single-item-margin.md`](docs/issues/01-pipeline-skeleton-single-item-margin.md).
+Slice 03 — receipt ingestion pipeline (sum-check, reference-price check,
+SKU-mapping, approval queue, last-known-price book). See
+[`docs/issues/03-receipt-ingestion-pipeline.md`](docs/issues/03-receipt-ingestion-pipeline.md).
