@@ -89,7 +89,11 @@ class ItemMargin:
 
 @dataclass(frozen=True)
 class DailyMargin:
-    """Roll-up of all item margins for a single day, split by segment."""
+    """Roll-up of all item margins for a single day, across all segments.
+
+    Totals are flat (not split by segment); per-item segment lives on each
+    `ItemMargin`. Per-segment contribution margin is added in a later slice.
+    """
 
     day: date
     item_margins: tuple[ItemMargin, ...]
