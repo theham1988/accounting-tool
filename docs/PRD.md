@@ -191,10 +191,13 @@ Resolved in slice 01 (pipeline skeleton):
 
 - **Tech stack**: Python 3.12+ with a `src/` layout (single package `tangerine`), pytest for tests, mypy (strict) for type checking. Money is `decimal.Decimal` throughout to avoid float drift in THB. The testing seam is a single end-to-end pipeline test (see `tests/test_pipeline_e2e.py`).
 
+Resolved in slice 02 (Loyverse API sync):
+
+- **Specific Loyverse API endpoints and auth flow**: Loyverse uses a single bearer access token issued from the back-office Integrations page (no OAuth/client-secret dance for this single-instance internal tool). Endpoints are under `https://api.loyverse.com/v1.0/`; slice 02 uses `/receipts` (sales) and `/items` (menu). The HTTP boundary (`urlopen`) is injected so tests feed synthetic Loyverse payloads with no live HTTP.
+- **Polling cadence default**: daily, after close. The bar closes at 10pm so the default `after_close_hour` is 22; cadence is configurable (`daily` / `hourly`). Menu-change diffing runs on each poll and is timestamped in the store's menu-change history.
+
 Still open:
 
-- Specific Loyverse API endpoints and auth flow (use Loyverse API docs).
 - Choice of LLM/OCR provider for receipt extraction (cost vs. accuracy tradeoff).
-- Polling cadence default (proposed: daily post-close, with menu-change diffing on each poll).
 - Storage choice (relational DB recommended; schema for receipts, recipes, inventory, sales, segments, fixed costs).
 - Deployment target (single-instance server is sufficient; no multi-tenancy required).
