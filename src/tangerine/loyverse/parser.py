@@ -27,6 +27,16 @@ from .payloads import LoyverseItem, LoyverseLineItem
 from .store import CAFE_CATEGORY_ID, MenuItem, MenuSnapshot, SaleRecord
 
 
+class LoyverseParseError(Exception):
+    """Raised when a Loyverse payload can't be turned into a clean Sale.
+
+    Used for values the sync would otherwise silently mangle — e.g. a
+    fractional or non-positive line quantity, which the margin engine (integer
+    quantities) cannot represent honestly. Surfacing these as an error keeps
+    bad data out of the books; the daily review can show them for a partner.
+    """
+
+
 def _money(v: Any) -> Money:
     """Convert a Loyverse JSON number to ``Decimal`` via ``str`` to avoid drift.
 
@@ -50,6 +60,34 @@ def _line_item_id(line: LoyverseLineItem) -> str:
     return line.get("item_id", "")
 
 
+def _line_quantity(raw: Any, receipt_number: str, line_id: str) -> int:
+    """Validate a Loyverse line quantity, returning it as a positive int.
+
+    The margin engine represents quantities as ``int``. Loyverse quantities are
+    integers for the items this venue sells (beer pours, coffees); a fractional
+    or non-positive quantity means either unexpected data (weight items we don't
+    carry) or a malformed payload. Either way we refuse to truncate silently —
+    ``int(2.9)`` would lose revenue, and ``int(0.5)`` would store a zero-
+    quantity sale. Instead raise so the bad line surfaces for review.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise LoyverseParseError(
+            f"receipt {receipt_number!r} line {line_id!r}: quantity {raw!r} "
+            "is not a number"
+        )
+    if raw <= 0:
+        raise LoyverseParseError(
+            f"receipt {receipt_number!r} line {line_id!r}: quantity {raw!r} "
+            "must be positive"
+        )
+    if isinstance(raw, float) and not raw.is_integer():
+        raise LoyverseParseError(
+            f"receipt {receipt_number!r} line {line_id!r}: fractional quantity "
+            f"{raw!r} cannot be represented as an integer sale unit"
+        )
+    return int(raw)
+
+
 def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
     """Turn a ``/receipts`` response into ``SaleRecord``s.
 
@@ -67,12 +105,10 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
         receipt_number = receipt.get("receipt_number", "")
         created = _parse_created_at(receipt["created_at"]).date()
         for line in receipt.get("line_items", []):
-            quantity = line.get("quantity", 1)
-            # Loyverse quantity may be fractional (e.g. weight items); the
-            # margin engine uses int quantity. We floor to whole units for
-            # beer/coffee which are always integer-quantity sales at this venue.
-            qty = int(quantity) if isinstance(quantity, (int, float)) else 1
             line_id = line.get("id", "")
+            qty = _line_quantity(
+                line.get("quantity", 1), receipt_number, line_id
+            )
             records.append(
                 SaleRecord(
                     sale=Sale(

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Iterator, Protocol
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen as _stdlib_urlopen
 
@@ -28,11 +29,20 @@ BASE_URL = "https://api.loyverse.com"
 
 
 class LoyverseApiError(Exception):
-    """Any non-2xx, non-401 response from the Loyverse API."""
+    """Base for any Loyverse HTTP failure reaching the caller.
+
+    Subclasses let callers branch on the kind of failure (auth vs. other API
+    error vs. transport). All non-2xx and connection-level failures surface as
+    one of these rather than leaking ``urllib`` exceptions.
+    """
 
 
 class LoyverseAuthError(LoyverseApiError):
     """The stored access token was rejected (HTTP 401)."""
+
+
+class LoyverseConnectionError(LoyverseApiError):
+    """Transport-level failure (DNS, refused connection, timeout, etc.)."""
 
 
 class _Response(Protocol):
@@ -104,29 +114,54 @@ class LoyverseHttpClient:
     ) -> dict[str, Any]:
         """Issue a single GET and return the decoded JSON body.
 
-        Raises ``LoyverseAuthError`` on 401 and ``LoyverseApiError`` on any
-        other non-2xx status.
+        Raises ``LoyverseAuthError`` on 401, ``LoyverseApiError`` on any other
+        non-2xx, and ``LoyverseConnectionError`` on transport failures.
+
+        Both failure shapes are handled: the real ``urllib`` binding raises
+        ``HTTPError``/``URLError`` on failure (so a production 401 surfaces as
+        ``LoyverseAuthError``, not a raw ``HTTPError``), while test stubs
+        return a response object carrying a ``.status`` attribute. The status
+        branch is the fallback for the latter.
         """
         url = self._url(path, params)
-        resp = self._urlopen(
-            url,
-            headers={"Authorization": f"Bearer {self._creds.access_token}"},
-            params=dict(params or {}),
-        )
+        try:
+            resp = self._urlopen(
+                url,
+                headers={"Authorization": f"Bearer {self._creds.access_token}"},
+                params=dict(params or {}),
+            )
+        except HTTPError as exc:
+            raise self._api_error_for_status(exc.code, url, exc.read()) from exc
+        except URLError as exc:
+            raise LoyverseConnectionError(
+                f"could not reach Loyverse at {url}: {exc.reason}"
+            ) from exc
+
         status = getattr(resp, "status", 200)
         raw = resp.read()
-        if status == 401:
-            raise LoyverseAuthError(
-                "Loyverse rejected the access token (HTTP 401)"
-            )
         if status >= 400:
-            raise LoyverseApiError(
-                f"Loyverse API error: HTTP {status} for {url}"
-            )
+            raise self._api_error_for_status(status, url, raw)
         if not raw:
             return {}
         decoded: dict[str, Any] = json.loads(raw.decode("utf-8"))
         return decoded
+
+    @staticmethod
+    def _api_error_for_status(
+        status: int, url: str, body: bytes | None
+    ) -> LoyverseApiError:
+        """Map an HTTP status (>=400) to the right typed error."""
+        detail = f"HTTP {status} for {url}"
+        if body:
+            try:
+                detail = f"{detail}: {body.decode('utf-8', errors='replace')}"
+            except Exception:
+                pass
+        if status == 401:
+            return LoyverseAuthError(
+                "Loyverse rejected the access token (HTTP 401)"
+            )
+        return LoyverseApiError(f"Loyverse API error: {detail}")
 
     def _url(self, path: str, params: dict[str, Any] | None) -> str:
         if not path.startswith("/"):

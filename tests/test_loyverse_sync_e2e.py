@@ -25,6 +25,7 @@ import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -32,9 +33,11 @@ from tangerine.loyverse.config import LoyverseCredentials, PollingConfig
 from tangerine.loyverse.http import (
     LoyverseApiError,
     LoyverseAuthError,
+    LoyverseConnectionError,
     LoyverseHttpClient,
 )
 from tangerine.loyverse.parser import (
+    LoyverseParseError,
     parse_receipts_to_sales,
     parse_items_snapshot,
 )
@@ -191,22 +194,12 @@ def test_client_sets_bearer_token() -> None:
 # --- 2 + 8. auth failure raises a typed error -------------------------------
 
 
-def _erroring_http(status: int) -> StubHttp:
-    def _raise(
-        url: str,
-        headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> StubResponse:
-        resp = StubResponse(b"{}", status=status)
-        # Mimic HTTPError-style: the client checks .status and raises.
-        resp.status = status  # type: ignore[misc]
-        return resp
+def test_auth_failure_raises_on_status_response() -> None:
+    """A 401 surfaced on the response object (.status) maps to LoyverseAuthError.
 
-    return _raise  # type: ignore[return-value]
-
-
-def test_auth_failure_raises() -> None:
-    """A 401 from Loyverse surfaces as LoyverseAuthError, not a raw exception."""
+    This is the test-stub path: stubs return a response carrying ``.status``
+    rather than raising. The client's status branch must still map 401 -> auth.
+    """
     def urlopen_401(
         url: str,
         headers: dict[str, str] | None = None,
@@ -217,6 +210,60 @@ def test_auth_failure_raises() -> None:
     client = LoyverseHttpClient(_credentials(), urlopen=urlopen_401)  # type: ignore[arg-type]
 
     with pytest.raises(LoyverseAuthError):
+        client.get("/receipts", params={})
+
+
+def test_auth_failure_raises_on_http_error() -> None:
+    """The real ``urllib`` path raises ``HTTPError`` on 401 — it must still map.
+
+    This is the production path: ``urllib.request.urlopen`` raises
+    ``HTTPError`` for non-2xx rather than returning a response object, so a
+    raw ``HTTPError`` would otherwise leak to callers. The client catches it
+    and raises the typed ``LoyverseAuthError``.
+    """
+    def urlopen_raises_401(
+        url: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> StubResponse:
+        raise HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b"bad token"))  # type: ignore[arg-type]
+
+    client = LoyverseHttpClient(_credentials(), urlopen=urlopen_raises_401)  # type: ignore[arg-type]
+
+    with pytest.raises(LoyverseAuthError):
+        client.get("/receipts", params={})
+
+
+def test_other_non_2xx_raises_api_error() -> None:
+    """A 500 (or any non-401 >=400) surfaces as the generic LoyverseApiError."""
+    def urlopen_raises_500(
+        url: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> StubResponse:
+        raise HTTPError(url, 500, "Internal", {}, io.BytesIO(b"boom"))  # type: ignore[arg-type]
+
+    client = LoyverseHttpClient(_credentials(), urlopen=urlopen_raises_500)  # type: ignore[arg-type]
+
+    with pytest.raises(LoyverseApiError) as exc:
+        client.get("/receipts", params={})
+    # 401 maps to the auth subclass; a 500 must be the base class, not auth.
+    assert not isinstance(exc.value, LoyverseAuthError)
+
+
+def test_transport_failure_raises_connection_error() -> None:
+    """A connection-level failure (DNS, refused, timeout) surfaces as a typed
+    ``LoyverseConnectionError`` rather than a raw ``URLError``."""
+    def urlopen_refused(
+        url: str,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> StubResponse:
+        raise URLError("connection refused")
+
+    client = LoyverseHttpClient(_credentials(), urlopen=urlopen_refused)  # type: ignore[arg-type]
+
+    with pytest.raises(LoyverseConnectionError):
         client.get("/receipts", params={})
 
 
@@ -271,6 +318,61 @@ def test_parser_aggregates_lines_into_sales() -> None:
 
     assert records[0].sale.quantity == 3
     assert records[0].sale.sell_price == D("120")
+
+
+def test_fractional_quantity_raises_instead_of_truncating() -> None:
+    """A fractional line quantity (e.g. 0.5) must not be silently floored.
+
+    ``int(0.5)`` would store a zero-quantity sale (lost revenue); ``int(2.9)``
+    would lose 0.9 of a unit. Both surface as LoyverseParseError instead, so
+    the bad line reaches review rather than the books.
+    """
+    payload = {
+        "receipts": [
+            _receipt_json(
+                receipt_number="2-frac",
+                created_at="2026-06-24T10:00:00.000Z",
+                line_items=[
+                    {
+                        "id": "li-1",
+                        "item_id": "d5fe0da6-44b3-4633-9915-e9dc5118cbfc",
+                        "variant_id": "v-1",
+                        "item_name": "Chang Draft 500ml",
+                        "sku": "chang-draft-500",
+                        "quantity": 2.9,
+                        "price": 120,
+                    }
+                ],
+            )
+        ]
+    }
+
+    with pytest.raises(LoyverseParseError) as exc:
+        parse_receipts_to_sales(payload)
+    assert "2-frac" in str(exc.value)
+
+
+def test_non_positive_quantity_raises() -> None:
+    """A zero or negative quantity is not a sale; it surfaces as an error."""
+    payload = {
+        "receipts": [
+            _receipt_json(
+                receipt_number="2-zero",
+                created_at="2026-06-24T10:00:00.000Z",
+                line_items=[
+                    {
+                        "id": "li-1",
+                        "item_id": "i",
+                        "quantity": 0,
+                        "price": 120,
+                    }
+                ],
+            )
+        ]
+    }
+
+    with pytest.raises(LoyverseParseError):
+        parse_receipts_to_sales(payload)
 
 
 # --- 4. refunds excluded from positive sales --------------------------------
