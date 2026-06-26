@@ -4,8 +4,14 @@ These tests are the contract for the accounting pipeline: seeded inputs in,
 gross margin numbers out. They are deliberately readable as worked examples
 rather than white-box assertions against internals.
 
-Adding a new item to the seam requires only appending to the seeded sales and
-recipes — no pipeline code changes. That is the seam-reuse acceptance criterion.
+Adding a new item to the seam requires only appending to the seeded sales,
+recipes, and cost book — no pipeline code changes. That is the seam-reuse
+acceptance criterion.
+
+Slice 04 changed the recipe model: a recipe no longer carries a hardcoded
+price per ingredient. Instead the cost is looked up from a ``CostBook``
+populated from approved purchases. The worked-example numbers here are
+unchanged — only the construction of inputs differs.
 """
 
 from __future__ import annotations
@@ -15,9 +21,10 @@ from decimal import Decimal
 
 import pytest
 
+from tangerine.cost import CostBook
 from tangerine.pipeline import run
 from tangerine.seeded import SeededSource
-from tangerine.types import Ingredient, Recipe, Sale, Segment
+from tangerine.types import Recipe, RecipeIngredient, Sale, Segment
 
 D = Decimal
 
@@ -33,19 +40,18 @@ def day() -> date:
 def chang_recipe() -> Recipe:
     """500 ml of Chang draught at 0.07 THB/ml -> 35 THB cost per pour."""
     return Recipe(
-        item_id="chang-draft-500",
+        sku_id="chang-draft-500",
         name="Chang Draft 500ml",
         segment=Segment.BAR,
         ingredients=(
-            Ingredient(
-                sku_id="chang-keg",
-                name="Chang draught beer",
-                unit="ml",
-                quantity=D("500"),
-                purchase_price=D("0.07"),
-            ),
+            RecipeIngredient(sku_id="chang-keg", quantity=D("500")),
         ),
     )
+
+
+def chang_cost() -> CostBook:
+    """Keg priced at 0.07 THB/ml (set by an approved purchase elsewhere)."""
+    return CostBook({"chang-keg": (D("0.07"), date(2026, 6, 1))})
 
 
 def chang_sale(day: date) -> Sale:
@@ -61,7 +67,11 @@ def chang_sale(day: date) -> Sale:
 
 def test_single_item_gross_margin(day: date) -> None:
     """Worked example: one Chang draft at 120 THB, cost 35 THB -> margin 85 THB."""
-    source = SeededSource(sales=[chang_sale(day)], recipes=[chang_recipe()])
+    source = SeededSource(
+        sales=[chang_sale(day)],
+        recipes=[chang_recipe()],
+        cost=chang_cost(),
+    )
 
     result = run(source, day)
 
@@ -92,24 +102,12 @@ def test_two_items_reuse_seam(day: date) -> None:
     0.025 THB/ml = 45 THB) sold the same day alongside the Chang draft.
     """
     latte_recipe = Recipe(
-        item_id="espresso-latte",
+        sku_id="espresso-latte",
         name="Espresso Latte",
         segment=Segment.CAFE,
         ingredients=(
-            Ingredient(
-                sku_id="beans-arabica",
-                name="Arabica beans",
-                unit="g",
-                quantity=D("20"),
-                purchase_price=D("2"),
-            ),
-            Ingredient(
-                sku_id="milk-fresh",
-                name="Fresh milk",
-                unit="ml",
-                quantity=D("200"),
-                purchase_price=D("0.025"),
-            ),
+            RecipeIngredient(sku_id="beans-arabica", quantity=D("20")),
+            RecipeIngredient(sku_id="milk-fresh", quantity=D("200")),
         ),
     )
     latte_sale = Sale(
@@ -117,10 +115,18 @@ def test_two_items_reuse_seam(day: date) -> None:
         timestamp=day,
         sell_price=D("120"),
     )
+    cost = CostBook(
+        {
+            "chang-keg": (D("0.07"), date(2026, 6, 1)),
+            "beans-arabica": (D("2"), date(2026, 6, 1)),
+            "milk-fresh": (D("0.025"), date(2026, 6, 1)),
+        }
+    )
 
     source = SeededSource(
         sales=[chang_sale(day), latte_sale],
         recipes=[chang_recipe(), latte_recipe],
+        cost=cost,
     )
 
     result = run(source, day)
@@ -142,7 +148,7 @@ def test_two_items_reuse_seam(day: date) -> None:
 def test_multi_unit_sale_aggregates_per_item(day: date) -> None:
     """Three Chang pours in a day roll up into one item margin line."""
     sales = [chang_sale(day) for _ in range(3)]
-    source = SeededSource(sales=sales, recipes=[chang_recipe()])
+    source = SeededSource(sales=sales, recipes=[chang_recipe()], cost=chang_cost())
 
     result = run(source, day)
 
@@ -160,6 +166,7 @@ def test_sales_on_other_days_are_excluded(day: date) -> None:
     source = SeededSource(
         sales=[chang_sale(other_day)],
         recipes=[chang_recipe()],
+        cost=chang_cost(),
     )
 
     result = run(source, day)
@@ -170,12 +177,23 @@ def test_sales_on_other_days_are_excluded(day: date) -> None:
 
 
 # --- unmapped item surfaces immediately (PRD user story 12) -----------------
+#
+# Slice 04 changed the behaviour: an unmapped item is reported as a flagged
+# row in the margin table rather than raising. The dedicated slice-04 tests
+# cover the flag; here we keep a green-path assertion that the daily roll-up
+# still produces numbers when every sold item is mapped.
 
 
-def test_unmapped_item_raises(day: date) -> None:
-    source = SeededSource(sales=[chang_sale(day)], recipes=[])
+def test_all_mapped_items_produce_clean_daily_rollup(day: date) -> None:
+    """Sanity: a fully-mapped day produces a reconciling daily roll-up."""
+    source = SeededSource(
+        sales=[chang_sale(day)],
+        recipes=[chang_recipe()],
+        cost=chang_cost(),
+    )
 
-    with pytest.raises(Exception) as exc:
-        run(source, day)
+    result = run(source, day)
 
-    assert "chang-draft-500" in str(exc.value)
+    assert result.total_revenue == D("120")
+    assert result.total_gross_margin == D("85")
+    assert all(not im.unmapped for im in result.item_margins)
