@@ -502,3 +502,103 @@ class KegInventoryReport:
     rows: tuple[KegInventoryRow, ...]
     unstarted_brand_ids: tuple[str, ...]
     total_accrual_cogs: Money
+# --- Cafe stock counts → accrual COGS (slice 06) ----------------------------
+#
+# Issue 06 introduces partner-entered cafe stock counts for perishables (milk,
+# beans, pastries). Each item type has its own count cadence by shelf life
+# (milk daily, beans weekly, etc.). Consumed quantity for the period is the
+# accrual-COGS primitive:
+#
+#     consumed = beginning + purchases − ending
+#
+# Priced at the SKU's latest approved purchase price, that becomes the cafe
+# segment's consumption-based COGS for the period — the monthly-view number
+# that slice 08 wires into the P&L. The daily 9am view keeps using the
+# recipe-based margin engine (slice 04); this slice does not touch it.
+#
+# Per the issue, this mirrors the keg-inventory approach in slice 05 but is
+# self-contained: there is no shared inventory abstraction yet.
+
+
+class CafeCountCadence(str, Enum):
+    """How often a cafe item is physically counted.
+
+    Per issue 06: per-item cadence based on shelf life (milk daily, beans
+    weekly). This slice records the cadence as stored configuration; whether
+    a count is overdue or missing is enforced by slice 12 (admin checklists),
+    not here.
+    """
+
+    DAILY = "daily"
+    WEEKLY = "weekly"
+
+
+@dataclass(frozen=True)
+class CafeItem:
+    """A perishable cafe SKU that is tracked by physical stock counts.
+
+    ``cadence`` is the partner-count schedule for this item. The ``unit`` is
+    the SKU's own unit (ml of milk, g of beans) so a count and a purchase of
+    the same SKU share a basis.
+    """
+
+    sku_id: str
+    name: str
+    unit: str
+    cadence: CafeCountCadence
+
+
+@dataclass(frozen=True)
+class CafeStockCount:
+    """One physical count of one cafe SKU at a point in time.
+
+    The minimal partner-entry shape (issue 06: "keep the UI/input path
+    minimal"). ``quantity`` is in the SKU's own unit. ``timestamp`` is when
+    the count was taken — the engine uses the opening and closing counts'
+    timestamps to bound which purchases belong to the period.
+    """
+
+    sku_id: str
+    quantity: Decimal
+    timestamp: date
+
+
+@dataclass(frozen=True)
+class CafeConsumedCogs:
+    """Consumed quantity and its COGS contribution for one cafe SKU over a period.
+
+    The accrual-COGS result for one cafe SKU, ready for the monthly P&L
+    (slice 08). All quantity fields are in ``unit``; all money fields are THB.
+
+    - ``beginning_quantity``  on-hand at the opening count
+    - ``purchased_quantity``  purchases received strictly after the opening
+                              count and on/before the closing count
+    - ``ending_quantity``     on-hand at the closing count
+    - ``consumed_quantity``   ``beginning + purchased − ending`` (can be
+                              negative — a count error or unrecorded purchase;
+                              surfaced, not clamped)
+    - ``unit_cost``           the SKU's latest approved price per ``unit``,
+                              or ``0`` when ``unpriced``
+    - ``cogs``                ``consumed_quantity × unit_cost``, or ``0`` when
+                              ``unpriced`` (consumption is still surfaced)
+    - ``unpriced``            True when the SKU has no approved price. The
+                              consumed quantity is still computed and surfaced
+                              so a missing price cannot silently zero-cost a
+                              whole category, but COGS is not booked
+
+    A negative ``consumed_quantity`` is reported as-is rather than clamped to
+    zero so a later slice can flag it; clamping would hide stock appearing
+    from nowhere (a count error or an unrecorded purchase).
+    """
+
+    sku_id: str
+    name: str
+    unit: str
+    cadence: CafeCountCadence
+    beginning_quantity: Decimal
+    purchased_quantity: Decimal
+    ending_quantity: Decimal
+    consumed_quantity: Decimal
+    unit_cost: Money
+    cogs: Money
+    unpriced: bool = False
