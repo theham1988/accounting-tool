@@ -153,11 +153,26 @@ def _accrual_cogs_by_segment(
 ) -> dict[Segment, Money]:
     """Resolve each segment's accrual COGS for the month.
 
-    Bar: keg inventory (slice 05). The two weigh-ins bounding the month give
-    beginning and ending beer volume; consumed volume × cost-per-ml is the
-    bar's accrual COGS. Cafe: stock counts (slice 06), `beginning + purchases
-    − ending` priced at the latest approved price. Both engines are called
-    with the month's end as the period close.
+    Bar: keg inventory (slice 05). Cafe: stock counts (slice 06).
+
+    Issue 08's AC for accrual COGS is the literal formula
+    ``beginning inventory value + purchases − ending inventory value``. The two
+    segments map onto it differently because their inventory units differ:
+
+      - Cafe (slice 06): the literal formula, in quantity terms. Beginning +
+        purchases (deliveries in the SKU's count window) − ending, priced at
+        the latest approved price. A mid-month milk delivery is a real
+        ``purchases`` term here because milk is bought and consumed in the same
+        unit (ml).
+      - Bar (slice 05): the formula in volume terms. ``purchases`` is implicit
+        in the ending weigh — a keg refill increases ending volume, and
+        beginning_volume − ending_volume already nets it out. Kegs are bought
+        whole and ARE inventory, so a separate keg-purchase term would double-
+        count. A genuine mid-month refill without its own weigh surfaces as
+        negative consumption (slice 05 flags it); reconciling that against a
+        keg-purchase ledger is deferred slice-05 work, not introduced here.
+
+    Both engines are called with the month's end as the period close.
     """
     month_end_date = _last_day(month)
 
@@ -190,20 +205,22 @@ def _accrual_cogs_by_segment(
 def _revenue_by_segment(
     *, sales: list[Sale], recipes: RecipeCatalog, month: YearMonth
 ) -> dict[Segment, Money]:
-    """Mapped-sale revenue per segment for the month, by sale timestamp.
+    """All-sale revenue per segment for the month, by sale timestamp.
 
     Revenue is restricted to sales whose ``timestamp`` falls in the month.
-    Each mapped sale resolves to its segment via the slice-07 rule (recipe
-    segment wins). Unmapped sales (no recipe) are excluded — like the daily
-    engine, their COGS is unknown so booking their revenue against accrual
-    COGS would not be apples-to-apples.
+    A mapped sale takes its segment from the recipe (slice-07 rule). An
+    unmapped sale takes its segment from the shift-stamped ``sale.segment``
+    (the slice-07 fallback the Loyverse parser resolved at the sync boundary
+    from the transaction timestamp: 8am–5pm cafe, else bar).
 
-    Note the difference from the daily recipe-margin engine: a mapped sale
-    whose recipe ingredient has no approved price (``unknown_price``) is
-    INCLUDED here. In the daily view such rows are excluded because their
-    COGS is recipe-derived and therefore unknown; in the monthly view COGS
-    is consumption-derived (accrual, from inventory), so the sale's revenue
-    is real and its cost is captured independently.
+    Unlike the daily recipe-margin engine, the monthly view INCLUDES unmapped
+    sales' revenue. The daily engine excludes them because their COGS is
+    recipe-derived and unknown; in the monthly view COGS is consumption-derived
+    (accrual, from inventory), and the inventory engines capture consumption of
+    ALL stock regardless of which sale used it. Dropping unmapped revenue here
+    would therefore under-state segment CM — the consumed stock is costed but
+    the sale that consumed it is invisible. Including unmapped revenue (via the
+    shift fallback segment) keeps revenue and accrual COGS symmetric.
     """
     start, end = _month_bounds(month)
     buckets: dict[Segment, Money] = {seg: Money("0") for seg in Segment}
@@ -211,8 +228,6 @@ def _revenue_by_segment(
         if not (start <= sale.timestamp <= end):
             continue
         recipe = recipes.for_item(sale.item_id)
-        if recipe is None:
-            continue  # unmapped -> excluded (COGS unknown)
         seg = segment_of_sale(sale, recipe)
         buckets[seg] += sale.sell_price * sale.quantity
     return buckets

@@ -351,30 +351,37 @@ def test_monthly_revenue_per_segment_recognised_by_timestamp(
     assert by_seg[Segment.CAFE].revenue == D("120")
 
 
-def test_monthly_revenue_excludes_unmapped_sales(
+def test_monthly_revenue_includes_unmapped_sale_via_shift_segment(
     month: tuple[int, int],
     cost: CostBook,
 ) -> None:
-    """An unmapped sale's revenue is excluded from monthly segment revenue.
+    """An unmapped sale's revenue IS booked to its shift-stamped segment.
 
-    Its COGS is unknown (no recipe), so booking its revenue against accrual
-    COGS would not be apples-to-apples. This mirrors the daily engine's
-    reliable-rows-only convention (slice 04/07). Both segments still appear,
-    carrying zero when nothing reliable was sold in them.
+    Unlike the daily recipe-margin engine (which excludes unmapped rows because
+    their COGS is recipe-derived and unknown), the monthly view costs via
+    accrual inventory consumption — and the inventory engines capture
+    consumption of ALL stock regardless of which sale used it. Dropping
+    unmapped revenue here would under-state segment CM: the consumed stock is
+    costed but the sale that consumed it would be invisible. So an unmapped
+    sale is tagged via the slice-07 shift fallback (8am–5pm cafe, else bar)
+    and its revenue lands in that segment.
+
+    Worked example: an unmapped item sold at 10am (cafe hour) for 90 THB with
+    a cafe-stamped segment -> 90 THB of cafe revenue.
     """
     sales = [
         Sale(
             item_id="mystery",
             timestamp=date(2026, 6, 10),
             sell_price=D("90"),
-            segment=Segment.CAFE,  # stamped via shift fallback, but unmapped
+            segment=Segment.CAFE,  # stamped via shift fallback by the parser
         ),
     ]
 
     pnl = compute_monthly_pnl(
         month=month,
         sales=sales,
-        recipes=RecipeCatalog([]),
+        recipes=RecipeCatalog([]),  # no recipe -> unmapped
         cost=cost,
         brands=[],
         weigh_ins=[],
@@ -386,7 +393,7 @@ def test_monthly_revenue_excludes_unmapped_sales(
     )
 
     by_seg = {sp.segment: sp for sp in pnl.segment_pnl}
-    assert by_seg[Segment.CAFE].revenue == D("0")
+    assert by_seg[Segment.CAFE].revenue == D("90")
     assert by_seg[Segment.BAR].revenue == D("0")
 
 
@@ -451,8 +458,9 @@ def test_monthly_segment_cm_is_revenue_minus_accrual_cogs(
     Worked example over June 2026:
       - Bar:  2x Chang @ 120 = 240 revenue; 5000ml beer consumed @ 0.07 = 350
               accrual COGS -> CM = -110 (red: bar sold below accrual cost).
-      - Cafe: 1x Latte @ 120 = 120 revenue; 12000ml milk consumed @ 0.025 =
-              300 accrual COGS -> CM = -180 (also red this month).
+      - Cafe: 1x Latte @ 120 = 120 revenue; no milk delivery this month so
+              consumed = 5000ml opening − 3000ml closing = 2000ml @ 0.025 =
+              50 accrual COGS -> CM = 70 (green).
 
     Both segments appear; each CM is the difference of its own revenue and
     accrual COGS (no fixed-cost allocation here — fixed costs land at entity
