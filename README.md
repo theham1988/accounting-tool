@@ -64,6 +64,13 @@ mypy
   costs, accrual-basis COGS per segment, entity net profit vs the 10K THB/day
   target, separate cash-flow view). See
   [`docs/issues/08-fixed-costs-monthly-accrual-pnl.md`](docs/issues/08-fixed-costs-monthly-accrual-pnl.md).
+- **Slice 09** — cash drawer reconciliation with 5pm handoff recount (per-shift
+  variance, recount-gated shift start). See
+  [`docs/issues/09-cash-drawer-reconciliation-handoff.md`](docs/issues/09-cash-drawer-reconciliation-handoff.md).
+- **Slice 10** — rules-based anomaly detection over voids + drawer variance
+  (void-rate vs venue median, peak-hour void clustering, drawer-short rate,
+  three-short-shift run). See
+  [`docs/issues/10-anomaly-detection-voids-drawer.md`](docs/issues/10-anomaly-detection-voids-drawer.md).
 
 ## Loyverse sync
 
@@ -280,4 +287,47 @@ pnl = compute_monthly_pnl(
 # pnl.entity_net_profit                    # segment CM sum − fixed costs
 # pnl.goal.met / .surplus                  # vs 10K THB/day × days in month
 # pnl.cash_flow.total_payables             # payables by invoice date
+```
+
+## Cash control and anomaly detection
+
+There is no on-site manager, so the tool does the segregation-of-duties work
+a manager would otherwise do (PRD "Known control gap"). Each shift close
+captures the drawer variance `closing − (opening + rung_up)`, and the 5pm
+handoff requires the incoming partner to recount the outgoing partner's
+drawer; a recount mismatch outside tolerance blocks shift start (default
+tolerance 0 THB — the recount is *the* control moment).
+
+On top of that history, rules-based anomaly detection (slice 10) flags the
+patterns a manager would catch: a cashier whose **void rate** exceeds the
+venue median, **void clustering** at peak hours, a **drawer-short rate** above
+a chosen threshold, and a run of **three short shifts in a row** by the same
+cashier. The "three in a row" rule keys per-cashier — the two partners
+alternate day/night shifts, so their closes are always interleaved, and a
+rule that broke the streak on any other cashier's close would never fire in
+the real rotation. Flags carry the cashier, the period, and a readable
+sentence describing the offending pattern, ready for the 9am review (slice
+11) to surface.
+
+The Loyverse `/voids` endpoint (distinct from refunds) is not yet wired into
+a store; slice 02 only parses SALE/REFUND receipts. Slice 10 consumes a
+minimal `Void` boundary type and a caller-supplied per-cashier sales count,
+so the detector is fully testable now; a later slice parses raw Loyverse
+`/voids` payloads into the same `Void` shape.
+
+See [`tests/test_anomaly_detection_e2e.py`](tests/test_anomaly_detection_e2e.py)
+for the contract.
+
+```python
+from tangerine.anomaly import AnomalyConfig, detect_anomalies
+
+flags = detect_anomalies(
+    config=AnomalyConfig(
+        start=date(2026, 6, 1),
+        end=date(2026, 6, 30),
+        drawer_short_rate_threshold=Decimal("0.25"),
+    ),
+    voids=voids, closes=closes, sales_counts={"alice": 20, "bob": 20},
+)
+# flags[i].kind, .cashier_id, .observed, .reference, .detail
 ```

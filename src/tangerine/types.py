@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 class Segment(str, Enum):
@@ -938,3 +938,118 @@ class HandoffResult:
     discrepancy: Money
     tolerance: Money
     is_blocked: bool
+# --- Anomaly detection on voids + drawer variance (slice 10) -----------------
+#
+# Rules-based anomaly detection over the cash and void history. There is no
+# on-site manager (PRD "Known control gap"); the tool must do the segregation-
+# of-duties work a manager would otherwise do. Per the PRD's "Out of Scope"
+# note, this is the initial rules-based detection — ML/statistical tuning is
+# explicitly deferred to a later slice.
+#
+# Initial rules (issue 10):
+#
+#   Voids:
+#     - void rate per cashier above venue median for the period
+#     - void clustering at peak hours (configurable peak window)
+#   Drawer:
+#     - drawer-short rate per cashier above threshold
+#     - drawer short three shifts in a row by the same cashier
+#
+# Voids source: Loyverse models voids via its own ``/voids`` resource (distinct
+# from refunds). Slice 02 only wired SALE/REFUND receipts, so the ``/voids``
+# endpoint is not yet plumbed into a store. To keep this slice self-contained
+# and within issue 10's scope, the detector consumes a minimal ``Void``
+# boundary type defined here; a later slice parses Loyverse ``/voids`` payloads
+# into that same shape (mirroring how ``SaleRecord`` sits over ``Sale``).
+#
+# Period: the detector is a pure function over the records that fall inside an
+# caller-supplied window (``AnomalyConfig.start`` ... ``end``). The 9am review
+# (slice 11) chooses the window — "yesterday", "trailing 7 days", etc.
+
+
+class AnomalyKind(StrEnum):
+    """Which anomaly rule fired.
+
+    One value per rule in issue 10's "Initial rules" list, so the 9am review
+    (slice 11) can group and label flags by kind without re-deriving them.
+    """
+
+    VOID_RATE_ABOVE_VENUE_MEDIAN = "void_rate_above_venue_median"
+    VOID_CLUSTERING_AT_PEAK = "void_clustering_at_peak"
+    DRAWER_SHORT_RATE_ABOVE_THRESHOLD = "drawer_short_rate_above_threshold"
+    DRAWER_SHORT_THREE_SHIFTS_RUNNING = "drawer_short_three_shifts_running"
+
+
+@dataclass(frozen=True)
+class Void:
+    """One voided line item at a point in time, attributed to a cashier.
+
+    The minimal boundary shape the detector consumes. Loyverse's ``/voids``
+    resource carries a ``cashier_id``, ``created_at``, the voided line's
+    ``item``/``quantity``/``price``, and a ``voided_at`` timestamp; this
+    dataclass mirrors the fields the rules need. A later slice parses the raw
+    Loyverse ``/voids`` payload into this shape (analogous to
+    ``parse_receipts_to_sales``), so the detector stays decoupled from the
+    sync boundary.
+
+    - ``void_id``         stable identifier for dedup at the sync boundary
+                          (the Loyverse void resource id)
+    - ``cashier_id``      who performed the void; per-cashier attribution is
+                          taken from each void's own cashier (matches Loyverse
+                          and the drawer side, which keys on
+                          ``ShiftClose.cashier_id``)
+    - ``created_at``      when the void happened — drives the peak-hour
+                          clustering rule and the period filter. Loyverse's
+                          ``/voids`` resource carries this as ``voided_at``;
+                          the sync boundary renames it to ``created_at`` to
+                          match the rest of the codebase (``Sale.timestamp``,
+                          ``ShiftClose.closed_at``), where each event type has
+                          its own verb-friendly name. Loyverse also carries a
+                          separate ``created_at`` (when the resource row was
+                          written); the detector wants the *event* time.
+    - ``item_id``         the voided item (carried for context on the flag)
+    - ``quantity``        voided quantity (carried for context)
+    - ``price``           per-unit price at void time (carried for context)
+    """
+
+    void_id: str
+    cashier_id: str
+    created_at: datetime
+    item_id: str
+    quantity: int
+    price: Money
+
+
+@dataclass(frozen=True)
+class AnomalyFlag:
+    """One fired anomaly flag with enough context to act on.
+
+    Issue 10 AC: "Flags include enough context (cashier, period, the offending
+    pattern) to act on." Each flag carries the cashier it implicates, the
+    period it covers, the numeric pattern that tripped the rule, and a
+    human-readable ``detail`` string the 9am review can render verbatim.
+
+    - ``kind``            which rule fired (``AnomalyKind``)
+    - ``cashier_id``      the cashier this flag implicates
+    - ``period_start`` / ``period_end``  the window the pattern was measured
+                          over (matches the ``AnomalyConfig`` window unless a
+                          rule is naturally per-cashier, in which case both
+                          still name the configured window)
+    - ``observed``        the value the rule measured on this cashier (e.g.
+                          their void rate, their short rate, the run length)
+    - ``reference``       the threshold the rule compared against (the venue
+                          median for void-rate rules, the configured threshold
+                          for drawer-short-rate, ``3`` for the three-in-a-row
+                          rule, or the configured peak share for clustering)
+    - ``detail``          a single human-readable sentence describing the
+                          offending pattern, so the review surface does not
+                          have to re-derive it
+    """
+
+    kind: AnomalyKind
+    cashier_id: str
+    period_start: date
+    period_end: date
+    observed: Decimal
+    reference: Decimal
+    detail: str
