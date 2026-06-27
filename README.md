@@ -49,6 +49,10 @@ mypy
 - **Slice 04** — recipe and per-item cost engine (recipes per SKU with yield,
   Loyverse item → SKU mapping, cost derived from latest approved price). See
   [`docs/issues/04-recipe-and-item-cost-engine.md`](docs/issues/04-recipe-and-item-cost-engine.md).
+- **Slice 06** — cafe stock counts → accrual COGS (per-item count cadence,
+  `consumed = beginning + purchases − ending`, priced at the latest approved
+  price; standalone period result for the monthly P&L). See
+  [`docs/issues/06-cafe-stock-counts-accrual-cogs.md`](docs/issues/06-cafe-stock-counts-accrual-cogs.md).
 
 ## Loyverse sync
 
@@ -118,4 +122,32 @@ from tangerine.recipes import RecipeCatalog
 
 cost = CostBook.from_book(book)
 margins = compute_item_margins(sales=sales, recipes=RecipeCatalog(recipes), cost=cost, day=day)
+```
+
+## Cafe stock counts → accrual COGS
+
+Perishable cafe items (milk, beans, pastries) are tracked by physical
+stock counts. Each item carries its own count cadence by shelf life
+(`daily`/`weekly`). Consumed quantity for a period is the accrual-COGS
+primitive `beginning + purchases − ending`, priced at the SKU's latest
+approved price — the number the monthly P&L books. This is a standalone
+period result; the daily 9am view keeps using recipe-based margins.
+
+A SKU with no approved price is flagged `unpriced`: its consumption is
+still surfaced, but COGS is reported as zero rather than silently booked
+(matching the recipe engine's `unknown_price` convention).
+
+See [`tests/test_cafe_stock_e2e.py`](tests/test_cafe_stock_e2e.py) for
+the contract.
+
+```python
+from tangerine.cafe_stock import compute_cafe_consumed_cogs
+from tangerine.types import CafeCountCadence, CafeItem, CafeStockCount
+
+items = [CafeItem(sku_id="milk-fresh", name="Fresh milk", unit="ml", cadence=CafeCountCadence.DAILY)]
+beginning = [CafeStockCount(sku_id="milk-fresh", quantity=Decimal("5000"), timestamp=period_start)]
+ending = [CafeStockCount(sku_id="milk-fresh", quantity=Decimal("3000"), timestamp=period_end)]
+results = compute_cafe_consumed_cogs(
+    items=items, beginning=beginning, ending=ending, purchases=purchases, cost=cost,
+)
 ```
