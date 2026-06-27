@@ -8,7 +8,7 @@ persistence, but the in-memory contract stays the same.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
@@ -652,6 +652,7 @@ class CafeConsumedCogs:
     unpriced: bool = False
 
 
+<<<<<<< HEAD
 # --- Fixed costs + monthly accrual P&L (slice 08) ----------------------------
 #
 # Issue 08 introduces entity-level fixed cost entry and the monthly reconciliation
@@ -840,3 +841,104 @@ class MonthlyPnl:
     entity_net_profit: Money
     goal: GoalStatus
     cash_flow: CashFlowView
+=======
+# --- Cash drawer reconciliation (slice 09) -----------------------------------
+#
+# Each shift close captures the four numbers in the PRD "Cash control" section:
+#
+#     opening cash   carried from the prior shift's close
+#     closing cash   counted by the closing cashier at shift end
+#     rung-up cash   Loyverse cash sales rung up over the shift
+#     variance       closing − (opening + rung-up)
+#
+# A positive variance means cash is OVER (more in the drawer than the system
+# says should be); negative means SHORT. The sign is surfaced as-is because
+# both directions are operationally meaningful (overages can hide mis-rings;
+# shorts can hide theft) and slice 10's anomaly detector consumes the raw
+# number.
+#
+# The 5pm handoff is the only real control moment in the two-partner, no-
+# manager structure (PRD "Known control gap"): the closing cashier counts
+# their own drawer, so the incoming partner's recount is the segregation-of-
+# duties substitute. If the recounted closing cash does not match the
+# outgoing partner's reported closing cash (within tolerance), shift start is
+# BLOCKED. The agreed default tolerance is 0 THB — the recount is the control
+# moment, so any discrepancy surfaces — but it is a parameter so a future
+# manager can relax it without re-architecting.
+#
+# Drawer variance history is recorded per shift, per cashier. That history is
+# the input to the slice-10 anomaly detector; this slice only produces and
+# stores it.
+
+
+@dataclass(frozen=True)
+class ShiftClose:
+    """One shift's closing cash record, captured at shift end.
+
+    The minimal partner-entry shape for cash control (PRD user stories 14–15).
+    All four money fields are THB, carried as ``Decimal`` to avoid float drift.
+
+    - ``shift_id``       stable identifier for the shift (e.g. "2026-06-24-day")
+    - ``cashier_id``     who counted this drawer (for per-cashier variance
+                         history → slice 10 anomaly detection)
+    - ``closed_at``      when the shift closed (and the drawer was counted)
+    - ``opening_cash``   cash in the drawer at shift start, carried from the
+                         prior shift's ``closing_cash``
+    - ``closing_cash``   cash the closing cashier counted at shift end
+    - ``rung_up_cash``   Loyverse cash sales rung up over the shift
+    - ``variance``       ``closing_cash − (opening_cash + rung_up_cash)``;
+                         positive = over, negative = short
+    """
+
+    shift_id: str
+    cashier_id: str
+    closed_at: datetime
+    opening_cash: Money
+    closing_cash: Money
+    rung_up_cash: Money
+    variance: Money
+
+
+@dataclass(frozen=True)
+class HandoffRecount:
+    """The incoming partner's recount of the outgoing partner's drawer.
+
+    Per PRD user story 15 and the "Cash control" implementation decision: at
+    the 5pm handoff the incoming partner re-counts the drawer and the recount
+    is compared to the outgoing shift's reported ``closing_cash``. A mismatch
+    outside tolerance blocks shift start.
+
+    - ``outgoing_shift_id``  the shift whose ``closing_cash`` is being verified
+    - ``incoming_cashier_id`` the partner doing the recount
+    - ``recounted_at``       when the recount happened
+    - ``recounted_cash``     the cash the incoming partner counted
+    """
+
+    outgoing_shift_id: str
+    incoming_cashier_id: str
+    recounted_at: datetime
+    recounted_cash: Money
+
+
+@dataclass(frozen=True)
+class HandoffResult:
+    """Outcome of checking a handoff recount against the outgoing close.
+
+    ``is_blocked`` is the control signal the shift-start flow gates on (PRD:
+    "Mismatch ... blocks shift start"). ``discrepancy`` is signed
+    (``recounted_cash − reported_closing_cash``) so the review can tell over
+    from short; ``abs(discrepancy)`` is what the tolerance is compared against.
+
+    ``discrepancy`` is deliberately stored even when ``is_blocked`` is False:
+    a within-tolerance discrepancy is still a real signal (a small miscount
+    or rounding) that slice 10's anomaly detector may want to see, and
+    surfacing it is cheaper than recomputing it later.
+    """
+
+    outgoing_shift_id: str
+    reported_closing_cash: Money
+    recounted_cash: Money
+    discrepancy: Money
+    tolerance: Money
+    is_blocked: bool
+>>>>>>> e5306f7
