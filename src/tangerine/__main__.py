@@ -11,27 +11,23 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from .cost import CostBook
 from .pipeline import run
 from .seeded import SeededSource
-from .types import Ingredient, Recipe, Sale, Segment
+from .types import Recipe, RecipeIngredient, Sale, Segment
 
 
 def _seeded_source() -> SeededSource:
     # One Chang draft sold for 120 THB. Recipe is 500 ml of beer at 0.07 THB/ml:
     # a ~5000 THB keg yields ~70 litres of billable pour, so a 500 ml pour
-    # costs ~35 THB and the gross margin is 85 THB.
+    # costs ~35 THB and the gross margin is 85 THB. The per-ml cost is seeded
+    # directly here; in real use it comes from an approved keg purchase.
     chang_recipe = Recipe(
-        item_id="chang-draft-500",
+        sku_id="chang-draft-500",
         name="Chang Draft 500ml",
         segment=Segment.BAR,
         ingredients=(
-            Ingredient(
-                sku_id="chang-keg",
-                name="Chang draught beer",
-                unit="ml",
-                quantity=Decimal("500"),
-                purchase_price=Decimal("0.07"),
-            ),
+            RecipeIngredient(sku_id="chang-keg", quantity=Decimal("500")),
         ),
     )
     sale = Sale(
@@ -39,7 +35,8 @@ def _seeded_source() -> SeededSource:
         timestamp=date(2026, 6, 24),
         sell_price=Decimal("120"),
     )
-    return SeededSource(sales=[sale], recipes=[chang_recipe])
+    cost = CostBook({"chang-keg": (Decimal("0.07"), date(2026, 6, 1))})
+    return SeededSource(sales=[sale], recipes=[chang_recipe], cost=cost)
 
 
 def _money(v: Decimal) -> Decimal:
