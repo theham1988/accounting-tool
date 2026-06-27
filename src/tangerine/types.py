@@ -94,12 +94,21 @@ class Sale:
 
     Slice 01 is single-unit: one Sale == one sold unit. Quantity is carried on
     the sale (defaulting to 1) so later slices can extend without reshaping.
+
+    ``segment`` carries a pre-resolved segment tag for the sale, used as the
+    **shift-timestamp fallback** (slice 07) when the sale's item has no recipe
+    (and therefore no category-derived segment). The Loyverse parser resolves
+    it from the receipt's ``created_at`` (8am–5pm cafe, else bar) and stamps
+    it here, because that is the only place the time-of-day lives; the in-memory
+    ``Sale.timestamp`` is a calendar date. For a mapped sale the recipe's
+    segment always wins (see ``segments.segment_of_sale``).
     """
 
     item_id: str
     timestamp: date
     sell_price: Money
     quantity: int = 1
+    segment: Segment | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +188,45 @@ class DailyMargin:
     total_cogs: Money
     total_gross_margin: Money
     flagged_revenue: Money
+    # Per-segment contribution margin for the day (slice 07). One entry per
+    # segment, both segments always present (a segment with no reliable sales
+    # carries zeros). Fixed costs are deliberately NOT allocated here — per
+    # PRD user story 20 they live at entity level (slice 08).
+    segment_margins: tuple[SegmentMargin, ...] = ()
+
+
+@dataclass(frozen=True)
+class SegmentMargin:
+    """Per-segment contribution margin for a period (slice 07).
+
+    Per the PRD segmentation model and issue 07:
+
+    - ``revenue``             reliable revenue in the segment for the period
+                              (unmapped / unknown-price rows are excluded —
+                              their COGS is unknown, so booking their revenue
+                              as CM would over-state the segment)
+    - ``variable_costs``      segment COGS for the period (direct labor is
+                              "if tracked" per the issue and not tracked yet,
+                              so today this equals COGS)
+    - ``contribution_margin`` revenue − variable_costs
+    - ``is_red``              True when contribution_margin < 0 (PRD: a segment
+                              failing to cover its own variable costs triggers
+                              an explicit conversation)
+
+    Fixed costs are never allocated to a segment (PRD user story 20); the
+    segment's only profitability number is its contribution margin. Entity-
+    level net profit (segments' CM minus fixed costs) is slice 08.
+    """
+
+    segment: Segment
+    revenue: Money
+    variable_costs: Money
+    contribution_margin: Money
+
+    @property
+    def is_red(self) -> bool:
+        """True when the segment's CM is negative (the failing threshold)."""
+        return self.contribution_margin < 0
 
 
 # --- Receipt ingestion (slice 03) -------------------------------------------

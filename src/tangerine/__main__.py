@@ -18,10 +18,11 @@ from .types import Recipe, RecipeIngredient, Sale, Segment
 
 
 def _seeded_source() -> SeededSource:
-    # One Chang draft sold for 120 THB. Recipe is 500 ml of beer at 0.07 THB/ml:
-    # a ~5000 THB keg yields ~70 litres of billable pour, so a 500 ml pour
-    # costs ~35 THB and the gross margin is 85 THB. The per-ml cost is seeded
-    # directly here; in real use it comes from an approved keg purchase.
+    # One bar sale (Chang draft) and one cafe sale (espresso latte) to
+    # illustrate per-segment contribution margin (slice 07).
+    #   Chang:  500 ml beer @ 0.07 THB/ml -> 35 cost, 120 sell -> 85 bar CM
+    #   Latte:  20 g beans @ 2 THB/g + 200 ml milk @ 0.025 THB/ml -> 45 cost,
+    #           120 sell -> 75 cafe CM
     chang_recipe = Recipe(
         sku_id="chang-draft-500",
         name="Chang Draft 500ml",
@@ -30,13 +31,36 @@ def _seeded_source() -> SeededSource:
             RecipeIngredient(sku_id="chang-keg", quantity=Decimal("500")),
         ),
     )
-    sale = Sale(
-        item_id="chang-draft-500",
-        timestamp=date(2026, 6, 24),
-        sell_price=Decimal("120"),
+    latte_recipe = Recipe(
+        sku_id="espresso-latte",
+        name="Espresso Latte",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="beans-arabica", quantity=Decimal("20")),
+            RecipeIngredient(sku_id="milk-fresh", quantity=Decimal("200")),
+        ),
     )
-    cost = CostBook({"chang-keg": (Decimal("0.07"), date(2026, 6, 1))})
-    return SeededSource(sales=[sale], recipes=[chang_recipe], cost=cost)
+    day = date(2026, 6, 24)
+    sales = [
+        Sale(
+            item_id="chang-draft-500",
+            timestamp=day,
+            sell_price=Decimal("120"),
+        ),
+        Sale(
+            item_id="espresso-latte",
+            timestamp=day,
+            sell_price=Decimal("120"),
+        ),
+    ]
+    cost = CostBook(
+        {
+            "chang-keg": (Decimal("0.07"), date(2026, 6, 1)),
+            "beans-arabica": (Decimal("2"), date(2026, 6, 1)),
+            "milk-fresh": (Decimal("0.025"), date(2026, 6, 1)),
+        }
+    )
+    return SeededSource(sales=sales, recipes=[chang_recipe, latte_recipe], cost=cost)
 
 
 def _money(v: Decimal) -> Decimal:
@@ -51,6 +75,14 @@ def main() -> None:
     print(f"  total revenue:       {_money(result.total_revenue)} THB")
     print(f"  total COGS:          {_money(result.total_cogs)} THB")
     print(f"  total gross margin:  {_money(result.total_gross_margin)} THB")
+    print("  segment contribution margin:")
+    for sm in result.segment_margins:
+        flag = "  [RED]" if sm.is_red else ""
+        print(
+            f"    [{sm.segment.value}] revenue={_money(sm.revenue)}  "
+            f"variable_costs={_money(sm.variable_costs)}  "
+            f"CM={_money(sm.contribution_margin)} THB{flag}"
+        )
     for im in result.item_margins:
         print(
             f"  - [{im.segment.value}] {im.name}: "

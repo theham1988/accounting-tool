@@ -23,6 +23,7 @@ from decimal import Decimal
 from typing import Any
 
 from ..types import Money, Sale, Segment
+from ..segments import segment_for_timestamp
 from .payloads import LoyverseItem, LoyverseLineItem
 from .store import CAFE_CATEGORY_ID, MenuItem, MenuSnapshot, SaleRecord
 
@@ -103,7 +104,13 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
         if receipt.get("receipt_type", "SALE") == "REFUND":
             continue
         receipt_number = receipt.get("receipt_number", "")
-        created = _parse_created_at(receipt["created_at"]).date()
+        created_dt = _parse_created_at(receipt["created_at"])
+        created = created_dt.date()
+        # Shift-timestamp fallback (slice 07): stamp the segment from the
+        # transaction time so an unmapped sale (no recipe -> no category
+        # segment) can still be tagged cafe/bar. A mapped sale's recipe
+        # segment overrides this at margin time.
+        shift_segment = segment_for_timestamp(created_dt)
         for line in receipt.get("line_items", []):
             line_id = line.get("id", "")
             qty = _line_quantity(
@@ -116,6 +123,7 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
                         timestamp=created,
                         sell_price=_money(line.get("price", 0)),
                         quantity=qty,
+                        segment=shift_segment,
                     ),
                     receipt_number=receipt_number,
                     line_id=line_id,
