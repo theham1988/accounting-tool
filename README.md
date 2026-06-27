@@ -49,6 +49,9 @@ mypy
 - **Slice 04** — recipe and per-item cost engine (recipes per SKU with yield,
   Loyverse item → SKU mapping, cost derived from latest approved price). See
   [`docs/issues/04-recipe-and-item-cost-engine.md`](docs/issues/04-recipe-and-item-cost-engine.md).
+- **Slice 07** — segment tagging (cafe vs bar) and per-segment contribution
+  margin. See
+  [`docs/issues/07-segment-tagging-and-contribution-margin.md`](docs/issues/07-segment-tagging-and-contribution-margin.md).
 
 ## Loyverse sync
 
@@ -118,4 +121,39 @@ from tangerine.recipes import RecipeCatalog
 
 cost = CostBook.from_book(book)
 margins = compute_item_margins(sales=sales, recipes=RecipeCatalog(recipes), cost=cost, day=day)
+```
+
+## Segments and contribution margin
+
+Every transaction, recipe, and item is tagged `cafe` or `bar` (PRD
+"Segmentation"). The default source is the Loyverse **category** (carried on
+the recipe); the **shift-timestamp fallback** tags sales whose item has no
+recipe — the Loyverse parser resolves `8am–5pm` to cafe and everything else
+(5pm–10pm plus out-of-hours) to bar from the receipt's `created_at`, because
+that is the only place the time-of-day lives.
+
+Per segment, per period: revenue, variable costs (= COGS today; direct labor
+is "if tracked" and not tracked yet), and **contribution margin = revenue −
+variable costs**. Fixed costs are deliberately **not** allocated to segments
+(PRD user story 20) — they live at entity level only (slice 08) — so the
+segment's only profitability number is its contribution margin. A segment is
+flagged **red** when its contribution margin for the period is `< 0`.
+
+Flagged margin rows (unmapped / unknown-price) are excluded from segment CM
+for the same reason they are excluded from the daily roll-up: their COGS is
+unknown, so booking their revenue as CM would over-state the segment. Both
+segments are always reported; a segment with no reliable sales carries zeros.
+
+See [`tests/test_segment_contribution_margin_e2e.py`](tests/test_segment_contribution_margin_e2e.py)
+for the contract.
+
+```python
+from tangerine.margin import compute_daily_margin, compute_period_segment_margins
+
+daily = compute_daily_margin(source, day)
+for sm in daily.segment_margins:
+    print(sm.segment, sm.contribution_margin, sm.is_red)
+
+# Any inclusive period (issue 07: "for any period"):
+period = compute_period_segment_margins(source, start=day1, end=day2)
 ```
