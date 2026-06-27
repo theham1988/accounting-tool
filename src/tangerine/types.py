@@ -650,3 +650,193 @@ class CafeConsumedCogs:
     unit_cost: Money
     cogs: Money
     unpriced: bool = False
+
+
+# --- Fixed costs + monthly accrual P&L (slice 08) ----------------------------
+#
+# Issue 08 introduces entity-level fixed cost entry and the monthly reconciliation
+# view using proper accrual-basis COGS. Per the PRD segmentation model:
+#
+#     entity_net_profit(month) =
+#         sum_over_segments(contribution_margin) - fixed_costs(entity, month)
+#
+# where the monthly contribution margin per segment is revenue − that segment's
+# accrual COGS (beginning inventory value + purchases − ending inventory value).
+# The bar's accrual COGS comes from slice 05 (keg weigh-ins), the cafe's from
+# slice 06 (cafe stock counts); the monthly engine calls both internally.
+#
+# Fixed costs are recorded against the entity (the whole business), never against
+# a segment (PRD user story 20), and are matched to a month. The 10,000 THB/day
+# target (PRD problem statement) becomes a monthly target = 10K × days in month.
+#
+# A separate cash-flow view reports payables by invoice date — the cash the
+# business owes in the month — so the accounting view (COGS by consumption) and
+# the cash-flow view (when bills are due) are both available (PRD user story 24).
+
+
+#: The daily profit target, in THB. PRD problem statement: "Our real target is
+#: 10,000 THB/day profit." The monthly view compares entity net profit against
+#: this × days in month (issue 08 AC).
+DAILY_PROFIT_TARGET_THB: Decimal = Decimal("10000")
+
+
+class FixedCostCategory(str, Enum):
+    """Entity-level fixed cost category (issue 08 AC: amount, category, period).
+
+    Fixed costs are recorded against the entity — the whole business — never
+    against a segment (PRD user story 20). The category groups them on the
+    monthly P&L. ``OTHER`` covers anything outside the known set so the entry
+    shape stays open-ended (the issue lists "rent, utilities, shared staff
+    salaries, insurance, etc." — the "etc." is the catch-all).
+    """
+
+    RENT = "rent"
+    UTILITIES = "utilities"
+    STAFF_SALARIES = "staff_salaries"
+    INSURANCE = "insurance"
+    OTHER = "other"
+
+
+#: A (year, month) period identifier for a recurring monthly fixed cost.
+#: Year is the full calendar year (e.g. 2026); month is 1–12.
+YearMonth = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class FixedCost:
+    """One entity-level fixed cost for one month.
+
+    Per issue 08 AC: a fixed cost entry carries its amount, category, and the
+    period it applies to. ``period`` is a ``(year, month)`` tuple because these
+    are monthly recurring costs (rent, salaries) — the natural granularity for
+    matching against a monthly P&L. The monthly engine picks up the fixed
+    costs whose ``period`` matches the P&L month.
+
+    Fixed costs are never allocated to a segment (PRD user story 20); they are
+    subtracted from the sum of segment contribution margins to reach entity
+    net profit (PRD "Segmentation" decision shape).
+    """
+
+    amount: Money
+    category: FixedCostCategory
+    period: YearMonth
+
+
+@dataclass(frozen=True)
+class SegmentAccrualPnl:
+    """One segment's monthly accrual-basis P&L (issue 08).
+
+    The monthly contribution margin is computed on the **accrual basis** —
+    revenue minus that segment's accrual COGS (beginning inventory value +
+    purchases − ending inventory value) — distinct from the daily recipe-based
+    margin in slice 04. This is the "proper accrual-basis COGS" the PRD
+    monthly view requires (PRD user story 22).
+
+    - ``revenue``         segment revenue for the month (Loyverse sales by
+                          transaction timestamp, reliable rows only)
+    - ``accrual_cogs``    beginning inventory value + purchases − ending
+                          inventory value, for the segment's inventory:
+                          keg weigh-ins (slice 05) for bar, cafe stock counts
+                          (slice 06) for cafe
+    - ``contribution_margin``  ``revenue − accrual_cogs``
+    - ``is_red``          True when the segment's accrual CM < 0 (mirrors the
+                          slice-07 daily flag on the monthly number)
+    """
+
+    segment: Segment
+    revenue: Money
+    accrual_cogs: Money
+    contribution_margin: Money
+
+    @property
+    def is_red(self) -> bool:
+        """True when the segment's monthly accrual CM is negative."""
+        return self.contribution_margin < 0
+
+
+@dataclass(frozen=True)
+class CashFlowEntry:
+    """One payable recognised by invoice date (the cash-flow view).
+
+    Per PRD user story 24, cash-basis payables are tracked by invoice date
+    separately from accrual COGS, so both views are available: the accounting
+    view (COGS by consumption) and the cash-flow view (when bills are due).
+    This row is the cash-flow view's per-invoice line.
+    """
+
+    supplier_id: str
+    invoice_date: date
+    total: Money
+
+
+@dataclass(frozen=True)
+class CashFlowView:
+    """Cash-flow view: payables recognised by invoice date for the month.
+
+    All purchases whose invoice date falls in the month, summed by total (the
+    cash the business owes for goods received that month, on a cash basis).
+    Reported separately from accrual COGS because the two answer different
+    questions: accrual asks "what did we consume?", cash-flow asks "what bills
+    landed this month?".
+    """
+
+    month: YearMonth
+    total_payables: Money
+    entries: tuple[CashFlowEntry, ...]
+
+
+@dataclass(frozen=True)
+class GoalStatus:
+    """Entity net profit vs the 10,000 THB/day target for the month.
+
+    Per the PRD problem statement the venue's real target is 10,000 THB/day
+    profit; the monthly view scales that to ``target = 10,000 × days in month``
+    (issue 08 AC) and reports whether net profit met, missed, or hit exactly.
+    """
+
+    target: Money
+    actual: Money
+    #: Calendar days in the month the target was scaled over.
+    days_in_month: int
+
+    @property
+    def met(self) -> bool:
+        """True when actual net profit ≥ the monthly target."""
+        return self.actual >= self.target
+
+    @property
+    def surplus(self) -> Money:
+        """``actual − target`` (negative when the target was missed)."""
+        return self.actual - self.target
+
+
+@dataclass(frozen=True)
+class MonthlyPnl:
+    """Full monthly accrual P&L for the entity (issue 08).
+
+    The monthly reconciliation view the PRD calls for (PRD user story 23):
+    full entity-level net profit from segments' contribution margin minus
+    fixed costs. Revenue and accrual COGS are per segment (``segment_pnl``),
+    so a reader can see which half of the business earned its keep; fixed
+    costs are entity-level only (PRD user story 20), not allocated.
+
+    - ``month``           ``(year, month)`` the P&L covers
+    - ``segment_pnl``     one ``SegmentAccrualPnl`` per segment (both segments
+                          always present), in canonical cafe-then-bar order
+    - ``fixed_costs``     the entity-level fixed costs recognised this month,
+                          one row per ``FixedCost`` entry
+    - ``total_fixed_costs``   sum of ``fixed_costs`` amounts
+    - ``entity_net_profit``   sum of segment CM − total_fixed_costs
+    - ``goal``            the ``GoalStatus`` comparing net profit to the
+                          10K THB/day × days-in-month target
+    - ``cash_flow``       payables by invoice date (a separate view from the
+                          accrual COGS above)
+    """
+
+    month: YearMonth
+    segment_pnl: tuple[SegmentAccrualPnl, ...]
+    fixed_costs: tuple[FixedCost, ...]
+    total_fixed_costs: Money
+    entity_net_profit: Money
+    goal: GoalStatus
+    cash_flow: CashFlowView

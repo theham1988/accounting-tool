@@ -60,6 +60,10 @@ mypy
 - **Slice 07** — segment tagging (cafe vs bar) and per-segment contribution
   margin. See
   [`docs/issues/07-segment-tagging-and-contribution-margin.md`](docs/issues/07-segment-tagging-and-contribution-margin.md).
+- **Slice 08** — fixed costs entry and monthly accrual P&L (entity-level fixed
+  costs, accrual-basis COGS per segment, entity net profit vs the 10K THB/day
+  target, separate cash-flow view). See
+  [`docs/issues/08-fixed-costs-monthly-accrual-pnl.md`](docs/issues/08-fixed-costs-monthly-accrual-pnl.md).
 
 ## Loyverse sync
 
@@ -170,6 +174,8 @@ report = compute_keg_inventory(
     cost=CostBook.from_book(book), period_end=week2,
 )
 # report.rows[0].volume_consumed_ml, .accrual_cogs, .loss_pct
+```
+
 ## Cafe stock counts → accrual COGS
 
 Perishable cafe items (milk, beans, pastries) are tracked by physical
@@ -229,4 +235,49 @@ for sm in daily.segment_margins:
 
 # Any inclusive period (issue 07: "for any period"):
 period = compute_period_segment_margins(source, start=day1, end=day2)
+```
+
+## Fixed costs and monthly accrual P&L
+
+The monthly reconciliation view (PRD user story 23) is built on proper
+**accrual-basis COGS** — `beginning inventory value + purchases − ending
+inventory value` — rather than the recipe-based margins the daily 9am view
+uses. Per segment, the monthly contribution margin is
+`revenue − accrual_cogs`; the bar's accrual COGS comes from slice 05 (keg
+weigh-ins) and the cafe's from slice 06 (cafe stock counts). The monthly
+engine calls both internally, so a caller passes raw inventory inputs and
+gets a single `MonthlyPnl`.
+
+**Fixed costs** are recorded against the entity (the whole business), never
+against a segment (PRD user story 20), and are matched to a `(year, month)`
+period. Entity net profit is the sum of segment contribution margins minus
+the month's fixed costs; that is compared against the 10,000 THB/day target
+scaled by days in the month (issue 08 AC).
+
+A separate **cash-flow view** reports payables recognised by invoice date
+(PRD user story 24), so the accounting view (COGS by consumption) and the
+cash-flow view (when bills are due) are both available — the two are
+genuinely different numbers when a delivery lands in one month but is mostly
+consumed in another.
+
+See [`tests/test_monthly_pnl_e2e.py`](tests/test_monthly_pnl_e2e.py) for the
+contract.
+
+```python
+from tangerine.monthly_pnl import compute_monthly_pnl
+from tangerine.types import FixedCost, FixedCostCategory
+
+pnl = compute_monthly_pnl(
+    month=(2026, 6),
+    sales=sales, recipes=RecipeCatalog(recipes), cost=CostBook.from_book(book),
+    brands=brands, weigh_ins=weigh_ins,
+    cafe_items=cafe_items, cafe_beginning=opening_counts, cafe_ending=closing_counts,
+    purchases=purchases,
+    fixed_costs=[FixedCost(amount=Decimal("30000"),
+                           category=FixedCostCategory.RENT, period=(2026, 6))],
+)
+# pnl.segment_pnl[0].contribution_margin   # per-segment accrual CM
+# pnl.entity_net_profit                    # segment CM sum − fixed costs
+# pnl.goal.met / .surplus                  # vs 10K THB/day × days in month
+# pnl.cash_flow.total_payables             # payables by invoice date
 ```
