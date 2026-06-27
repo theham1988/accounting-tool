@@ -651,8 +651,6 @@ class CafeConsumedCogs:
     cogs: Money
     unpriced: bool = False
 
-
-<<<<<<< HEAD
 # --- Fixed costs + monthly accrual P&L (slice 08) ----------------------------
 #
 # Issue 08 introduces entity-level fixed cost entry and the monthly reconciliation
@@ -841,7 +839,6 @@ class MonthlyPnl:
     entity_net_profit: Money
     goal: GoalStatus
     cash_flow: CashFlowView
-=======
 # --- Cash drawer reconciliation (slice 09) -----------------------------------
 #
 # Each shift close captures the four numbers in the PRD "Cash control" section:
@@ -941,4 +938,3 @@ class HandoffResult:
     discrepancy: Money
     tolerance: Money
     is_blocked: bool
->>>>>>> e5306f7
