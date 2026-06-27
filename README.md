@@ -49,6 +49,10 @@ mypy
 - **Slice 04** — recipe and per-item cost engine (recipes per SKU with yield,
   Loyverse item → SKU mapping, cost derived from latest approved price). See
   [`docs/issues/04-recipe-and-item-cost-engine.md`](docs/issues/04-recipe-and-item-cost-engine.md).
+- **Slice 05** — keg inventory via weekly weighing (per-brand tare + density,
+  `(gross − tare) ÷ density` volume, consumed volume × cost-per-ml accrual
+  COGS, actual-vs-theoretical loss %). See
+  [`docs/issues/05-keg-inventory-weekly-weighing.md`](docs/issues/05-keg-inventory-weekly-weighing.md).
 
 ## Loyverse sync
 
@@ -118,4 +122,45 @@ from tangerine.recipes import RecipeCatalog
 
 cost = CostBook.from_book(book)
 margins = compute_item_margins(sales=sales, recipes=RecipeCatalog(recipes), cost=cost, day=day)
+```
+
+## Keg inventory
+
+Weekly keg weighing turns a physical measurement into a beer-volume number,
+which is the periodic-inventory input that makes accrual COGS work. Per brand,
+a `KegBrand` carries the empty-keg tare weight and a density approximation
+(defaulting to water density, 1.0 g/ml, with a documented ~0.5–1.5% volume
+tolerance surfaced on every report row rather than silently absorbed). Each
+weekly `KegWeighIn` records the aggregate gross weight across the brand's
+kegs; the beer volume is `(gross − tare) ÷ density`.
+
+A period runs from one weigh-in to the next. The beer consumed over the period
+is `beginning_volume − ending_volume`, and its accrual COGS is consumed volume
+× the brand's current cost per ml (looked up supplier-agnostic from the same
+`CostBook` slice 04 uses). Actual yield (Loyverse rung-up beer ml, resolved
+through the recipe catalog) vs theoretical yield (the consumed volume) gives
+the loss %; the variance is surfaced but not attributed to individual kegs.
+A brand whose only weigh is the very first one is reported as `unstarted` —
+its volume seeds the next period's beginning inventory.
+
+This slice produces the inventory/COGS numbers; slice 08 (monthly accrual
+P&L) wires them into the books. See
+[`tests/test_keg_inventory_e2e.py`](tests/test_keg_inventory_e2e.py) for the
+contract.
+
+```python
+from tangerine.cost import CostBook
+from tangerine.keg_inventory import compute_keg_inventory
+from tangerine.recipes import RecipeCatalog
+from tangerine.types import KegBrand, KegWeighIn
+
+report = compute_keg_inventory(
+    brands=[KegBrand(brand_id="chang", name="Chang Draught",
+                     beer_sku_id="chang-keg", tare_weight_g=Decimal("5000"))],
+    weigh_ins=[KegWeighIn("chang", week1, Decimal("25000")),
+               KegWeighIn("chang", week2, Decimal("20000"))],
+    sales=sales, recipes=RecipeCatalog(recipes),
+    cost=CostBook.from_book(book), period_end=week2,
+)
+# report.rows[0].volume_consumed_ml, .accrual_cogs, .loss_pct
 ```

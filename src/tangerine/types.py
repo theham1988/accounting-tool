@@ -345,3 +345,160 @@ class Purchase:
     lines: tuple[PurchaseLine, ...]
     vat: Money
     total: Money
+
+
+# --- Keg inventory (slice 05) ------------------------------------------------
+#
+# Weekly keg weighing turns a physical measurement into beer volume, which is
+# the periodic-inventory number that makes accrual COGS work (see slice 08).
+# Per docs/issues/05-keg-inventory-weekly-weighing.md:
+#
+#   volume = (gross_weight - tare_weight) / density
+#
+# A period runs from one weigh-in to the next; the beer consumed in that period
+# is `beginning_volume - ending_volume`, and its accrual COGS is consumed
+# volume x the brand's current cost per ml (from the CostBook, supplier-agnostic
+# per slice 04). Actual yield (Loyverse rung-up pours) vs theoretical yield
+# gives the loss %; that variance is surfaced but not attributed to individual
+# kegs (PRD out of scope: "per-keg yield tracking").
+#
+# Density defaults to water (1.0 g/ml) with a documented ~0.5-1.5% volume
+# tolerance. Each KegBrand carries its own density so the approximation can be
+# overridden per brand when better data exists.
+
+
+#: Default density approximation, in grams per millilitre. Water density is
+#: used because beer specific-gravity data is out of scope (PRD); the volume
+#: derived from this carries a documented ~0.5-1.5% tolerance surfaced on the
+#: report rather than silently absorbed. See docs/issues/05 AC and PRD "Out of
+#: Scope" -> "Specific gravity / density tracking per beer".
+DEFAULT_KEG_DENSITY: Decimal = Decimal("1.0")
+
+#: Human-readable note describing the density-approximation tolerance, surfaced
+#: on every keg-inventory row so a reader cannot mistake the volume for exact.
+#: Kept beside ``DEFAULT_KEG_DENSITY`` (the field default) since both describe
+#: the same water-density approximation.
+DENSITY_TOLERANCE_NOTE: str = (
+    "Volume derived from water-density approximation (1.0 g/ml); "
+    "documented ~0.5-1.5% volume tolerance per PRD out-of-scope."
+)
+
+
+@dataclass(frozen=True)
+class KegBrand:
+    """A draught beer brand and the physical constants needed to weigh it.
+
+    Per docs/issues/05 AC: per-brand keg records exist, carrying the tare
+    weight and a density approximation. ``beer_sku_id`` ties the brand to the
+    master beer SKU whose per-ml cost the engine looks up in the CostBook
+    (the same SKU slice-04 recipes reference as an ingredient).
+
+    - ``brand_id``    stable identifier for the brand (e.g. "chang", "leo")
+    - ``name``        human-readable brand name
+    - ``beer_sku_id`` the master beer SKU this brand pours (e.g. "chang-keg")
+    - ``tare_weight_g`` empty keg weight in grams (entered once; draught
+                      rotation is low so this is rarely edited)
+    - ``density_g_per_ml``  beer density used to convert net weight to volume.
+                      Defaults to water density (1.0 g/ml) with the documented
+                      ~0.5-1.5% tolerance surfaced on the report.
+
+    The issue's "theoretical pours per 20L keg at glass size (e.g. 40 x 500ml)"
+    framing is deliberately NOT carried as a per-brand field: loss is computed
+    on a single physical basis (beer volume in ml), so a glass-size conversion
+    would only re-express the same ratio. See ``KegInventoryRow``.
+    """
+
+    brand_id: str
+    name: str
+    beer_sku_id: str
+    tare_weight_g: Decimal
+    density_g_per_ml: Decimal = DEFAULT_KEG_DENSITY
+
+
+@dataclass(frozen=True)
+class KegWeighIn:
+    """One weekly weigh of one brand, captured as an aggregate gross weight.
+
+    Per the agreed scope, a weigh-in records the aggregate gross weight across
+    all kegs of the brand on that date (the issue's "per keg (or per keg batch)
+    per brand" collapses to one aggregate record per brand, matching the PRD's
+    "aggregate yield" wording). The beer volume at that moment is
+    ``(gross_weight_g - tare_weight_g) / density``.
+
+    A period runs from one weigh-in to the next for the same brand: the first
+    weigh has no prior, so its period COGS is undefined (its volume is the
+    beginning inventory for the next period).
+    """
+
+    brand_id: str
+    weighed_on: date
+    gross_weight_g: Decimal
+
+
+@dataclass(frozen=True)
+class KegInventoryRow:
+    """One brand's period inventory result.
+
+    Covers exactly one period for one brand: from the previous weigh-in
+    (``beginning_weighed_on``) to the current one (``ending_weighed_on``).
+    Carries the numbers the monthly accrual P&L (slice 08) consumes and that
+    the daily review surfaces as a loss flag:
+
+    - ``volume_consumed_ml``    beginning - ending volume (negative when the
+                                ending weigh is heavier than the beginning —
+                                a mid-period refill without a separate weigh;
+                                surfaced as-is, not clamped)
+    - ``rung_up_pours_ml``      Loyverse rung-up beer ml for the brand over the
+                                period (sum of sold recipe ml, from sales)
+    - ``accrual_cogs``          consumed volume x brand's current cost per ml
+                                (negative when consumption is negative)
+    - ``theoretical_yield_ml``  the volume the rung-up pours are compared
+                                against: it is the consumed volume itself, so
+                                the loss is computed on a single physical
+                                basis (beer ml) rather than re-expressed in
+                                pours at a glass size
+    - ``loss_pct``              1 - (rung_up_pours_ml / volume_consumed_ml),
+                                or None when consumed volume is zero (a brand
+                                that sold nothing or was weighed identically)
+    - ``beginning_volume_ml`` / ``ending_volume_ml``  the inventory numbers
+                                themselves, so slice 08 can also report
+                                "beginning + purchases - ending" if needed
+
+    Loss is computed on a single physical basis (beer ml). The issue's
+    "theoretical pours per 20L keg at glass size (e.g. 40 x 500ml)" framing is
+    honoured by the loss ratio itself: the consumed volume IS the theoretical
+    yield, and comparing it to rung-up ml (the actual yield) gives the loss %.
+    A glass-size conversion would only re-express the same ratio in pour
+    units, so it is not carried here.
+    """
+
+    brand_id: str
+    name: str
+    beginning_weighed_on: date
+    ending_weighed_on: date
+    beginning_volume_ml: Decimal
+    ending_volume_ml: Decimal
+    volume_consumed_ml: Decimal
+    rung_up_pours_ml: Decimal
+    accrual_cogs: Money
+    theoretical_yield_ml: Decimal
+    loss_pct: Decimal | None
+    density_g_per_ml: Decimal
+    density_tolerance_note: str
+
+
+@dataclass(frozen=True)
+class KegInventoryReport:
+    """All-brand weekly keg inventory result for one weigh period.
+
+    One row per brand that had a weigh-in on the period's ending date with a
+    prior weigh on file. Brands whose only weigh is the very first one appear
+    in ``unstarted_brand_ids`` (their first volume becomes the next period's
+    beginning inventory).
+    """
+
+    period_start: date
+    period_end: date
+    rows: tuple[KegInventoryRow, ...]
+    unstarted_brand_ids: tuple[str, ...]
+    total_accrual_cogs: Money
