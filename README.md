@@ -71,6 +71,11 @@ mypy
   (void-rate vs venue median, peak-hour void clustering, drawer-short rate,
   three-short-shift run). See
   [`docs/issues/10-anomaly-detection-voids-drawer.md`](docs/issues/10-anomaly-detection-voids-drawer.md).
+- **Slice 11** — daily 9am review view: yesterday's revenue / COGS / gross
+  margin, per-segment contribution margin with red flags, top/bottom items by
+  margin and volume, below-target and unmapped item flags, anomaly flags
+  passthrough, and a 7-day rolling average vs the 10K THB/day target. See
+  [`docs/issues/11-daily-9am-review-view.md`](docs/issues/11-daily-9am-review-view.md).
 
 ## Loyverse sync
 
@@ -330,4 +335,50 @@ flags = detect_anomalies(
     voids=voids, closes=closes, sales_counts={"alice": 20, "bob": 20},
 )
 # flags[i].kind, .cashier_id, .observed, .reference, .detail
+```
+
+## Daily 9am review
+
+The single daily surface (PRD user story 29; issue 11). A partner opens it at
+9am and sees, in one fast-scan view, everything that needs attention from
+yesterday: revenue, COGS, gross margin; per-segment contribution margin with
+red flags where CM < 0; top/bottom items by margin and by units sold; items
+whose actual margin is below their set target; items sold without a recipe
+mapping; anomaly flags from slice 10; and a 7-day rolling-average gross margin
+vs the 10,000 THB/day target.
+
+The review composes the slice-04 daily margin engine (financial numbers + per-
+segment CM + per-item margin flags) with the slice-10 anomaly detector
+(yesterday's window only). It does not widen the `Source` ingestion boundary
+— voids, shift closes, and per-cashier sales counts are passed in explicitly,
+so a review for a day with no cash/void data still builds cleanly (its anomaly
+section is just empty).
+
+**Goal-comparison number.** The 7-day rolling average is the daily
+`total_gross_margin` (= sum of segment CMs today). Direct labor is not tracked,
+and fixed costs are deliberately not daily-allocated (PRD user story 20 / slice
+08 — they land at entity level on the monthly view only). So the 9am goal
+progress is a contribution-margin view, not a net-profit view; the monthly P&L
+(slice 08) carries the net-profit comparison.
+
+**Rankings.** Top/bottom lists cap at three items each. Flagged rows (unmapped
+or unknown-price) are excluded from the rankings because their margins are
+meaningless; they surface in the `unmapped_items` section instead.
+
+See [`tests/test_daily_review_e2e.py`](tests/test_daily_review_e2e.py) for the
+contract.
+
+```python
+from tangerine.daily_review import build_daily_review
+
+review = build_daily_review(
+    source=source,
+    review_date=date(2026, 6, 24),
+    closes=closes, sales_counts={"alice": 20}, drawer_short_rate_threshold=Decimal("0.25"),
+)
+# review.revenue, .cogs, .gross_margin
+# review.segment_margins[i].contribution_margin, .is_red
+# review.top_by_margin.items / .bottom_by_margin.items / .top_by_volume / .bottom_by_volume
+# review.below_target_items, .unmapped_items, .anomaly_flags
+# review.goal.rolling_average, .target, .met, .surplus
 ```
