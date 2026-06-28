@@ -8,7 +8,7 @@ persistence, but the in-memory contract stays the same.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum, StrEnum
 
@@ -1053,3 +1053,218 @@ class AnomalyFlag:
     observed: Decimal
     reference: Decimal
     detail: str
+# --- Admin checklists + partner task assignment (slice 12) -------------------
+#
+# Structured checklists for the partner admin rituals, so nothing gets skipped
+# under shift pressure (PRD user stories 28-31; issue 12). Two checklists:
+#
+#   Daily 9am review checklist:
+#     - Open the daily review
+#     - Review segment flags
+#     - Review item-level margin anomalies
+#     - Review cash/void flags
+#     - Mark done
+#
+#   Weekly admin checklist:
+#     - Keg weigh (per brand)
+#     - Cafe stock count (per cadence)
+#     - Receipt approval queue cleared
+#     - Fixed cost entry (if any new this week)
+#
+# Each task is assignable to a specific partner, and each partner carries its
+# own availability windows so the night-shift partner is never asked to act at
+# 9am (asleep) or 10pm (after close). The model is role-agnostic: a partner is
+# just an assignee with availability windows, so onboarding a future manager
+# is data, not a code change (PRD user story 31 / issue 12 AC).
+#
+# This is the first slice that needs state across time (per-occurrence
+# completion + skip carry-over). The state shape is a ``CompletionLog`` of
+# ``CompletionEntry`` rows (mirrors slice 03's ``ApprovalBook`` pattern); the
+# engine ``build_checklists`` stays a pure function over its inputs.
+
+
+class ChecklistKind(StrEnum):
+    """Which ritual a checklist (or task template) belongs to.
+
+    Two values, one per issue 12 checklist. Surfaced as its own enum so the
+    build can group tasks by kind without re-deriving it from the occurrence
+    date.
+    """
+
+    DAILY = "daily"
+    WEEKLY = "weekly"
+
+
+class TaskState(StrEnum):
+    """Lifecycle state of one task occurrence, derived from the completion log.
+
+    - ``PENDING``   no completion entry for this (task, occurrence) yet
+    - ``DONE``      a completion entry exists for this occurrence with the
+                    ``COMPLETED`` outcome
+    - ``SKIPPED``   either this occurrence was skipped, OR a prior occurrence
+                    of the same task was skipped and not yet resolved (the
+                    carried-over skip surfaces so it cannot be silently lost)
+    """
+
+    PENDING = "pending"
+    DONE = "done"
+    SKIPPED = "skipped"
+
+
+class TaskOutcome(StrEnum):
+    """What a partner did with a task occurrence (recorded in the log).
+
+    One value per row in the completion log. ``COMPLETED`` and ``SKIPPED`` are
+    the two terminal outcomes; ``None`` (the absent value) means the task is
+    still pending.
+    """
+
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class AvailabilityWindow:
+    """A weekly recurring time window an assignee is available to do admin.
+
+    The night-shift partner cannot reasonably do admin at 9am (asleep) or 10pm
+    (after close, exhausted) -- PRD user story 30 / issue 12. Each assignee
+    carries their own availability windows; a task scheduled to an assignee
+    surfaces the window so the partner knows *when* in their day to do it
+    without the system picking an absolute time.
+
+    - ``weekday``  Python weekday (Monday=0 ... Sunday=6). Windows recur weekly.
+    - ``start`` / ``end``  the window's start and end. Half-open: an instant
+                            exactly on ``end`` is NOT inside the window.
+    """
+
+    weekday: int
+    start: time
+    end: time
+
+    def contains(self, instant: time) -> bool:
+        """True when ``instant`` falls inside [start, end) on this window's day."""
+        return self.start <= instant < self.end
+
+
+@dataclass(frozen=True)
+class Assignee:
+    """A partner (or future manager) who can be assigned admin tasks.
+
+    Role-agnostic by design (issue 12 AC: "a new 'manager' role can be added
+    and assigned tasks without code changes"). A partner is just an assignee
+    with availability windows; onboarding a manager means constructing a new
+    ``Assignee`` (data), not editing engine code.
+
+    - ``assignee_id``  stable identifier (matches ``TaskTemplate.assignee_id``)
+    - ``name``         human-readable name for the review surface
+    - ``windows``      the assignee's availability windows. Empty means "no
+                       fixed window" -- tasks assigned to such an assignee
+                       surface ``None`` for their window and are doable any
+                       time, which keeps the build total over its inputs.
+    """
+
+    assignee_id: str
+    name: str
+    windows: tuple[AvailabilityWindow, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskTemplate:
+    """A recurring admin task, identified by a stable id.
+
+    A template is the ritual itself ("Keg weigh (per brand)") plus the partner
+    who owns it. It does NOT carry an occurrence date -- the build materialises
+    one ``TaskOccurrence`` per template per occurrence cycle.
+
+    - ``task_id``     stable identifier; the key the completion log records
+                      outcomes against
+    - ``title``       the human-readable step (issue 12's bullet wording)
+    - ``kind``        which checklist this task belongs to (daily / weekly)
+    - ``assignee_id`` the partner who owns this task
+    """
+
+    task_id: str
+    title: str
+    kind: ChecklistKind
+    assignee_id: str
+
+
+@dataclass(frozen=True)
+class CompletionEntry:
+    """One recorded outcome for one (task, occurrence) pair.
+
+    The completion log is a flat list of these; the build derives each task
+    occurrence's ``state`` by looking up its entry for that occurrence date.
+    Per-occurrence means completing a task on Monday does NOT mark it done for
+    Tuesday (issue 12 AC: "completion state tracked per task per occurrence").
+    """
+
+    task_id: str
+    occurrence_date: date
+    assignee_id: str
+    outcome: TaskOutcome
+    #: Free-text reason recorded only on a SKIP. None for completions. Surfaced
+    #: in subsequent sessions so the carried-over skip explains itself (issue
+    #: 12 AC: "skipped tasks surface in subsequent sessions").
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class TaskOccurrence:
+    """One task, materialised for one occurrence cycle, with derived state.
+
+    Carries the originating ``template``, the partner who owns it, that
+    partner's availability window for the occurrence's weekday (``None`` when
+    the assignee has no window for that day), and the derived ``state`` /
+    ``outcome`` from the completion log.
+
+    - ``occurrence_date``  the date of this occurrence cycle (daily: the day;
+                            weekly: the week's anchor date)
+    - ``window``           the assignee's availability window matching this
+                            occurrence's weekday, or ``None`` when the
+                            assignee has no window for that weekday
+    - ``state``            PENDING / DONE / SKIPPED, derived from the log
+    - ``outcome``          COMPLETED / SKIPPED when state is terminal, else None
+    - ``skipped_for``      the original occurrence date a carried-over skip
+                            refers to (equals ``occurrence_date`` for a
+                            same-day skip). None when state is not SKIPPED.
+    - ``skipped_reason``   the recorded skip reason, surfaced verbatim
+    """
+
+    template: TaskTemplate
+    occurrence_date: date
+    assignee_id: str
+    window: AvailabilityWindow | None
+    state: TaskState
+    outcome: TaskOutcome | None
+    skipped_for: date | None
+    skipped_reason: str | None
+
+
+@dataclass(frozen=True)
+class ChecklistOccurrence:
+    """One checklist (daily or weekly) materialised for one occurrence cycle.
+
+    Carries the kind, the occurrence date, and the task occurrences in their
+    template order. The daily checklist's order is the issue-12 review-step
+    order; the weekly's is the issue-12 weekly-ritual order.
+    """
+
+    kind: ChecklistKind
+    occurrence_date: date
+    tasks: tuple[TaskOccurrence, ...]
+
+
+@dataclass(frozen=True)
+class ChecklistSet:
+    """The two checklists for one occurrence build.
+
+    The build returns both the daily and weekly checklists together so a
+    partner opening the admin surface sees everything they owe in one shot.
+    Either checklist's ``tasks`` may be empty (e.g. a brand-new venue with no
+    templates defined yet defaults to the issue-12 standard sets).
+    """
+
+    daily: ChecklistOccurrence
+    weekly: ChecklistOccurrence

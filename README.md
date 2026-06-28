@@ -76,6 +76,12 @@ mypy
   margin and volume, below-target and unmapped item flags, anomaly flags
   passthrough, and a 7-day rolling average vs the 10K THB/day target. See
   [`docs/issues/11-daily-9am-review-view.md`](docs/issues/11-daily-9am-review-view.md).
+- **Slice 12** — admin checklists + partner task assignment: the daily 9am
+  review checklist (five steps) and the weekly admin checklist (four rituals),
+  each task assignable to a specific partner with partner-specific availability
+  windows so the night-shift partner is never asked to act at 9am or 10pm.
+  See
+  [`docs/issues/12-admin-checklists-partner-task-assignment.md`](docs/issues/12-admin-checklists-partner-task-assignment.md).
 
 ## Loyverse sync
 
@@ -381,4 +387,56 @@ review = build_daily_review(
 # review.top_by_margin.items / .bottom_by_margin.items / .top_by_volume / .bottom_by_volume
 # review.below_target_items, .unmapped_items, .anomaly_flags
 # review.goal.rolling_average, .target, .met, .surplus
+```
+
+## Admin checklists + partner task assignment
+
+Structured checklists for the partner admin rituals, so nothing gets skipped
+under shift pressure (PRD user stories 28-31; issue 12). Two checklists:
+
+- **Daily 9am review checklist** — the five steps a partner works through
+  when they open slice 11's view (open the review, review segment flags,
+  review margin anomalies, review cash/void flags, mark done). The checklist
+  names the steps; it does not embed slice 11's numbers — it is the ritual,
+  decoupled from yesterday's data.
+- **Weekly admin checklist** — the four weekly rituals (keg weigh, cafe
+  stock count, receipt approval queue cleared, fixed cost entry).
+
+Each task is assignable to a specific partner, and each partner carries its
+own availability windows so the night-shift partner is never asked to act at
+9am (asleep) or 10pm (after close). The model is role-agnostic: a partner is
+just an `Assignee` with `AvailabilityWindow`s, so onboarding a future manager
+is data, not a code change.
+
+This is the first slice that needs state across time. The shape is a pure
+`build_checklists` function plus a thin in-memory `CompletionLog` of
+`CompletionEntry` rows (mirrors slice 03's `ApprovalBook` pattern). A skipped
+task surfaces in subsequent sessions (`skipped_for` names the original skip's
+date) so it cannot be silently lost; a completion records only against its
+own occurrence date.
+
+See [`tests/test_admin_checklists_e2e.py`](tests/test_admin_checklists_e2e.py)
+for the contract.
+
+```python
+from datetime import date, time
+
+from tangerine.checklists import CompletionLog, build_checklists, complete_task, skip_task
+from tangerine.types import Assignee, AvailabilityWindow, ChecklistKind, TaskTemplate
+
+day = Assignee(assignee_id="daniel", name="Daniel (day)",
+               windows=(AvailabilityWindow(weekday=0, start=time(8, 0), end=time(17, 0)),))
+night = Assignee(assignee_id="noi", name="Noi (night)",
+                 windows=(AvailabilityWindow(weekday=0, start=time(14, 0), end=time(17, 0)),))
+
+log = CompletionLog()
+log = complete_task(log=log, task_id="keg-weigh", occurrence_date=date(2026, 6, 29),
+                    assignee_id="daniel")
+log = skip_task(log=log, task_id="receipt-queue", occurrence_date=date(2026, 6, 29),
+                assignee_id="noi", reason="no receipts this week")
+
+set_ = build_checklists(assignees=[day, night], anchor=date(2026, 6, 29), completion_log=log)
+# set_.daily.tasks[i].state          # PENDING / DONE / SKIPPED
+# set_.weekly.tasks[i].window.start  # the assignee's availability window
+# set_.weekly.tasks[i].skipped_for   # carried-over skip's original date
 ```
