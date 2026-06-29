@@ -10,6 +10,10 @@ requires-python = ">=3.12"
 readme = "README.md"
 dependencies = [
     "pyyaml>=6.0",
+    # Wave 1 Slice 2: FastAPI + Jinja2 + HTMX frontend (ADR-0002). HTMX itself
+    # is a client-side JS file served as a static asset (no Python dep).
+    "fastapi>=0.110",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +21,9 @@ dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
+    # Test client (Starlette's TestClient is built on httpx). Needed by the
+    # UI seam tests; not a runtime dependency of the app.
+    "httpx>=0.27",
 ]
 
 [tool.setuptools.packages.find]
@@ -25,6 +32,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 tangerine = ["py.typed"]
 "tangerine.storage.migrations" = ["*.sql"]
+"tangerine.web" = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

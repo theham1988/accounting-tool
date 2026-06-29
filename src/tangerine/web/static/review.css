@@ -1,0 +1,185 @@
+/* Tangerine Phuket — daily 9am review styling (mobile-first). */
+
+/* Base rules apply at every width. The layout is mobile- FIRST: the phone
+   layout is the default; wider viewports get progressive enhancements via
+   @media (min-width: ...) gates below. */
+
+:root {
+  --flag-red: #c0392b;
+  --text: #1a1a1a;
+  --muted: #555;
+  --rule: #ddd;
+  --surface: #ffffff;
+  --surface-alt: #f7f7f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--surface-alt);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.review {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 1rem;
+  background: var(--surface);
+}
+
+.review h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.25rem;
+}
+
+.review .day {
+  color: var(--muted);
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+
+.review .empty-note {
+  background: var(--surface-alt);
+  padding: 0.75rem;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.review section {
+  margin-bottom: 1.5rem;
+}
+
+.review h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.review dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+
+.review dt {
+  color: var(--muted);
+}
+
+.review dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segment CM table: stacks cleanly on narrow screens. */
+.segment-cm table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.segment-cm th,
+.segment-cm td {
+  text-align: left;
+  padding: 0.4rem 0.25rem;
+  border-bottom: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.segment-cm th {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.segment-cm__cm {
+  text-align: right;
+}
+
+.segment-cm__row--red .segment-cm__cm {
+  color: var(--flag-red);
+  font-weight: 700;
+}
+
+.segment-cm__flag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  background: var(--flag-red);
+  color: #fff;
+  font-size: 0.7rem;
+  border-radius: 2px;
+  letter-spacing: 0.05em;
+}
+
+/* Rankings: a single column on phones, a 2x2 grid on wider viewports. */
+.rankings__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.ranking h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+}
+
+.ranking__list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.ranking__list li {
+  margin-bottom: 0.2rem;
+}
+
+.ranking__metric {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Below-target + needs-attention: plain lists with clear reason labels. */
+.below-target ul,
+.needs-attention ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.needs-attention__note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.needs-attention__reason {
+  font-weight: 600;
+}
+
+/* Goal progress reuses the dl grid above. */
+
+/* --- Progressive enhancement for wider viewports (tablet / desktop) ---------- */
+@media (min-width: 700px) {
+  .review {
+    max-width: 720px;
+    padding: 2rem;
+  }
+
+  .review h1 {
+    font-size: 1.8rem;
+  }
+
+  .rankings__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daily 9am review — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review">
+    <h1>Daily 9am review</h1>
+    <p class="day">For {{ review.day.isoformat() }}</p>
+
+    {% if not has_sales %}
+      <p class="empty-note"><em>No sales for this day yet.</em></p>
+    {% endif %}
+
+    <section class="headline">
+      <h2>Headline</h2>
+      <dl>
+        <dt>Revenue</dt><dd>{{ review.revenue | money }} THB</dd>
+        <dt>COGS</dt><dd>{{ review.cogs | money }} THB</dd>
+        <dt>Gross margin</dt><dd>{{ review.gross_margin | money }} THB</dd>
+      </dl>
+    </section>
+
+    <section class="segment-cm">
+      <h2>Segment contribution margin</h2>
+      <table>
+        <thead>
+          <tr><th>Segment</th><th>Revenue</th><th>Variable costs</th><th>Contribution margin</th></tr>
+        </thead>
+        <tbody>
+        {% for sm in segment_margins %}
+          <tr class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}">
+            <td class="segment-cm__name">
+              {{ sm.segment.value | capitalize }}
+              {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
+            </td>
+            <td class="segment-cm__revenue">{{ sm.revenue | money }} THB</td>
+            <td class="segment-cm__costs">{{ sm.variable_costs | money }} THB</td>
+            <td class="segment-cm__cm">{{ sm.contribution_margin | money }} THB</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="rankings">
+      <h2>Top &amp; bottom items</h2>
+
+      <div class="rankings__grid">
+        <div class="ranking">
+          <h3>Top by margin</h3>
+          <!--section:top-by-margin-->
+          <ol class="ranking__list">
+            {% for im in review.top_by_margin.items %}
+            <li>{{ im.name }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:top-by-margin-->
+        </div>
+
+        <div class="ranking">
+          <h3>Bottom by margin</h3>
+          <!--section:bottom-by-margin-->
+          <ol class="ranking__list">
+            {% for im in review.bottom_by_margin.items %}
+            <li>{{ im.name }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:bottom-by-margin-->
+        </div>
+
+        <div class="ranking">
+          <h3>Top by volume</h3>
+          <!--section:top-by-volume-->
+          <ol class="ranking__list">
+            {% for im in review.top_by_volume.items %}
+            <li>{{ im.name }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:top-by-volume-->
+        </div>
+
+        <div class="ranking">
+          <h3>Bottom by volume</h3>
+          <!--section:bottom-by-volume-->
+          <ol class="ranking__list">
+            {% for im in review.bottom_by_volume.items %}
+            <li>{{ im.name }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:bottom-by-volume-->
+        </div>
+      </div>
+    </section>
+
+    {% if review.below_target_items %}
+    <section class="below-target">
+      <h2>Below target margin</h2>
+      <!--section:below-target-->
+      <ul class="below-target__list">
+        {% for im in review.below_target_items %}
+        <li>{{ im.name }} — actual {{ im.gross_margin_pct }}%</li>
+        {% endfor %}
+      </ul>
+      <!--/section:below-target-->
+    </section>
+    {% endif %}
+
+    {% if needs_attention %}
+    <section class="needs-attention">
+      <h2>Needs attention</h2>
+      <p class="needs-attention__note">
+        Items sold yesterday whose cost could not be computed. Their revenue is
+        not included in the headline totals above.
+      </p>
+      <!--section:needs-attention-->
+      <ul class="needs-attention__list">
+        {% for im in needs_attention %}
+        <li>
+          <span class="needs-attention__name">{{ im.name }}</span>
+          —
+          {% if im.unmapped %}<span class="needs-attention__reason">unmapped</span> (no recipe mapping){% endif %}
+          {% if im.unknown_price %}<span class="needs-attention__reason">unknown price</span> (an ingredient has no cost entry){% endif %}
+          — {{ im.revenue | money }} THB
+        </li>
+        {% endfor %}
+      </ul>
+      <!--/section:needs-attention-->
+    </section>
+    {% endif %}
+
+    <section class="goal">
+      <h2>Goal progress</h2>
+      <!--section:goal-->
+      <dl class="goal__stats">
+        <dt>Rolling average (7-day)</dt>
+        <dd>{{ review.goal.rolling_average | money }} THB/day</dd>
+        <dt>Target</dt>
+        <dd>{{ review.goal.target | money }} THB/day</dd>
+        <dt>Status</dt>
+        <dd>
+          {% if review.goal.met %}Met{% else %}Missing{% endif %}
+        </dd>
+        <dt>Days in window</dt>
+        <dd>{{ review.goal.days_in_window }}</dd>
+      </dl>
+      <!--/section:goal-->
+    </section>
+  </main>
+</body>
+</html>
