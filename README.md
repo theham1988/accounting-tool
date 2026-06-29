@@ -48,6 +48,11 @@ secrets, systemd, nginx, certbot, cron, snapshots, recovery — lives in
 
 ## Status
 
+### Engine slices (01–12)
+
+The accounting engine — twelve E2E-tested contracts. Pure computation over
+frozen dataclasses; no persistence, identity, or UI of its own.
+
 - **Slice 01** — pipeline skeleton with seeded single-item margin. See
   [`docs/issues/01-pipeline-skeleton-single-item-margin.md`](docs/issues/01-pipeline-skeleton-single-item-margin.md).
 - **Slice 02** — Loyverse API sync (sales, items, menu history). See
@@ -91,6 +96,38 @@ secrets, systemd, nginx, certbot, cron, snapshots, recovery — lives in
   windows so the night-shift partner is never asked to act at 9am or 10pm.
   See
   [`docs/issues/12-admin-checklists-partner-task-assignment.md`](docs/issues/12-admin-checklists-partner-task-assignment.md).
+
+### Wave 1 — The 9am Review Spine (UI build) — complete
+
+The full operational UI wrapped around the engine: real persistence, identity,
+nightly sync, the daily 9am review surface, and a reproducible cloud deployment.
+The engine is unchanged — Wave 1 builds the spine every later wave sits on. See
+[`docs/PRD-WAVE-1.md`](docs/PRD-WAVE-1.md).
+
+- **Wave 1 · Slice 1** — SQLite-backed `LoyverseStore` + a YAML config loader
+  (recipes, SKU mappings, current SKU prices) + a `Source` adapter, exercised
+  end-to-end through the CLI. See
+  [`docs/issues/wave-1-slice-1.md`](docs/issues/wave-1-slice-1.md).
+- **Wave 1 · Slice 2** — FastAPI + Jinja2 + HTMX web layer rendering
+  yesterday's daily 9am review as a mobile-first HTML page. See
+  [`docs/issues/wave-1-slice-2.md`](docs/issues/wave-1-slice-2.md).
+- **Wave 1 · Slice 3** — Loyverse sync wiring: a "Sync now" button
+  (`POST /sync`) and the `python -m tangerine.sync` cron entrypoint, idempotent
+  with a 30-day first-run backfill. See
+  [`docs/issues/wave-1-slice-3.md`](docs/issues/wave-1-slice-3.md).
+- **Wave 1 · Slice 4** — Identity: shared-passphrase login + role selector
+  (Daniel / Noi), signed-cookie sessions with an inactivity timeout, gating
+  every route except `/login`. See
+  [`docs/issues/wave-1-slice-4.md`](docs/issues/wave-1-slice-4.md).
+- **Wave 1 · Slice 5** — UX polish: day navigation (`/review?day=YYYY-MM-DD`),
+  the sync in-flight indicator and result fragment, and readable empty/error
+  states for the dogfooding period. See
+  [`docs/issues/wave-1-slice-5.md`](docs/issues/wave-1-slice-5.md).
+- **Wave 1 · Slice 6** — Deployment hardening: systemd + nginx + Let's Encrypt
+  TLS, nightly cron sync, nightly rotated SQLite snapshots, login
+  rate-limiting, and the login-gated `GET /admin/db-snapshot` backup route —
+  full runbook in [`DEPLOY.md`](DEPLOY.md). See
+  [`docs/issues/wave-1-slice-6.md`](docs/issues/wave-1-slice-6.md).
 
 ## Loyverse sync
 
