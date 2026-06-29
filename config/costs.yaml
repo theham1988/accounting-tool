@@ -1,0 +1,15 @@
+# Tangerine Phuket — current SKU prices (Wave 1 interim cost book).
+#
+# This file ships in the repo and seeds the cost book so the daily review shows
+# real margins even though receipt approvals (Wave 3) are not built yet. A
+# later wave replaces this with `CostBook.from_book(approval_book)` once
+# receipt approvals are flowing; the migration is one line (see
+# docs/PRD-WAVE-1.md "Migration path for the interim cost book").
+#
+# Convention: prices are quoted strings so YAML does not coerce them to float
+# (the engine carries Decimal money throughout).
+
+costs:
+  chang-keg: { price: "0.07", updated_at: "2026-06-01" }
+  beans-arabica: { price: "2", updated_at: "2026-06-01" }
+  milk-fresh: { price: "0.025", updated_at: "2026-06-01" }

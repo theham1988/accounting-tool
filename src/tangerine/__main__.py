@@ -1,59 +1,81 @@
-"""CLI entrypoint: print the daily 9am review against seeded data.
+"""CLI entrypoint: print the daily 9am review against persisted data.
 
     python -m tangerine
 
-This exists so a human can see the pipeline produce a number end-to-end without
-writing a test. Real sources (Loyverse, receipts) plug in here later.
+Wave 1, Slice 1: the CLI loads recipes and costs from YAML config files, opens
+the SQLite store, and builds the daily review against whatever sales are
+persisted. On a fresh database the review is empty (sales arrive via Slice 3's
+sync, not yet built); the CLI surfaces that gracefully rather than crashing.
+
+Paths are configurable so tests can drive the CLI in-process without env
+mutation. The real entrypoint (run by ``python -m tangerine``) reads defaults
+from environment variables and delegates to :func:`main`.
 """
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import os
+from datetime import date
 from decimal import Decimal
 
-from .cost import CostBook
+from .config.loader import load_costs, load_recipes
 from .daily_review import DailyReview, build_daily_review
-from .seeded import SeededSource
-from .types import Recipe, RecipeIngredient, Sale, Segment
+from .loyverse.source import StoreSource
+from .storage.sqlite_store import SqliteLoyverseStore
+from .types import Sale
+
+#: Default config file locations (operator-editable, shipped with the repo).
+DEFAULT_RECIPES_PATH = "config/recipes.yaml"
+DEFAULT_COSTS_PATH = "config/costs.yaml"
+
+#: Environment variable holding the SQLite database path. Lives in the
+#: environment, not the repo, per ADR-0001 ("credentials and connection
+#: configuration live in environment variables").
+DB_PATH_ENV = "TANGERINE_DB_PATH"
+DEFAULT_DB_PATH = "./tangerine.db"
 
 
-def _seeded_source() -> SeededSource:
-    # One bar sale (Chang draft) and one cafe sale (espresso latte) per day for
-    # the last 7 days, so the rolling-average goal has data to work with.
-    #   Chang:  500 ml beer @ 0.07 THB/ml -> 35 cost, 120 sell -> 85 bar CM
-    #   Latte:  20 g beans @ 2 THB/g + 200 ml milk @ 0.025 THB/ml -> 45 cost,
-    #           120 sell -> 75 cafe CM  (daily GM = 160)
-    chang_recipe = Recipe(
-        sku_id="chang-draft-500",
-        name="Chang Draft 500ml",
-        segment=Segment.BAR,
-        ingredients=(
-            RecipeIngredient(sku_id="chang-keg", quantity=Decimal("500")),
-        ),
-    )
-    latte_recipe = Recipe(
-        sku_id="espresso-latte",
-        name="Espresso Latte",
-        segment=Segment.CAFE,
-        ingredients=(
-            RecipeIngredient(sku_id="beans-arabica", quantity=Decimal("20")),
-            RecipeIngredient(sku_id="milk-fresh", quantity=Decimal("200")),
-        ),
-    )
-    day = date(2026, 6, 24)
-    sales: list[Sale] = []
-    for i in range(7):
-        d = day - timedelta(days=i)
-        sales.append(Sale(item_id="chang-draft-500", timestamp=d, sell_price=Decimal("120")))
-        sales.append(Sale(item_id="espresso-latte", timestamp=d, sell_price=Decimal("120")))
-    cost = CostBook(
-        {
-            "chang-keg": (Decimal("0.07"), date(2026, 6, 1)),
-            "beans-arabica": (Decimal("2"), date(2026, 6, 1)),
-            "milk-fresh": (Decimal("0.025"), date(2026, 6, 1)),
-        }
-    )
-    return SeededSource(sales=sales, recipes=[chang_recipe, latte_recipe], cost=cost)
+def main(
+    *,
+    db_path: str | None = None,
+    recipes_path: str | None = None,
+    costs_path: str | None = None,
+) -> None:
+    """Print the daily review against persisted data.
+
+    ``db_path`` defaults to ``$TANGERINE_DB_PATH`` or ``./tangerine.db``.
+    ``recipes_path`` / ``costs_path`` default to the shipped config files. All
+    three are explicit parameters so tests can drive the CLI without touching
+    the environment.
+    """
+    db = db_path or os.environ.get(DB_PATH_ENV, DEFAULT_DB_PATH)
+    recipes_yaml = recipes_path or DEFAULT_RECIPES_PATH
+    costs_yaml = costs_path or DEFAULT_COSTS_PATH
+
+    catalog = load_recipes(recipes_yaml)
+    cost = load_costs(costs_yaml)
+    store = SqliteLoyverseStore.connect(db)
+    try:
+        source = StoreSource(
+            store=store, recipes=list(catalog.all()), cost=cost
+        )
+        review_date = _pick_review_date(source.sales())
+        review = build_daily_review(source=source, review_date=review_date)
+        _print_review(review)
+    finally:
+        store.close()
+
+
+def _pick_review_date(sales: list[Sale]) -> date:
+    """The review date: the most recent day with sales, else today.
+
+    Against an empty DB this falls back to today so the review prints an empty
+    page rather than raising. Against real data it shows the latest day with
+    sales — the seeded-CLI behaviour of "show the most recent review".
+    """
+    if not sales:
+        return date.today()
+    return max(s.timestamp for s in sales)
 
 
 def _money(v: Decimal) -> Decimal:
@@ -93,13 +115,6 @@ def _print_review(review: DailyReview) -> None:
         f"vs target {_money(goal.target)} (surplus {_money(goal.surplus)} THB; "
         f"{goal.days_in_window} days)"
     )
-
-
-def main() -> None:
-    source = _seeded_source()
-    day = source.sales()[0].timestamp
-    review = build_daily_review(source=source, review_date=day)
-    _print_review(review)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,28 @@
+# Tangerine Phuket — recipes and SKU mappings (Wave 1 default).
+#
+# This file ships in the repo and is the operator-editable source of truth for
+# recipes and Loyverse-item -> SKU mappings. Recipe changes go through code
+# review (PRD user story 22: recipes are high-stakes — a wrong quantity
+# silently corrupts every margin number).
+#
+# Convention: quantities and target margins are quoted strings so YAML does
+# not coerce them to float (the engine carries Decimal money throughout).
+
+recipes:
+  - sku_id: chang-draft-500
+    name: Chang Draft 500ml
+    segment: bar
+    ingredients:
+      - { sku_id: chang-keg, quantity: "500" }
+
+  - sku_id: espresso-latte
+    name: Espresso Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "200" }
+
+# Loyverse item id -> master SKU mappings. Add one per Loyverse menu item that
+# maps to a recipe above. Items without a mapping are surfaced in the daily
+# review's "unmapped" section rather than silently costed at zero.
+mappings: []

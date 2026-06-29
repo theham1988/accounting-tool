@@ -111,6 +111,62 @@ class MenuSnapshot:
     items: tuple[MenuItem, ...]
 
 
+def diff_menu(
+    previous: dict[str, MenuItem],
+    incoming: dict[str, MenuItem],
+    at: datetime,
+) -> list[MenuChange]:
+    """Diff two menu snapshots into a list of ``MenuChange`` records.
+
+    The single source of truth for the four change kinds (ADDED,
+    PRICE_CHANGE, RENAMED, DISCONTINUED). Both the in-memory and the SQLite
+    store call this so their histories are byte-identical for the same inputs
+    — a divergence here would silently produce different audit trails.
+
+    Order: incoming items first (ADDED / PRICE_CHANGE / RENAMED in dict
+    iteration order), then discontinuations (in ``previous`` iteration order).
+    Callers that need deterministic ordering across runs should iterate over
+    sorted keys; the in-memory store preserves insertion order, which is
+    deterministic given ``parse_items_snapshot`` sorts by ``item_id``.
+    """
+    changes: list[MenuChange] = []
+    for item_id, new in incoming.items():
+        old = previous.get(item_id)
+        if old is None:
+            changes.append(
+                MenuChange(item_id, MenuChangeKind.ADDED, at, None, new.name)
+            )
+            continue
+        if new.sell_price != old.sell_price:
+            changes.append(
+                MenuChange(
+                    item_id,
+                    MenuChangeKind.PRICE_CHANGE,
+                    at,
+                    str(old.sell_price),
+                    str(new.sell_price),
+                )
+            )
+        if new.name != old.name:
+            changes.append(
+                MenuChange(
+                    item_id,
+                    MenuChangeKind.RENAMED,
+                    at,
+                    old.name,
+                    new.name,
+                )
+            )
+    # Items present before but absent now are discontinuations (issue 02
+    # lists discontinuations as a menu change to preserve and timestamp).
+    for item_id in previous.keys() - incoming.keys():
+        old = previous[item_id]
+        changes.append(
+            MenuChange(item_id, MenuChangeKind.DISCONTINUED, at, old.name, None)
+        )
+    return changes
+
+
 # Category id that maps to the cafe segment. Loyverse category ids are opaque;
 # the venue has one cafe and one bar category. Slice 02 hard-codes the cafe
 # category id; slice 07 (segment tagging) generalises this.
@@ -136,46 +192,7 @@ class InMemoryLoyverseStore:
 
     def record_menu_snapshot(self, snapshot: MenuSnapshot, at: datetime) -> None:
         incoming = {mi.item_id: mi for mi in snapshot.items}
-        for item_id, new in incoming.items():
-            old = self._menu.get(item_id)
-            if old is None:
-                self._history.append(
-                    MenuChange(item_id, MenuChangeKind.ADDED, at, None, new.name)
-                )
-            else:
-                if new.sell_price != old.sell_price:
-                    self._history.append(
-                        MenuChange(
-                            item_id,
-                            MenuChangeKind.PRICE_CHANGE,
-                            at,
-                            str(old.sell_price),
-                            str(new.sell_price),
-                        )
-                    )
-                if new.name != old.name:
-                    self._history.append(
-                        MenuChange(
-                            item_id,
-                            MenuChangeKind.RENAMED,
-                            at,
-                            old.name,
-                            new.name,
-                        )
-                    )
-        # Items present before but absent now are discontinuations (issue 02
-        # lists discontinuations as a menu change to preserve and timestamp).
-        for item_id in self._menu.keys() - incoming.keys():
-            old = self._menu[item_id]
-            self._history.append(
-                MenuChange(
-                    item_id,
-                    MenuChangeKind.DISCONTINUED,
-                    at,
-                    old.name,
-                    None,
-                )
-            )
+        self._history.extend(diff_menu(self._menu, incoming, at))
         self._menu = incoming
 
     def sales(self) -> list[Sale]:
