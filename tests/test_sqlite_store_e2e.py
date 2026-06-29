@@ -268,6 +268,42 @@ def test_current_menu_is_empty_before_any_snapshot() -> None:
     assert store.menu_change_history() == ()
 
 
+# --- AC (slice 5): last successful sync timestamp ----------------------------
+
+
+def test_last_sync_at_is_none_before_any_sync() -> None:
+    """A store that has never synced reports no last-sync timestamp.
+
+    Slice 5 surfaces "when did we last pull fresh data?" on the review page and
+    a stale-data banner when that is too old. A fresh store has never run a
+    sync, so there is no timestamp to show — ``last_sync_at`` returns ``None``
+    and the UI renders a "never synced" affordance rather than a broken page.
+    """
+    store = SqliteLoyverseStore.connect(":memory:")
+    assert store.last_sync_at() is None
+
+
+def test_last_sync_at_returns_latest_snapshot_timestamp() -> None:
+    """``last_sync_at`` is the most recent sync's timestamp.
+
+    Every successful sync records a menu snapshot stamped with the sync moment
+    (``record_menu_snapshot(..., at=...)``); a failed sync never reaches that
+    write. So the latest snapshot's ``at`` is exactly "the last time a sync
+    succeeded" — what the review page shows and the staleness banner checks.
+
+    Worked example. Two nightly syncs run at 22:30 UTC on consecutive days.
+    ``last_sync_at`` returns the second (most recent) one, not the first.
+    """
+    store = SqliteLoyverseStore.connect(":memory:")
+    first_at = datetime(2026, 6, 23, 22, 30, tzinfo=timezone.utc)
+    second_at = datetime(2026, 6, 24, 22, 30, tzinfo=timezone.utc)
+
+    store.record_menu_snapshot(MenuSnapshot(items=()), at=first_at)
+    store.record_menu_snapshot(MenuSnapshot(items=()), at=second_at)
+
+    assert store.last_sync_at() == second_at
+
+
 # --- AC: persistence across a process restart --------------------------------
 
 

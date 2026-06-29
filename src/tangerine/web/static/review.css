@@ -246,6 +246,107 @@ body {
   background: var(--surface-alt);
 }
 
+/* --- Slice 5: day navigation, freshness, and error states ------------------- */
+
+/* Day-navigation control: a full-width date picker on phones (the partner taps
+   it to look back at a previous day). */
+.day-nav {
+  margin-bottom: 1rem;
+}
+
+.day-nav__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.day-nav__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.day-nav__input {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+/* Stale-data banner: a prominent, hard-to-miss alert at the top of the review
+   when the nightly sync is overdue. Warm amber so it reads as "attention", not
+   "error" (a missed sync is recoverable with one tap). */
+.stale-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  background: #fff4e0;
+  border: 1px solid #e0a93f;
+  border-radius: 4px;
+}
+
+.stale-banner__text {
+  flex: 1 1 auto;
+}
+
+.stale-banner__sync,
+.empty-store__sync {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--text);
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stale-banner__sync:disabled,
+.empty-store__sync:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Last-sync indicator: quiet, always-on freshness marker. */
+.last-sync {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Empty-store first-run state: a friendly call to action rather than a page of
+   zeros that looks broken. */
+.empty-store {
+  padding: 1.25rem;
+  background: var(--surface-alt);
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.empty-store h2 {
+  border: 0;
+  margin-top: 0;
+}
+
+.empty-store__message {
+  color: var(--muted);
+  margin: 0 0 1rem;
+}
+
+.empty-store__sync {
+  font-size: 1.05rem;
+  padding: 0.6rem 1.25rem;
+}
+
+/* Per-day "no data" note (distinct from the whole-store empty state). */
+.empty-note--day {
+  color: var(--muted);
+}
+
 /* Login page (slice 4): mobile-first single-column form. */
 .login {
   max-width: 100%;

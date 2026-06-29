@@ -5,11 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Daily 9am review — Tangerine Phuket</title>
   <link rel="stylesheet" href="/static/review.css">
+  <!-- HTMX powers the day-navigation date input and the Sync-now button.
+       Loaded from a CDN with a Subresource-Integrity hash so the asset is
+       tamper-checked (ADR-0002: FastAPI + Jinja2 + HTMX). -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"
+    integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
+    crossorigin="anonymous"
+    defer
+  ></script>
 </head>
 <body>
   <main class="review">
     <h1>Daily 9am review</h1>
-    <p class="day">For {{ review.day.isoformat() }}</p>
 
     {% if signed_in_name %}
     <!--section:signed-in-as-->
@@ -22,9 +30,44 @@
     <!--/section:signed-in-as-->
     {% endif %}
 
-    {% if not has_sales %}
-      <p class="empty-note"><em>No sales for this day yet.</em></p>
+    {% if stale %}
+    <!--section:stale-banner-->
+    <section class="stale-banner" role="alert">
+      <span class="stale-banner__text">
+        Last sync was {{ stale_days }} day{{ "" if stale_days == 1 else "s" }} ago —
+        the data below may be out of date.
+      </span>
+      <button
+        class="stale-banner__sync"
+        hx-post="/sync"
+        hx-target="#sync-result"
+        hx-swap="innerHTML"
+        hx-indicator=".sync-control__indicator"
+        hx-disabled-elt="this"
+      >Sync now</button>
+    </section>
+    <!--/section:stale-banner-->
     {% endif %}
+
+    <!--section:day-nav-->
+    <section class="day-nav">
+      <label class="day-nav__label">
+        <span>Review date</span>
+        <input
+          class="day-nav__input"
+          type="date"
+          name="day"
+          value="{{ review.day.isoformat() }}"
+          hx-get="/review"
+          hx-target="#review-body"
+          hx-select="#review-body"
+          hx-swap="outerHTML"
+          hx-trigger="change"
+          aria-label="Pick a review date"
+        >
+      </label>
+    </section>
+    <!--/section:day-nav-->
 
     <!--section:sync-control-->
     <section class="sync-control">
@@ -40,6 +83,48 @@
       <div id="sync-result" class="sync-result"></div>
     </section>
     <!--/section:sync-control-->
+
+    <!--section:last-sync-->
+    <p class="last-sync">
+      {% if last_sync %}
+      Last synced:
+      <time datetime="{{ last_sync.isoformat() }}">{{ last_sync.strftime("%Y-%m-%d %H:%M UTC") }}</time>
+      {% else %}
+      Last synced: never
+      {% endif %}
+    </p>
+    <!--/section:last-sync-->
+
+    <div id="review-body">
+    <p class="day">For {{ review.day.isoformat() }}</p>
+
+    {% if store_empty %}
+      <!--section:empty-store-->
+      <section class="empty-store">
+        <h2>No sales have been synced yet</h2>
+        <p class="empty-store__message">
+          This looks like a fresh install — there is no data to review yet.
+          Run your first sync to pull the last 30 days of sales from Loyverse,
+          then this page fills in.
+        </p>
+        <button
+          class="empty-store__sync"
+          hx-post="/sync"
+          hx-target="#sync-result"
+          hx-swap="innerHTML"
+          hx-indicator=".sync-control__indicator"
+          hx-disabled-elt="this"
+        >Sync now</button>
+      </section>
+      <!--/section:empty-store-->
+    {% elif not has_sales %}
+      <!--section:no-day-data-->
+      <p class="empty-note empty-note--day">
+        <em>No data for this day.</em>
+        Pick another date, or use “Sync now” above to pull the latest sales.
+      </p>
+      <!--/section:no-day-data-->
+    {% endif %}
 
     <section class="headline">
       <h2>Headline</h2>
@@ -138,11 +223,13 @@
     {% if needs_attention %}
     <section class="needs-attention">
       <h2>Needs attention</h2>
-      <p class="needs-attention__note">
-        Items sold yesterday whose cost could not be computed. Their revenue is
-        not included in the headline totals above.
-      </p>
       <!--section:needs-attention-->
+      <p class="needs-attention__note">
+        These items sold but their cost could not be computed, so their revenue
+        is left out of the headline totals above.
+        To fix this, map them to a recipe in <code>config/recipes.yaml</code>
+        (or add the missing ingredient cost), then re-sync.
+      </p>
       <ul class="needs-attention__list">
         {% for im in needs_attention %}
         <li>
@@ -175,6 +262,7 @@
       </dl>
       <!--/section:goal-->
     </section>
+    </div><!-- /#review-body -->
   </main>
 </body>
 </html>

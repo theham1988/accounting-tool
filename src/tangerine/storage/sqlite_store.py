@@ -174,6 +174,25 @@ class SqliteLoyverseStore:
             for row in rows
         }
 
+    def last_sync_at(self) -> datetime | None:
+        """The timestamp of the most recent successful sync, or ``None``.
+
+        Every successful sync records a menu snapshot stamped with the sync
+        moment (a sync that fails — e.g. an expired Loyverse token — never
+        reaches that write), so the latest ``menu_snapshots.at`` is exactly
+        "when did a sync last succeed?". Slice 5 surfaces this on the review
+        page and uses it to decide whether the stale-data banner shows.
+
+        Returns ``None`` when no snapshot has been recorded yet (a store that
+        has never synced).
+        """
+        row = self._conn.execute(
+            "SELECT at FROM menu_snapshots ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return _iso_to_datetime(row[0])
+
     def menu_change_history(self) -> tuple[MenuChange, ...]:
         """Every recorded menu change, in chronological then insertion order."""
         rows = self._conn.execute(

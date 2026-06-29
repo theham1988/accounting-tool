@@ -23,7 +23,7 @@ import sqlite3
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -86,6 +86,12 @@ def _truthy_env(name: str) -> bool:
     """Read a bool from env: ``1``/``true``/``yes`` (case-insensitive) -> True."""
     raw = os.environ.get(name, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+#: How old the most recent successful sync may be before the review shows a
+#: stale-data banner (slice 5). 24 hours: the nightly cron runs once a day, so
+#: anything older than a day means a sync was missed and the numbers on screen
+#: predate yesterday's close.
+STALE_AFTER_SECONDS: int = 24 * 60 * 60
 
 #: Canonical segment display order (cafe first, then bar) so the template's
 #: segment-CM rows render in a stable, predictable order regardless of dict
@@ -439,6 +445,32 @@ def _render_review(
     has_sales = review.revenue != 0 or review.cogs != 0 or any(
         im.units_sold for im in review.daily.item_margins
     )
+    # ``store_empty`` distinguishes "nothing has ever been synced" (a friendly
+    # first-run empty state with a prominent Sync-now CTA) from "this particular
+    # day has no data" (a calm per-day note while other days do have data). The
+    # whole-store signal is any sale in the store at all, independent of the day
+    # being viewed.
+    store_empty = len(source.sales()) == 0
+
+    # Sync freshness: the most recent successful sync's timestamp (derived from
+    # the latest menu snapshot, which every successful sync records) drives both
+    # the always-on "last synced" indicator and the stale-data banner. ``now``
+    # is injectable (``now_epoch``) so tests pin staleness deterministically;
+    # production reads the wall clock.
+    store: SqliteLoyverseStore = app.state.store
+    last_sync = store.last_sync_at()
+    now_epoch = app.state.now_epoch
+    now_dt = (
+        datetime.fromtimestamp(now_epoch, tz=timezone.utc)
+        if now_epoch is not None
+        else datetime.now(timezone.utc)
+    )
+    stale = False
+    stale_days = 0
+    if last_sync is not None:
+        age = now_dt - last_sync
+        stale = age.total_seconds() > STALE_AFTER_SECONDS
+        stale_days = age.days
     # Items excluded from totals come in two flavours: unmapped (no recipe) and
     # unknown_price (a recipe ingredient has no cost entry). The engine exposes
     # only the unmapped ones on the review object; we re-derive both here so the
@@ -467,6 +499,10 @@ def _render_review(
             "review": review,
             "segment_margins": segment_margins,
             "has_sales": has_sales,
+            "store_empty": store_empty,
+            "stale": stale,
+            "stale_days": stale_days,
+            "last_sync": last_sync,
             "needs_attention": needs_attention,
             "signed_in_name": signed_in_name,
         },
