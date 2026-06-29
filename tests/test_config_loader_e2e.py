@@ -22,11 +22,12 @@ import pytest
 
 from tangerine.config.loader import (
     ConfigError,
+    load_assignees,
     load_costs,
     load_recipes,
 )
 from tangerine.recipes import RecipeCatalog
-from tangerine.types import Segment, SkuMapping
+from tangerine.types import Assignee, Segment, SkuMapping
 
 D = Decimal
 
@@ -255,3 +256,100 @@ recipes:
 
     assert catalog.recipe_for_sku("chang-draft-500") is not None
     assert book.price("chang-keg") is None
+
+
+# --- AC: assignees round-trip through YAML (slice 4) -------------------------
+
+
+def test_load_assignees_produces_partner_list(tmp_path: Path) -> None:
+    """An ``assignees.yaml`` with two partners yields two ``Assignee`` objects
+    in file order.
+
+    Worked example. The Wave 1 default list (Daniel, Noi) loads into two
+    ``Assignee``s keyed by their ids. Order is preserved so the login role
+    selector renders them in the same order the file lists them.
+
+    The role selector is populated from this list (slice 4); adding the future
+    manager is a YAML entry, not a code change (PRD user story 31).
+    """
+    assignees_yaml = tmp_path / "assignees.yaml"
+    _write(
+        assignees_yaml,
+        """
+assignees:
+  - assignee_id: daniel
+    name: Daniel
+  - assignee_id: noi
+    name: Noi
+""",
+    )
+
+    assignees = load_assignees(assignees_yaml)
+
+    assert assignees == [
+        Assignee(assignee_id="daniel", name="Daniel"),
+        Assignee(assignee_id="noi", name="Noi"),
+    ]
+
+
+def test_missing_assignees_block_raises_config_error(tmp_path: Path) -> None:
+    """A file without a top-level ``assignees`` list fails loudly.
+
+    A login page with no roles is a broken deploy; surface it at startup
+    rather than rendering an empty selector.
+    """
+    bad = tmp_path / "assignees.yaml"
+    _write(bad, "partners: []\n")
+
+    with pytest.raises(ConfigError, match="missing top-level 'assignees' list"):
+        load_assignees(bad)
+
+
+def test_empty_assignees_list_raises_config_error(tmp_path: Path) -> None:
+    """An empty ``assignees`` list fails loudly — no one could log in."""
+    bad = tmp_path / "assignees.yaml"
+    _write(bad, "assignees: []\n")
+
+    with pytest.raises(ConfigError, match="at least one entry"):
+        load_assignees(bad)
+
+
+def test_assignee_missing_required_field_raises_config_error(
+    tmp_path: Path,
+) -> None:
+    """An assignee missing ``assignee_id`` (or ``name``) fails loudly with the
+    field named in the message."""
+    bad = tmp_path / "assignees.yaml"
+    _write(
+        bad,
+        """
+assignees:
+  - name: Daniel
+""",
+    )
+
+    with pytest.raises(ConfigError, match="assignee #0.assignee_id is required"):
+        load_assignees(bad)
+
+
+def test_duplicate_assignee_id_raises_config_error(tmp_path: Path) -> None:
+    """Two assignees with the same id fail loudly.
+
+    The signed-cookie payload carries one ``assignee_id``; a duplicate id
+    would make attribution ambiguous (which Daniel acted?). Reject it at
+    startup.
+    """
+    bad = tmp_path / "assignees.yaml"
+    _write(
+        bad,
+        """
+assignees:
+  - assignee_id: daniel
+    name: Daniel
+  - assignee_id: daniel
+    name: Daniel Two
+""",
+    )
+
+    with pytest.raises(ConfigError, match="duplicate assignee_id 'daniel'"):
+        load_assignees(bad)

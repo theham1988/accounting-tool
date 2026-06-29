@@ -1,0 +1,21 @@
+# Tangerine Phuket — partners who can log in (Wave 1 identity).
+#
+# This file ships in the repo and is the operator-editable list of who can
+# authenticate against the web app. Per PRD user story 31 / Wave 1 slice 4,
+# the role selector is populated from this list — so onboarding the future
+# manager is a config entry, not a code change.
+#
+# Each entry maps to an ``Assignee`` (engine/types.py) and carries:
+#   assignee_id   stable identifier (matches cashier_id / assignee_id on
+#                 engine actions — the audit-trail key)
+#   name          human-readable name shown in the selector and on the review
+#
+# Availability windows are omitted in Wave 1 (slice 12 needs them for admin
+# checklists; the auth gate does not). The ``Assignee.windows`` tuple defaults
+# to empty, which the auth flow accepts.
+
+assignees:
+  - assignee_id: daniel
+    name: Daniel
+  - assignee_id: noi
+    name: Noi

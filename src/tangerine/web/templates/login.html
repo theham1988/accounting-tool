@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="login">
+    <h1>Sign in</h1>
+
+    {% if error %}
+      <p class="login__error" role="alert">{{ error }}</p>
+    {% endif %}
+
+    <!--section:login-form-->
+    <form class="login__form" method="post" action="/login">
+      <label class="login__field">
+        <span>Passphrase</span>
+        <input type="password" name="passphrase" autocomplete="current-password" required>
+      </label>
+
+      <label class="login__field">
+        <span>Who are you?</span>
+        <select name="assignee_id" required>
+          {% for assignee in assignees %}
+            <option value="{{ assignee.assignee_id }}">{{ assignee.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <button type="submit">Sign in</button>
+    </form>
+    <!--/section:login-form-->
+  </main>
+</body>
+</html>

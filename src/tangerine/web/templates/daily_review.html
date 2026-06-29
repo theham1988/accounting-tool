@@ -11,9 +11,35 @@
     <h1>Daily 9am review</h1>
     <p class="day">For {{ review.day.isoformat() }}</p>
 
+    {% if signed_in_name %}
+    <!--section:signed-in-as-->
+    <p class="signed-in-as">
+      Signed in as <strong>{{ signed_in_name }}</strong>
+      — <form class="logout-form" method="post" action="/logout" style="display:inline">
+          <button type="submit" class="logout-button">Sign out</button>
+        </form>
+    </p>
+    <!--/section:signed-in-as-->
+    {% endif %}
+
     {% if not has_sales %}
       <p class="empty-note"><em>No sales for this day yet.</em></p>
     {% endif %}
+
+    <!--section:sync-control-->
+    <section class="sync-control">
+      <button
+        class="sync-control__button"
+        hx-post="/sync"
+        hx-target="#sync-result"
+        hx-swap="innerHTML"
+        hx-indicator=".sync-control__indicator"
+        hx-disabled-elt="this"
+      >Sync now</button>
+      <span class="sync-control__indicator" hidden>Syncing…</span>
+      <div id="sync-result" class="sync-result"></div>
+    </section>
+    <!--/section:sync-control-->
 
     <section class="headline">
       <h2>Headline</h2>

@@ -39,7 +39,7 @@ import yaml
 
 from ..cost import CostBook
 from ..recipes import RecipeCatalog
-from ..types import Recipe, RecipeIngredient, Segment, SkuMapping
+from ..types import Assignee, Recipe, RecipeIngredient, Segment, SkuMapping
 
 
 class ConfigError(Exception):
@@ -165,6 +165,51 @@ def _validate_mappings_target_real_recipes(
             )
 
 
+# --- assignees (slice 4) -----------------------------------------------------
+
+
+def load_assignees(path: str | Path) -> list[Assignee]:
+    """Load ``assignees.yaml`` into a list of :class:`Assignee`.
+
+    The auth role selector (slice 4) is populated from this list. Per PRD user
+    story 31, onboarding the future manager is a config entry, not a code
+    change — this loader is the seam.
+
+    Raises :class:`ConfigError` if the file is unreadable, the YAML is
+    malformed, the top-level ``assignees`` block is missing, or an entry is
+    missing ``assignee_id`` / ``name``. Duplicate ``assignee_id`` values are
+    rejected so the signed-cookie payload can carry one id unambiguously.
+
+    Availability windows are NOT parsed here. Slice 12 owns those for admin
+    checklists; the auth gate does not need them.
+    """
+    data = _load_yaml(path)
+    raw = data.get("assignees")
+    if raw is None:
+        raise ConfigError(f"{path}: missing top-level 'assignees' list")
+    if not isinstance(raw, list):
+        raise ConfigError(f"{path}: 'assignees' must be a list")
+    if not raw:
+        raise ConfigError(f"{path}: 'assignees' must contain at least one entry")
+
+    assignees: list[Assignee] = []
+    seen: set[str] = set()
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ConfigError(f"{path}: assignee #{i} must be a mapping")
+        assignee_id = _required_str(
+            entry, "assignee_id", path, f"assignee #{i}"
+        )
+        name = _required_str(entry, "name", path, f"assignee #{i}")
+        if assignee_id in seen:
+            raise ConfigError(
+                f"{path}: duplicate assignee_id {assignee_id!r}"
+            )
+        seen.add(assignee_id)
+        assignees.append(Assignee(assignee_id=assignee_id, name=name))
+    return assignees
+
+
 # --- costs -------------------------------------------------------------------
 
 
@@ -275,4 +320,4 @@ def _parse_date(value: Any, path: str | Path, ctx: str) -> date:
     raise ConfigError(f"{path}: {ctx} must be a date string (YYYY-MM-DD)")
 
 
-__all__ = ["ConfigError", "load_costs", "load_recipes"]
+__all__ = ["ConfigError", "load_assignees", "load_costs", "load_recipes"]

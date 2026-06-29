@@ -20,33 +20,72 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any, cast
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from ..config.loader import load_costs, load_recipes
-from ..daily_review import build_daily_review
+from ..config.loader import load_assignees, load_costs, load_recipes
+from ..daily_review import DailyReview, build_daily_review
+from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
+from ..loyverse.sync import SyncResult, run_sync
 from ..storage.sqlite_store import SqliteLoyverseStore
-from ..types import Segment, SegmentMargin
+from ..types import Assignee, Segment, SegmentMargin
+from .auth import (
+    AuthConfig,
+    AuthMiddleware,
+    SESSION_COOKIE,
+    Session,
+    SessionAuthenticator,
+    clear_session_cookie,
+    set_session_cookie,
+)
 
 #: Default config file locations (operator-editable, shipped with the repo).
 #: Mirror the CLI defaults in ``tangerine.__main__`` so the web app and the
 #: CLI read the same source of truth by default.
 DEFAULT_RECIPES_PATH = "config/recipes.yaml"
 DEFAULT_COSTS_PATH = "config/costs.yaml"
+DEFAULT_ASSIGNEES_PATH = "config/assignees.yaml"
 
 #: Environment variable holding the SQLite database path. Lives in the
 #: environment, not the repo, per ADR-0001. Mirrors the CLI.
 DB_PATH_ENV = "TANGERINE_DB_PATH"
 DEFAULT_DB_PATH = "./tangerine.db"
+
+#: Loyverse credentials live in the environment, never in the database or the
+#: repo (PRD user story 11). Access token is mandatory; store id is optional
+#: but the venue has one store, so we read both from env by default.
+LOYVERSE_TOKEN_ENV = "LOYVERSE_ACCESS_TOKEN"
+LOYVERSE_STORE_ID_ENV = "LOYVERSE_STORE_ID"
+
+#: Environment variable holding the shared auth passphrase. PRD user story 11 /
+#: Wave 1 slice 4: credentials live in the environment, never in the repo.
+#: The app fails loudly at startup if this is unset or empty.
+AUTH_PASSPHRASE_ENV = "TANGERINE_AUTH_PASSPHRASE"
+
+#: Environment variable holding the cookie-signing secret. Distinct from the
+#: passphrase so rotating one does not invalidate existing sessions.
+SIGNING_SECRET_ENV = "TANGERINE_SIGNING_SECRET"
+
+#: Environment variable controlling the cookie ``Secure`` flag. Set to a
+#: truthy value in prod (behind TLS); leave unset for local HTTP dev.
+COOKIE_SECURE_ENV = "TANGERINE_COOKIE_SECURE"
+
+
+def _truthy_env(name: str) -> bool:
+    """Read a bool from env: ``1``/``true``/``yes`` (case-insensitive) -> True."""
+    raw = os.environ.get(name, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 #: Canonical segment display order (cafe first, then bar) so the template's
 #: segment-CM rows render in a stable, predictable order regardless of dict
@@ -96,26 +135,92 @@ def create_app(
     db_path: str | None = None,
     recipes_path: str | None = None,
     costs_path: str | None = None,
+    assignees_path: str | None = None,
     today: date | None = None,
+    loyverse_urlopen: Any = None,
+    loyverse_access_token: str | None = None,
+    loyverse_store_id: str | None = None,
+    passphrase: str | None = None,
+    signing_secret: str | None = None,
+    cookie_secure: bool | None = None,
+    inactivity_seconds: int | None = None,
+    now_epoch: int | None = None,
 ) -> FastAPI:
     """Build the FastAPI application.
 
     ``db_path`` defaults to ``$TANGERINE_DB_PATH`` or ``./tangerine.db``.
-    ``recipes_path`` / ``costs_path`` default to the shipped config files.
-    ``today`` defaults to ``date.today()``; injectable so tests can pin
-    "yesterday" deterministically.
+    ``recipes_path`` / ``costs_path`` / ``assignees_path`` default to the
+    shipped config files. ``today`` defaults to ``date.today()``; injectable
+    so tests can pin "yesterday" deterministically.
+
+    Auth (slice 4):
+      - ``passphrase``         defaults to ``$TANGERINE_AUTH_PASSPHRASE``;
+                               app construction raises if it is empty.
+      - ``signing_secret``     defaults to ``$TANGERINE_SIGNING_SECRET``;
+                               app construction raises if it is empty.
+      - ``cookie_secure``      defaults to truthy ``$TANGERINE_COOKIE_SECURE``
+                               (False in local dev).
+      - ``inactivity_seconds`` defaults to 8 hours (slice-4 issue).
+
+    Loyverse credentials default to ``$LOYVERSE_ACCESS_TOKEN`` /
+    ``$LOYVERSE_STORE_ID``; ``loyverse_urlopen`` is injectable so the UI seam
+    tests stub the Loyverse HTTP endpoint without mutating the environment.
 
     The store is opened once and held for the app's lifetime (closed on
     shutdown). Config is loaded once at construction — a malformed config
-    raises immediately, per the PRD's "fail loudly at startup" rule.
+    or missing passphrase raises immediately, per the PRD's "fail loudly at
+    startup" rule.
     """
     db = db_path or os.environ.get(DB_PATH_ENV, DEFAULT_DB_PATH)
     recipes_yaml = recipes_path or DEFAULT_RECIPES_PATH
     costs_yaml = costs_path or DEFAULT_COSTS_PATH
+    assignees_yaml = assignees_path or DEFAULT_ASSIGNEES_PATH
     today_date = today or date.today()
+    token = loyverse_access_token or os.environ.get(LOYVERSE_TOKEN_ENV)
+    store_id = (
+        loyverse_store_id
+        if loyverse_store_id is not None
+        else os.environ.get(LOYVERSE_STORE_ID_ENV)
+    )
+    loyverse_urlopen_param = loyverse_urlopen
 
     catalog = load_recipes(recipes_yaml)
     cost = load_costs(costs_yaml)
+    assignees = load_assignees(assignees_yaml)
+
+    # Fail loudly at startup on a missing/empty passphrase or signing secret.
+    # A half-working app that gates on an empty passphrase would let anyone
+    # in; a half-working signer would sign cookies under an empty key.
+    resolved_passphrase = passphrase if passphrase is not None else os.environ.get(
+        AUTH_PASSPHRASE_ENV, ""
+    )
+    resolved_secret = signing_secret if signing_secret is not None else os.environ.get(
+        SIGNING_SECRET_ENV, ""
+    )
+    if not resolved_passphrase:
+        raise RuntimeError(
+            f"auth passphrase is required: set ${AUTH_PASSPHRASE_ENV} "
+            "or pass passphrase=... to create_app"
+        )
+    if not resolved_secret:
+        raise RuntimeError(
+            f"cookie signing secret is required: set ${SIGNING_SECRET_ENV} "
+            "or pass signing_secret=... to create_app"
+        )
+    resolved_secure = (
+        cookie_secure if cookie_secure is not None else _truthy_env(COOKIE_SECURE_ENV)
+    )
+    resolved_inactivity = (
+        inactivity_seconds if inactivity_seconds is not None else 8 * 60 * 60
+    )
+    auth_config = AuthConfig(
+        passphrase=resolved_passphrase,
+        signing_secret=resolved_secret,
+        cookie_secure=resolved_secure,
+        inactivity_seconds=resolved_inactivity,
+    )
+    authenticator = SessionAuthenticator(resolved_secret)
+
     # FastAPI serves sync route handlers from a threadpool, so the SQLite
     # connection must be safe to use across threads. ``check_same_thread=False``
     # lifts Python's default same-thread guard; serialised access is guaranteed
@@ -146,6 +251,101 @@ def create_app(
     app.state.source = source
     app.state.templates = templates
     app.state.today = today_date
+    app.state.loyverse_urlopen = loyverse_urlopen_param
+    app.state.loyverse_credentials = (
+        LoyverseCredentials(access_token=token, store_id=store_id)
+        if token is not None
+        else None
+    )
+    app.state.assignees = assignees
+    app.state.auth_config = auth_config
+    app.state.authenticator = authenticator
+    app.state.now_epoch = now_epoch
+
+    # The auth gate sits between Starlette's routing and our route handlers.
+    # Public paths (``/login``, ``/static``) bypass it; everything else
+    # requires a valid signed session cookie and populates
+    # ``request.state.assignee_id``. ``now_epoch`` is injected so tests can
+    # advance the clock without sleeping; production leaves it None and the
+    # middleware reads the wall clock per request.
+    app.add_middleware(
+        AuthMiddleware,
+        authenticator=authenticator,
+        config=auth_config,
+        now_epoch=now_epoch,
+    )
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request) -> HTMLResponse:
+        """Render the login form.
+
+        Minimal in this step: the tracer-bullet test only checks that the
+        unauthenticated redirect *target* exists and is not the protected
+        page. Form fields and error rendering arrive in the next cycles.
+        """
+        t: Jinja2Templates = app.state.templates
+        assignees: list[Assignee] = app.state.assignees
+        return t.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "request": request,
+                "assignees": assignees,
+                "error": None,
+            },
+        )
+
+    @app.post("/login", response_model=None)
+    def login_submit(
+        request: Request,
+        passphrase: str = Form(""),
+        assignee_id: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Validate the passphrase + role, set a session cookie, redirect."""
+        valid_assignee_ids = {a.assignee_id for a in app.state.assignees}
+        ok = (
+            passphrase == app.state.auth_config.passphrase
+            and assignee_id in valid_assignee_ids
+        )
+        if not ok:
+            t = app.state.templates
+            return cast(
+                HTMLResponse,
+                t.TemplateResponse(
+                    request=request,
+                    name="login.html",
+                    context={
+                        "request": request,
+                        "assignees": app.state.assignees,
+                        "error": "Sign in failed.",
+                    },
+                ),
+            )
+
+        now = app.state.now_epoch if app.state.now_epoch is not None else int(time.time())
+        session = Session(assignee_id=assignee_id, last_activity=now)
+        cookie_value = app.state.authenticator.sign(session)
+        response = RedirectResponse(url="/", status_code=303)
+        set_session_cookie(
+            response,
+            value=cookie_value,
+            secure=app.state.auth_config.cookie_secure,
+        )
+        return response
+
+    @app.post("/logout")
+    def logout() -> RedirectResponse:
+        """Clear the session cookie and redirect to ``/login``.
+
+        Gated by the auth middleware like every other non-public route: a
+        request without a valid cookie is redirected to ``/login`` by the
+        middleware before reaching here, which is the same end state logout
+        produces — so logout from an already-expired session still ends at
+        ``/login``.
+        """
+        response = RedirectResponse(url="/login", status_code=303)
+        clear_session_cookie(response)
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     def root(request: Request) -> HTMLResponse:
@@ -168,6 +368,51 @@ def create_app(
             return HTMLResponse("Invalid day (expected YYYY-MM-DD).", status_code=400)
         return _render_review(request, app, review_date)
 
+    @app.post("/sync", response_class=HTMLResponse)
+    def sync(request: Request) -> HTMLResponse:
+        """Trigger a Loyverse sync now (HTMX form).
+
+        Runs the orchestrator against real Loyverse (the HTTP boundary is the
+        only stub in tests), then returns a result fragment that swaps into
+        the page beside the "Sync now" button. The fragment reports rows
+        ingested, menu changes, and any errors — the AC's "the partner can
+        trust the sync ran" requirement.
+
+        Even on a Loyverse failure the route returns 200 with the error string
+        rendered in the fragment: a 9:01am recovery must not crash the page
+        (PRD user story 7). The store is also re-read so the headline numbers
+        in the out-of-band swap reflect any sales the sync managed to land
+        before the failure.
+        """
+        store: SqliteLoyverseStore = app.state.store
+        credentials: LoyverseCredentials | None = app.state.loyverse_credentials
+        today_date: date = app.state.today
+
+        if credentials is None:
+            result = SyncResult(
+                rows_ingested=0,
+                menu_changes=0,
+                errors=(
+                    "Loyverse credentials not configured "
+                    f"(set ${LOYVERSE_TOKEN_ENV}).",
+                ),
+            )
+        else:
+            result = run_sync(
+                store=store,
+                credentials=credentials,
+                urlopen=app.state.loyverse_urlopen,
+                today=today_date,
+            )
+
+        # Refresh yesterday's headline numbers so the partner sees fresh data
+        # immediately, without a manual reload (PRD: "the page is reloaded with
+        # fresh data"). The review renders against the same store the sync just
+        # wrote into, so these numbers reflect the sync result.
+        yesterday = today_date - timedelta(days=1)
+        review = build_daily_review(source=app.state.source, review_date=yesterday)
+        return _render_sync_fragment(request, result, review)
+
     return app
 
 
@@ -179,6 +424,12 @@ def _render_review(
     Centralises the build→render path so ``GET /`` and ``GET /review`` cannot
     drift apart. ``has_sales`` drives the empty-state note; everything else is
     taken straight from the engine result.
+
+    ``signed_in_name`` is the partner-visible name of whoever the middleware
+    authenticated this request as. Wave 1 has no capture yet; surfacing the
+    name on the review pins the AC "the selected role is available to other
+    routes" and gives Wave 2 capture flows a working seam in
+    ``request.state.assignee_id``.
     """
     templates: Jinja2Templates = app.state.templates
     source: StoreSource = app.state.source
@@ -200,6 +451,14 @@ def _render_review(
         if im.unmapped or im.unknown_price
     ]
 
+    # Resolve the signed-in assignee's name (None if the middleware somehow
+    # did not stamp one — defensive, should not happen for gated routes).
+    assignee_id = getattr(request.state, "assignee_id", None)
+    assignees: list[Assignee] = app.state.assignees
+    signed_in_name = next(
+        (a.name for a in assignees if a.assignee_id == assignee_id), None
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="daily_review.html",
@@ -209,7 +468,67 @@ def _render_review(
             "segment_margins": segment_margins,
             "has_sales": has_sales,
             "needs_attention": needs_attention,
+            "signed_in_name": signed_in_name,
         },
+    )
+
+
+def _render_sync_fragment(
+    request: Request, result: SyncResult, review: DailyReview
+) -> HTMLResponse:
+    """Render the sync-result fragment plus an out-of-band headline refresh.
+
+    The fragment is wrapped in ``<!--section:sync-result-->`` anchors so the UI
+    seam test can pin it without depending on incidental markup. Alongside the
+    fragment, an out-of-band element (``hx-swap-oob``) carries yesterday's
+    refreshed headline numbers: HTMX swaps that into the page on the client,
+    so the partner sees fresh revenue / COGS / gross-margin without a manual
+    reload (PRD: "the page is reloaded with fresh data").
+    """
+    del request  # the fragment is built inline; no Jinja context needed
+    revenue = _money(review.revenue)
+    cogs = _money(review.cogs)
+    gross_margin = _money(review.gross_margin)
+
+    error_lines = "".join(
+        f"<li class=\"sync-result__error\">{_escape(err)}</li>"
+        for err in result.errors
+    )
+    has_errors = "true" if result.errors else "false"
+
+    html = f"""<!--section:sync-result-->
+<section class="sync-result" data-sync-errors="{has_errors}">
+  <h3>Sync result</h3>
+  <dl class="sync-result__counts">
+    <dt>Rows ingested</dt><dd class="sync-result__rows">{result.rows_ingested}</dd>
+    <dt>Menu changes</dt><dd class="sync-result__menu-changes">{result.menu_changes}</dd>
+  </dl>
+  {'<ul class="sync-result__errors">' + error_lines + '</ul>' if result.errors else ''}
+</section>
+<!--/section:sync-result-->
+<!-- HTMX swaps this out-of-band into the page so the partner sees fresh
+     headline numbers immediately after a sync, without a manual reload. -->
+<div id="headline-oob" hx-swap-oob="true">
+  <span class="headline-oob__revenue">{revenue}</span>
+  <span class="headline-oob__cogs">{cogs}</span>
+  <span class="headline-oob__gross-margin">{gross_margin}</span>
+</div>
+"""
+    return HTMLResponse(html)
+
+
+def _escape(text: str) -> str:
+    """Minimal HTML-escape for sync error strings rendered into the fragment.
+
+    Error strings come from Loyverse responses (untrusted) and could contain
+    angle brackets; escaping keeps the fragment well-formed. The page's main
+    template relies on Jinja autoescaping, but this fragment is built inline,
+    so the escape is explicit here.
+    """
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
     )
 
 

@@ -82,13 +82,58 @@ def _sale_record(
     )
 
 
-def _write_config(tmp_path: Path) -> tuple[str, str]:
-    """Write recipes + costs YAML into ``tmp_path`` and return both paths."""
+def _write_config(tmp_path: Path) -> tuple[str, str, str]:
+    """Write recipes + costs + assignees YAML into ``tmp_path``.
+
+    Returns ``(recipes_path, costs_path, assignees_path)``. Slice 4 added the
+    assignees file (the role-selector source); the slice-2 builders thread it
+    through so the same tests run unchanged against the auth gate.
+    """
     recipes = tmp_path / "recipes.yaml"
     costs = tmp_path / "costs.yaml"
+    assignees = tmp_path / "assignees.yaml"
     recipes.write_text(_seeded_recipes_yaml(), encoding="utf-8")
     costs.write_text(_seeded_costs_yaml(), encoding="utf-8")
-    return str(recipes), str(costs)
+    assignees.write_text(_seeded_assignees_yaml(), encoding="utf-8")
+    return str(recipes), str(costs), str(assignees)
+
+
+def _seeded_assignees_yaml() -> str:
+    """The Wave 1 default partners (mirrors ``config/assignees.yaml``)."""
+    return """
+assignees:
+  - assignee_id: daniel
+    name: Daniel
+  - assignee_id: noi
+    name: Noi
+"""
+
+
+#: Stable passphrase + signing secret for the slice-2 suite. Slice 4 added the
+#: auth gate; rather than rewriting every test, the builders inject these
+#: explicitly so no test mutates the process environment.
+_TEST_PASSPHRASE = "slice2-test-passphrase"
+_TEST_SIGNING_SECRET = "slice2-test-signing-secret"
+
+
+def _authed_client(app):  # type: ignore[no-untyped-def]
+    """A ``TestClient`` that has already logged in as ``daniel``.
+
+    Slice 4 gates every route behind a signed-cookie session. The slice-2
+    tests assert on the review page's contents (numbers, sections, rankings)
+    — they do not care about auth themselves, so this helper performs the
+    login dance once and hands back a ready-to-use authenticated client.
+    """
+    from tangerine.web.auth import SESSION_COOKIE
+
+    client = TestClient(app)
+    client.post(
+        "/login",
+        data={"passphrase": _TEST_PASSPHRASE, "assignee_id": "daniel"},
+        follow_redirects=False,
+    )
+    assert SESSION_COOKIE in client.cookies, "test login did not set a session cookie"
+    return client
 
 
 @pytest.fixture
@@ -124,7 +169,7 @@ def test_get_root_against_empty_db_renders_full_review_with_zeros(
     real YAML files written to ``tmp_path``.
     """
     app = _build_app_with_empty_db(tmp_path, today=today)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -148,7 +193,7 @@ def _build_app_with_empty_db(
     from tangerine.web.app import create_app
 
     db_path = str(tmp_path / "tangerine.db")
-    recipes_path, costs_path = _write_config(tmp_path)
+    recipes_path, costs_path, assignees_path = _write_config(tmp_path)
     # Touch the DB so the file exists (the store would create it on first
     # request anyway, but this makes the empty-state explicit).
     SqliteLoyverseStore.connect(db_path).close()
@@ -156,7 +201,10 @@ def _build_app_with_empty_db(
         db_path=db_path,
         recipes_path=recipes_path,
         costs_path=costs_path,
+        assignees_path=assignees_path,
         today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
     )
 
 
@@ -167,7 +215,7 @@ def _build_app_seeded(
     from tangerine.web.app import create_app
 
     db_path = str(tmp_path / "tangerine.db")
-    recipes_path, costs_path = _write_config(tmp_path)
+    recipes_path, costs_path, assignees_path = _write_config(tmp_path)
     store = SqliteLoyverseStore.connect(db_path)
     if sales:
         store.record_sales(sales)
@@ -176,7 +224,10 @@ def _build_app_seeded(
         db_path=db_path,
         recipes_path=recipes_path,
         costs_path=costs_path,
+        assignees_path=assignees_path,
         today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
     )
 
 
@@ -212,7 +263,7 @@ def test_get_root_renders_yesterday_headline_numbers(
         ),
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -257,7 +308,7 @@ def test_get_root_renders_per_segment_cm_with_red_flag_below_zero(
         ),
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -310,7 +361,7 @@ def test_get_root_renders_top_and_bottom_rankings(
         ) for i in range(2)],
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -393,13 +444,18 @@ recipes:
 """
 
 
-def _write_custom_recipes(tmp_path: Path, recipes_yaml: str) -> tuple[str, str]:
-    """Write custom recipes + default costs into ``tmp_path``."""
+def _write_custom_recipes(tmp_path: Path, recipes_yaml: str) -> tuple[str, str, str]:
+    """Write custom recipes + default costs + default assignees into ``tmp_path``.
+
+    Returns ``(recipes_path, costs_path, assignees_path)``.
+    """
     recipes = tmp_path / "recipes.yaml"
     costs = tmp_path / "costs.yaml"
+    assignees = tmp_path / "assignees.yaml"
     recipes.write_text(recipes_yaml, encoding="utf-8")
     costs.write_text(_seeded_costs_yaml(), encoding="utf-8")
-    return str(recipes), str(costs)
+    assignees.write_text(_seeded_assignees_yaml(), encoding="utf-8")
+    return str(recipes), str(costs), str(assignees)
 
 
 def test_get_root_renders_below_target_section(
@@ -418,7 +474,7 @@ def test_get_root_renders_below_target_section(
     from tangerine.web.app import create_app
 
     db_path = str(tmp_path / "tangerine.db")
-    recipes_path, costs_path = _write_custom_recipes(
+    recipes_path, costs_path, assignees_path = _write_custom_recipes(
         tmp_path, _recipes_yaml_with_target()
     )
 
@@ -445,9 +501,12 @@ def test_get_root_renders_below_target_section(
         db_path=db_path,
         recipes_path=recipes_path,
         costs_path=costs_path,
+        assignees_path=assignees_path,
         today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
     )
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -503,7 +562,7 @@ def test_get_root_surfaces_unmapped_and_unknown_price_rows(
     from tangerine.web.app import create_app
 
     db_path = str(tmp_path / "tangerine.db")
-    recipes_path, costs_path = _write_custom_recipes(
+    recipes_path, costs_path, assignees_path = _write_custom_recipes(
         tmp_path, _recipes_yaml_with_unpriced_ingredient()
     )
 
@@ -537,9 +596,12 @@ def test_get_root_surfaces_unmapped_and_unknown_price_rows(
         db_path=db_path,
         recipes_path=recipes_path,
         costs_path=costs_path,
+        assignees_path=assignees_path,
         today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
     )
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -597,7 +659,7 @@ def test_get_root_renders_goal_progress(
         ),
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/")
 
@@ -656,7 +718,7 @@ def test_get_review_for_specific_day_renders_that_day(
         ),
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/review", params={"day": two_days_ago.isoformat()})
 
@@ -681,7 +743,7 @@ def test_get_review_with_malformed_day_returns_400(
     review for an unintended day.
     """
     app = _build_app_with_empty_db(tmp_path, today=today)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     response = client.get("/review", params={"day": "not-a-date"})
 
@@ -711,7 +773,7 @@ def test_rendered_numbers_match_engine_object(
     from tangerine.loyverse.source import StoreSource
 
     db_path = str(tmp_path / "tangerine.db")
-    recipes_path, costs_path = _write_config(tmp_path)
+    recipes_path, costs_path, _assignees_path = _write_config(tmp_path)
 
     sales = [
         _sale_record(
@@ -740,7 +802,7 @@ def test_rendered_numbers_match_engine_object(
     store.close()
 
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
     response = client.get("/review", params={"day": yesterday.isoformat()})
 
     assert response.status_code == 200
@@ -804,7 +866,7 @@ def test_renders_under_one_second_against_weeks_of_data(
             )
 
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     start = time.perf_counter()
     response = client.get("/")
@@ -846,7 +908,7 @@ def test_page_has_viewport_meta_and_linked_mobile_first_css(
         ),
     ]
     app = _build_app_seeded(tmp_path, today=today, sales=sales)
-    client = TestClient(app)
+    client = _authed_client(app)
 
     html = client.get("/").text
 

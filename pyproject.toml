@@ -14,6 +14,15 @@ dependencies = [
     # is a client-side JS file served as a static asset (no Python dep).
     "fastapi>=0.110",
     "jinja2>=3.1",
+    # Wave 1 Slice 4: signed session cookies for the shared-passphrase auth
+    # gate. itsdangerous is the standard, audited signer; we use its
+    # URLSafeTimedSerializer so cookies are tamper-evident and can carry an
+    # expiry. Small pure-Python dep, no transitive deps.
+    "itsdangerous>=2.1",
+    # Wave 1 Slice 4: ``python-multipart`` backs FastAPI's ``Form(...)`` parsing
+    # for the login POST. FastAPI declares it as an extra rather than a hard
+    # dep, so we have to list it explicitly.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
