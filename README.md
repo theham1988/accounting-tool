@@ -37,6 +37,15 @@ pytest
 mypy
 ```
 
+## Deployment
+
+The tool is served over HTTPS from a cloud VPS (nginx terminates TLS and
+reverse-proxies to uvicorn under systemd; cron runs the nightly sync and a
+nightly SQLite snapshot; the login route is rate-limited and an admin route
+downloads a database backup). The full reproducible runbook — provisioning,
+secrets, systemd, nginx, certbot, cron, snapshots, recovery — lives in
+[`DEPLOY.md`](DEPLOY.md), with the ops files under [`deploy/`](deploy/).
+
 ## Status
 
 - **Slice 01** — pipeline skeleton with seeded single-item margin. See

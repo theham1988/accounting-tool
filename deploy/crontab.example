@@ -1,0 +1,16 @@
+# Tangerine Phuket — cron entries (Wave 1, Slice 6).
+#
+# Install for the tangerine user:
+#   sudo crontab -u tangerine deploy/crontab.example
+#
+# Cron does NOT read the systemd EnvironmentFile, so each job sources
+# /etc/tangerine/env itself (Loyverse token, DB path, snapshot settings).
+# Times are in the server's local timezone — set the VPS timezone to
+# Asia/Bangkok (see DEPLOY.md) so "22:30" means 22:30 in Phuket.
+
+# Nightly Loyverse sync at 22:30 local (after close). Idempotent — a manual
+# "Sync now" earlier or a re-run never double-counts (slice 3).
+30 22 * * * set -a; . /etc/tangerine/env; set +a; cd /opt/tangerine/app && .venv/bin/python -m tangerine.sync >> /var/log/tangerine/sync.log 2>&1
+
+# Nightly SQLite snapshot at 03:00 local (quiet hour, after the sync settled).
+0 3 * * * set -a; . /etc/tangerine/env; set +a; /opt/tangerine/app/deploy/tangerine-snapshot.sh >> /var/log/tangerine/snapshot.log 2>&1

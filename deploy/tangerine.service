@@ -1,0 +1,45 @@
+# Tangerine Phuket — 9am review web app (Wave 1, Slice 6).
+#
+# systemd unit that runs the FastAPI app under uvicorn, behind nginx. Install:
+#
+#   sudo cp deploy/tangerine.service /etc/systemd/system/tangerine.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tangerine.service
+#
+# See DEPLOY.md for the full provisioning runbook (paths, user, env file).
+
+[Unit]
+Description=Tangerine Phuket 9am review (FastAPI/uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=tangerine
+Group=tangerine
+WorkingDirectory=/opt/tangerine/app
+
+# Secrets and config (Loyverse token, auth passphrase, signing secret, DB path)
+# live here, mode 0600, owned by root — never in the repo or the database.
+EnvironmentFile=/etc/tangerine/env
+
+# Run the app via uvicorn in factory mode: create_app() reads its DB path,
+# config paths, credentials, passphrase and signing secret from the
+# environment (the EnvironmentFile above). Bind to localhost only — nginx
+# terminates TLS and reverse-proxies to this port.
+ExecStart=/opt/tangerine/app/.venv/bin/uvicorn tangerine.web.app:create_app --factory --host 127.0.0.1 --port 8000
+
+# Restart on crash so a transient error does not take the tool offline
+# overnight (slice-6 AC: "systemd restarts the app on crash").
+Restart=on-failure
+RestartSec=2
+
+# Process hardening — least privilege for a single-purpose web service.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+# The app needs to write the SQLite DB and snapshots under /var/lib/tangerine.
+ReadWritePaths=/var/lib/tangerine
+
+[Install]
+WantedBy=multi-user.target

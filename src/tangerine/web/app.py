@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,10 +29,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
+from starlette.background import BackgroundTask
 
 from ..config.loader import load_assignees, load_costs, load_recipes
 from ..daily_review import DailyReview, build_daily_review
@@ -48,6 +50,12 @@ from .auth import (
     SessionAuthenticator,
     clear_session_cookie,
     set_session_cookie,
+)
+from .ratelimit import (
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_WINDOW_SECONDS,
+    LoginRateLimitMiddleware,
+    RateLimiter,
 )
 
 #: Default config file locations (operator-editable, shipped with the repo).
@@ -150,6 +158,8 @@ def create_app(
     signing_secret: str | None = None,
     cookie_secure: bool | None = None,
     inactivity_seconds: int | None = None,
+    login_rate_limit: int | None = None,
+    login_rate_window_seconds: int | None = None,
     now_epoch: int | None = None,
 ) -> FastAPI:
     """Build the FastAPI application.
@@ -255,6 +265,7 @@ def create_app(
 
     app.state.store = store
     app.state.source = source
+    app.state.db_path = db
     app.state.templates = templates
     app.state.today = today_date
     app.state.loyverse_urlopen = loyverse_urlopen_param
@@ -279,6 +290,37 @@ def create_app(
         authenticator=authenticator,
         config=auth_config,
         now_epoch=now_epoch,
+    )
+
+    # Login rate-limiting (slice 6): the shared passphrase is the only secret,
+    # so the login POST is the brute-force surface. The limiter is added after
+    # the auth middleware so it is the *outermost* layer — an over-budget POST
+    # is rejected with 429 before any other processing. ``/login`` is public to
+    # the auth gate, so the two never conflict. The limiter's clock reads
+    # ``app.state.now_epoch`` per request (None -> wall clock), so tests pin and
+    # advance it the same way the auth middleware's clock is driven.
+    resolved_login_limit = (
+        login_rate_limit if login_rate_limit is not None else DEFAULT_MAX_ATTEMPTS
+    )
+    resolved_login_window = (
+        login_rate_window_seconds
+        if login_rate_window_seconds is not None
+        else DEFAULT_WINDOW_SECONDS
+    )
+    login_limiter = RateLimiter(
+        max_attempts=resolved_login_limit,
+        window_seconds=resolved_login_window,
+    )
+    app.state.login_rate_limiter = login_limiter
+
+    def _login_now() -> int:
+        override = app.state.now_epoch
+        return override if override is not None else int(time.time())
+
+    app.add_middleware(
+        LoginRateLimitMiddleware,
+        limiter=login_limiter,
+        now=_login_now,
     )
 
     @app.get("/login", response_class=HTMLResponse)
@@ -352,6 +394,44 @@ def create_app(
         response = RedirectResponse(url="/login", status_code=303)
         clear_session_cookie(response)
         return response
+
+    @app.get("/admin/db-snapshot")
+    def db_snapshot() -> FileResponse:
+        """Download a consistent snapshot of the SQLite database.
+
+        PRD user story 28 / slice-6 issue: a partner can take an out-of-band
+        backup before risky maintenance by downloading the current database.
+        Gated behind login by the auth middleware (the path is not in
+        ``PUBLIC_PATHS``), so an unauthenticated request is redirected to
+        ``/login`` before reaching here.
+
+        The route copies the live database into a temp file via SQLite's
+        online-backup API rather than streaming the file off disk directly:
+        the backup is internally consistent even if a write lands mid-request
+        (the running app holds its own connection to the same file), and it
+        sidesteps OS-level file-locking on the open database. The temp file is
+        removed after the response is sent.
+        """
+        db_file: str = app.state.db_path
+        fd, tmp = tempfile.mkstemp(prefix="tangerine-snapshot-", suffix=".db")
+        os.close(fd)
+        src = sqlite3.connect(db_file)
+        try:
+            dst = sqlite3.connect(tmp)
+            try:
+                with dst:
+                    src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        stamp = app.state.today.isoformat()
+        return FileResponse(
+            tmp,
+            media_type="application/octet-stream",
+            filename=f"tangerine-snapshot-{stamp}.db",
+            background=BackgroundTask(os.remove, tmp),
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def root(request: Request) -> HTMLResponse:

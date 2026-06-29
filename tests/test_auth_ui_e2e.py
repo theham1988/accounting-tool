@@ -364,10 +364,12 @@ def test_tampered_cookie_redirects_to_login(tmp_path: Path) -> None:
     real = authenticator.sign(
         Session(assignee_id="daniel", last_activity=int(time.time()))
     )
-    # Flip one character somewhere in the payload. If the cookie is short or
-    # the flip lands on an unchanged-equality char, retry with a different
-    # position — the property we want is "any mutation breaks verification".
-    tampered = real[:-2] + ("a" if real[-2:] != "aa" else "b") + real[-1:]
+    # Flip the final character to a guaranteed-different one (the last char is
+    # part of the signature, so any change breaks verification). Choosing the
+    # replacement relative to the current char makes the mutation deterministic
+    # — earlier logic hard-coded "a", which was a no-op whenever that position
+    # already held an "a".
+    tampered = real[:-1] + ("a" if real[-1] != "a" else "b")
     assert tampered != real, "tamper did not actually change the cookie"
 
     client = TestClient(app)
