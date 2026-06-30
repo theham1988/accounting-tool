@@ -7,9 +7,205 @@
 # docs/PRD-WAVE-1.md "Migration path for the interim cost book").
 #
 # Convention: prices are quoted strings so YAML does not coerce them to float
-# (the engine carries Decimal money throughout).
+# (the engine carries Decimal money throughout). Each price is THB per smallest
+# unit (CONTEXT.md "Cost unit convention"): per g for solids, per ml for
+# liquids, per unit for countables.
+#
+# --------------------------------------------------------------------------
+# Rebuilt 2026-06-30 from Tangerine_Cost_of_Goods.xlsx ("1. Mapped" tab).
+# Source priority: Receipt (actually paid) > In-house prep (calc) > Makro web
+# (shelf) > existing costs.yaml. Prices are gross (incl VAT); divide by 1.07
+# for net. Trailing comments record the source line / pack size so the other
+# partner can verify the per-unit maths at PR review. A `[check]` marker flags
+# a tentative mapping (proxy product or assumed pack size) to confirm.
+#
+# COFFEE — two blends are offered:
+#   house / tangerine blend  -> coffee-beans-house  (Chann Poochar)
+#   dark blend               -> coffee-beans-dark   (Hai pistachio-choc) NEW SKU
+#   robusta dark roast       -> coffee-beans-robusta (Hillkoff, concentrates only)
+#
+# Seed examples chang-keg & beans-arabica removed (not real SKUs).
+# Recipe SKUs still without a cost are listed in the workbook's
+# "3. Still missing cost" tab (in-house preps needing a prep recipe, or
+# specialty items not stocked at Makro). The engine flags those as unpriced.
+# --------------------------------------------------------------------------
 
 costs:
-  chang-keg: { price: "0.07", updated_at: "2026-06-01" }
-  beans-arabica: { price: "2", updated_at: "2026-06-01" }
-  milk-fresh: { price: "0.025", updated_at: "2026-06-01" }
+  almond-ground: { price: "0.458", updated_at: "2026-06-30" }  # ARO Almond Powder 500 g
+  apple-green: { price: "0.093", updated_at: "2026-06-30" }  # MAKRO Granny Smith 10 pcs
+  apple-red: { price: "0.062", updated_at: "2026-06-30" }  # MAKRO Fuji Apple no.100 10 pcs
+  avocado: { price: "0.139", updated_at: "2026-06-30" }  # Makro Thai avocado 1kg=139
+  bacon: { price: "0.215", updated_at: "2026-06-30" }  # BMP Smoked Bacon 1 kg
+  baking-soda: { price: "0.10", updated_at: "2026-06-30" }  # MCGARRETT Baking Soda 300 g
+  banana: { price: "7.25", updated_at: "2026-06-30" }  # MAKRO Hom Banana 4 pcs
+  basil-leaves: { price: "0.097", updated_at: "2026-06-30" }  # MAKRO Sweet Basil Leaf 300 g
+  beef-burger-patty: { price: "26.5", updated_at: "2026-06-30" }  # NIDA Beef Burger Patty 1 kg (100 g x10)
+  beetroot: { price: "0.055", updated_at: "2026-06-30" }  # MAKRO Beet Root Pack 1 kg
+  biscoff: { price: "0.308", updated_at: "2026-06-30" }  # LOTUS BISCOFF Caramelised Crumbs 750 g
+  blueberry: { price: "0.105", updated_at: "2026-06-30" }  # ARO Frozen Blueberry 1 kg
+  bonito-flakes: { price: "2.14", updated_at: "2026-06-30" }  # FUKUSHIMA Hana Katsuo Bonito 500 g
+  bread-shokupan: { price: "0.125", updated_at: "2026-06-30" }  # FARMHOUSE Hokkaido Milk Bread 240 g  [check]
+  bread-sourdough: { price: "7.9", updated_at: "2026-06-30" }  # MAKRO Sourdough Multigrain 330 g
+  bread-white: { price: "1.8", updated_at: "2026-06-30" }  # ARO GOLD Sliced Sandwich Bread 600 g
+  breadcrumbs: { price: "0.072", updated_at: "2026-06-30" }  # UNCLE BARNS Bread Crumbs 1 kg
+  butter: { price: "0.19", updated_at: "2026-06-30" }  # ALLOWRIE Value Unsalted Butter 2 kg
+  butter-salted: { price: "0.19", updated_at: "2026-06-30" }  # ALLOWRIE Value Salted Butter 2 kg
+  carrot: { price: "0.033", updated_at: "2026-06-30" }  # MAKRO Australian Carrot 1.5 kg
+  celery: { price: "0.069", updated_at: "2026-06-30" }  # MAKRO Import Celery 1 kg
+  cheese-cheddar: { price: "0.349", updated_at: "2026-06-30" }  # ARO Cheddar Cheese Block 1 kg
+  cheese-parmesan: { price: "0.569", updated_at: "2026-06-30" }  # ARO shred parmesan 1kg=569
+  cheese-shredded: { price: "0.330", updated_at: "2026-06-30" }  # ARO Shredded Mozzarella Cheese 1 kg
+  cheese-slice: { price: "0.346", updated_at: "2026-06-30" }  # ARO White Burger Processed Cheese Slice 980 g
+  cheese-slice-orange: { price: "0.366", updated_at: "2026-06-30" }  # ARO Color Burger Processed Cheese Slice 980 g
+  cheese-slice-white: { price: "0.346", updated_at: "2026-06-30" }  # ARO White Burger Processed Cheese Slice 980 g
+  chia-seed: { price: "0.611", updated_at: "2026-06-30" }  # BABOO Chia Seeds 450 g
+  chicken-thigh: { price: "0.079", updated_at: "2026-06-30" }  # Makro 79/kg (06-20)
+  chili-dried: { price: "0.158", updated_at: "2026-06-30" }  # MAKRO Dried Jinda Chili 500 g
+  chili-fresh: { price: "0.107", updated_at: "2026-06-30" }  # Makro birdseye 300g=32
+  chili-powder-togarashi: { price: "0.493", updated_at: "2026-06-30" }  # S&B Ichimi Togarashi 300 g
+  choc-syrup-hershey: { price: "0.281", updated_at: "2026-06-30" }  # HERSHEY'S Chocolate Syrup 623 g
+  chorizo: { price: "1.55", updated_at: "2026-06-30" }  # TGM Chorizo 100g=155
+  citric-acid: { price: "0.50", updated_at: "2026-06-30" }  # MCGARRETT Citric Acid 100 g (x2=100)
+  cocoa-powder: { price: "0.40", updated_at: "2026-06-30" }  # Barry Callebaut DF700 1kg = 399
+  coffee-beans-dark: { price: "0.856", updated_at: "2026-06-30" }  # Hai pistachio-choc DARK BLEND 5kg = 4,280 gross (ex-VAT 0.80)  [check]
+  coffee-beans-house: { price: "0.65", updated_at: "2026-06-30" }  # House/Tangerine blend 5kg = 3,250 (Chann Poochar)
+  coffee-beans-robusta: { price: "0.208", updated_at: "2026-06-30" }  # Hillkoff robusta dark roast ~1kg (416/2 packs)
+  coffee-cold-brew-dark: { price: "0.0189", updated_at: "2026-06-30" }  # calc 41.6 THB / 2200g batch
+  coffee-dark-con: { price: "0.0416", updated_at: "2026-06-30" }  # calc 83.2 THB / 2000g batch
+  coffee-latte-con: { price: "0.0858", updated_at: "2026-06-30" }  # calc 171.6 THB / 2000g batch
+  coke: { price: "0.029", updated_at: "2026-06-30" }  # COKE Original 500 ml (x24=350)
+  corn: { price: "0.069", updated_at: "2026-06-30" }  # ARO Frozen Sweet Corn Kernel 1 kg
+  corn-grilled: { price: "0.069", updated_at: "2026-06-30" }  # = corn
+  crabstick: { price: "0.152", updated_at: "2026-06-30" }  # ARO Imitation Crab Stick 1 kg
+  cream-cheese: { price: "0.330", updated_at: "2026-06-30" }  # ANCHOR Cream Cheese 1 kg
+  cucumber-japanese: { price: "0.058", updated_at: "2026-06-30" }  # MAKRO Long Cucumber 500 g  [check]
+  cucumber-pickled: { price: "0.058", updated_at: "2026-06-30" }  # = cucumber-japanese
+  cumin-powder: { price: "0.395", updated_at: "2026-06-30" }  # MAKRO Cumin Powder 200 g
+  dressing-sesame: { price: "0.255", updated_at: "2026-06-30" }  # Kewpie Roasted Sesame Dressing 1L=255
+  edamame: { price: "0.089", updated_at: "2026-06-30" }  # Makro edamame 1kg=89
+  egg: { price: "4.00", updated_at: "2026-06-30" }  # Makro 120/30 (06-20)
+  flour-corn: { price: "0.036", updated_at: "2026-06-30" }  # ARO Corn Starch 1 kg
+  flour-crispy: { price: "0.177", updated_at: "2026-06-30" }  # LOBO Crispy Frying Flour 150 g x6  [check]
+  flour-tempura: { price: "0.12", updated_at: "2026-06-30" }  # UNCLE BARNS Tempura Flour 1 kg
+  garlic: { price: "0.065", updated_at: "2026-06-30" }  # Makro Chinese garlic 1kg=65
+  garlic-fried: { price: "0.159", updated_at: "2026-06-30" }  # MAKRO Fried Garlic 1 kg
+  garlic-powder: { price: "0.38", updated_at: "2026-06-30" }  # PHUENGLUANG Garlic Powder 500 g
+  ginger: { price: "0.025", updated_at: "2026-06-30" }  # MAKRO Small Mature Ginger 1 kg
+  ginger-young: { price: "0.121", updated_at: "2026-06-30" }  # BAMBOO Pink Pickled Ginger 700 g
+  granola: { price: "0.19", updated_at: "2026-06-30" }  # ARO Cereal Muesli Fruity 1 kg  [check]
+  ham: { price: "0.295", updated_at: "2026-06-30" }  # ARO Pork Ham 1 kg
+  honey: { price: "0.095", updated_at: "2026-06-30" }  # Honey Queen 7kg = 668
+  ice-cream: { price: "0.367", updated_at: "2026-06-30" }  # NESTLE Ice Cream Pint 240 g (bulk tub cheaper)  [check]
+  jalapeno: { price: "0.15", updated_at: "2026-06-30" }  # Doi Inthanon 1kg ~150
+  kombu: { price: "0.85", updated_at: "2026-06-30" }  # ARO Kombu Dried Seaweed 100 g
+  lemon: { price: "15.3", updated_at: "2026-06-30" }  # ARO Lemon 6 pcs
+  lettuce-mixed: { price: "0.19", updated_at: "2026-06-30" }  # Makro hydro lettuce 500g=95 (06-17)
+  lettuce-romaine: { price: "0.19", updated_at: "2026-06-30" }  # Makro cos lettuce 500g=95
+  lime: { price: "0.122", updated_at: "2026-06-30" }  # MAKRO Seedless Lime 10 pcs
+  matcha-kai: { price: "1.95", updated_at: "2026-06-30" }  # BONCAFE Culinary Matcha 100 g  [check]
+  matcha-maki: { price: "1.75", updated_at: "2026-06-30" }  # ARO Matcha Green Tea Powder 120 g  [check]
+  matcha-mixed: { price: "1.8833", updated_at: "2026-06-30" }  # calc 565.0 THB / 300g batch
+  mayonnaise: { price: "0.085", updated_at: "2026-06-30" }  # ARO Mayonnaise 1 kg
+  milk-carnation: { price: "0.063", updated_at: "2026-06-30" }  # CARNATION Evaporated Milk 1 kg
+  milk-coconut: { price: "0.082", updated_at: "2026-06-30" }  # CHAOKOH Coconut Milk 1 l
+  milk-condensed: { price: "0.067", updated_at: "2026-06-30" }  # MALI Sweetened Condensed Milk 2 kg
+  milk-foam: { price: "0.025", updated_at: "2026-06-30" }  # = milk-fresh
+  milk-fresh: { price: "0.025", updated_at: "2026-06-30" }  # current costs.yaml
+  milo-powder: { price: "0.20", updated_at: "2026-06-30" }  # MILO Active Go Chocolate Malt 900 g
+  mushroom-champignon: { price: "0.258", updated_at: "2026-06-30" }  # MAKRO White Button (Champignon) Mushroom 500 g
+  mustard: { price: "0.113", updated_at: "2026-06-30" }  # Makro French mustard 337/2.98kg
+  nori-sheet: { price: "5.0", updated_at: "2026-06-30" }  # TABERU Roasted Seaweed 105 g  [check]
+  nutella: { price: "0.579", updated_at: "2026-06-30" }  # NUTELLA Hazelnut Spread 1 kg
+  oil-sesame: { price: "0.212", updated_at: "2026-06-30" }  # ARO Sesame Oil 650 ml
+  oil-vegetable: { price: "0.07", updated_at: "2026-06-30" }  # YOK Rice Bran Oil 1 l (x6=420)
+  olive-oil: { price: "0.39", updated_at: "2026-06-30" }  # CARBONELL Pure Olive Oil 1 l
+  onion: { price: "0.035", updated_at: "2026-06-30" }  # Makro onion 1kg=35
+  onion-fried: { price: "0.293", updated_at: "2026-06-30" }  # ARO Fried Shallot 400 g
+  orange: { price: "0.049", updated_at: "2026-06-30" }  # Makro 49/kg (06-17)
+  oregano: { price: "0.9", updated_at: "2026-06-30" }  # MAKRO Oregano 50 g
+  oreo: { price: "0.218", updated_at: "2026-06-30" }  # OREO Crushed Cookie Pieces 454 g
+  pancake: { price: "0.094", updated_at: "2026-06-30" }  # ARO Pancake Flour 800 g
+  paprika-powder: { price: "0.188", updated_at: "2026-06-30" }  # ARO Paprika Powder 500 g
+  peanut-butter: { price: "0.26", updated_at: "2026-06-30" }  # SKIPPY Creamy Peanut Butter 1 kg
+  pepper-black: { price: "0.165", updated_at: "2026-06-30" }  # SAVEPAK Ground Pepper 1 kg
+  pepper-white: { price: "0.43", updated_at: "2026-06-30" }  # ARO Ground White Pepper 500 g
+  pineapple: { price: "0.065", updated_at: "2026-06-30" }  # MAKRO Pattavia Pineapple 1 pc  [check]
+  pineapple-grilled: { price: "0.065", updated_at: "2026-06-30" }  # = pineapple
+  pomegranate: { price: "0.092", updated_at: "2026-06-30" }  # ARO Frozen Pomegranate Seed 1 kg
+  pomelo: { price: "0.118", updated_at: "2026-06-30" }  # MAKRO Thong Dee Pomelo 1 pc  [check]
+  pork-minced: { price: "0.109", updated_at: "2026-06-30" }  # Makro minced pork 30% 109/kg (06-20)
+  pork-neck: { price: "0.135", updated_at: "2026-06-30" }  # Makro 135/kg (06-17)
+  potato: { price: "0.021", updated_at: "2026-06-30" }  # MAKRO Imported Potato 1 kg
+  radish-red: { price: "0.15", updated_at: "2026-06-30" }  # ARO Red Radish 500 g
+  rice-japanese: { price: "0.04", updated_at: "2026-06-30" }  # ARO Japanese Rice for Sushi 5 kg
+  rice-nori: { price: "0.04", updated_at: "2026-06-30" }  # ARO Japanese Rice for Sushi 5 kg
+  rice-poke: { price: "0.04", updated_at: "2026-06-30" }  # ARO Japanese Rice for Sushi 5 kg
+  rice-sushi: { price: "0.04", updated_at: "2026-06-30" }  # ARO Japanese Rice for Sushi 5 kg
+  rice-thai: { price: "0.044", updated_at: "2026-06-30" }  # jasmine ~5kg=218  [check]
+  salmon: { price: "0.645", updated_at: "2026-06-30" }  # MOWI salmon+tuna trim 645/kg
+  salmon-smoked: { price: "1.038", updated_at: "2026-06-30" }  # ARO GOLD Frozen Smoked Salmon/Trout Sliced 500 g
+  salt: { price: "0.01", updated_at: "2026-06-30" }  # THIP SALT Iodized Refined Salt 1 kg
+  salt-pink: { price: "0.258", updated_at: "2026-06-30" }  # Zalt Himalayan Pink Salt 500 g
+  sauce-kikkoman: { price: "0.179", updated_at: "2026-06-30" }  # KIKKOMAN Soy Sauce 1.6 l
+  sauce-oyster: { price: "0.079", updated_at: "2026-06-30" }  # MAEKRUA Oyster Sauce 2.5 l
+  sauce-pesto: { price: "0.2842", updated_at: "2026-06-30" }  # calc 217.4 THB / 765g batch
+  sauce-spaghetti-tomato: { price: "0.103", updated_at: "2026-06-30" }  # Knorr Rich Pasta Sauce 1kg=103
+  sauce-spicy-mayo: { price: "0.0667", updated_at: "2026-06-30" }  # calc 10.0 THB / 151g batch
+  sauce-sriracha: { price: "0.029", updated_at: "2026-06-30" }  # ARO Sriracha Chili Sauce 1 kg
+  sauce-teriyaki: { price: "0.09", updated_at: "2026-06-30" }  # ARO Teriyaki Sauce 1 l
+  sauce-tomato-ketchup: { price: "0.03", updated_at: "2026-06-30" }  # ARO Tomato Sauce 1 kg
+  sausage-chorizo: { price: "1.55", updated_at: "2026-06-30" }  # TGM Chorizo 100 g
+  sausage-pork: { price: "0.19", updated_at: "2026-06-30" }  # CP Breakfast Sausage 500 g
+  seaweed-salad: { price: "0.119", updated_at: "2026-06-30" }  # ARO Frozen Green Seaweed Salad (chuka wakame) 1 kg
+  seaweed-shredded: { price: "1.40", updated_at: "2026-06-30" }  # BANDARAN Shredded Seaweed Topping 50 g  [check]
+  sesame-black: { price: "0.14", updated_at: "2026-06-30" }  # MAKRO Black Sesame 500 g
+  sesame-white: { price: "0.138", updated_at: "2026-06-30" }  # MAKRO White Sesame 500 g
+  shallot: { price: "0.048", updated_at: "2026-06-30" }  # Makro 48/kg (06-17)
+  shrimp-sushi: { price: "0.36", updated_at: "2026-06-30" }  # CP Frozen Cooked Shrimp 31-40/kg 1 kg  [check]
+  shrimp-white: { price: "0.175", updated_at: "2026-06-30" }  # MAKRO PD Tail-On White Shrimp 56-66/kg 1 kg  [check]
+  soda-water: { price: "0.024", updated_at: "2026-06-30" }  # SINGHA Soda 325 ml (x24=190)
+  sour-cream: { price: "0.233", updated_at: "2026-06-30" }  # ARO Sour Cream 450 g
+  spaghetti: { price: "0.098", updated_at: "2026-06-30" }  # ARO spaghetti 500g=49
+  spam: { price: "0.297", updated_at: "2026-06-30" }  # TULIP Pork Luncheon Meat 340 g
+  spring-onion: { price: "0.213", updated_at: "2026-06-30" }  # MAKRO Spring Onion Pack 150 g
+  sugar: { price: "0.027", updated_at: "2026-06-30" }  # MITR PHOL Pure Refined Sugar 1 kg (5x135)
+  sugar-unbleached: { price: "0.057", updated_at: "2026-06-30" }  # MITR PHOL Cane+Coconut Sugar 1 kg  [check]
+  syrup-caramel: { price: "0.17", updated_at: "2026-06-30" }  # Juniper butterscotch 500g = 85
+  syrup-haleblueboy-red: { price: "0.096", updated_at: "2026-06-30" }  # HALE'S BLUE BOY Sala (red) Syrup 710 ml
+  syrup-lemon: { price: "0.279", updated_at: "2026-06-30" }  # MONIN Rantcho Lemon Syrup 700 ml
+  syrup-mandarin-sunquick: { price: "0.269", updated_at: "2026-06-30" }  # SUNQUICK Concentrated Mandarin 1 l
+  syrup-maple: { price: "0.116", updated_at: "2026-06-30" }  # IMPERIAL Maple Syrup 730 ml
+  syrup-strawberry: { price: "0.181", updated_at: "2026-06-30" }  # LONG BEACH Strawberry Syrup 740 ml
+  syrup-sugar: { price: "0.054", updated_at: "2026-06-30" }  # MITR PHOL Syrup 800 ml
+  syrup-tangerine: { price: "0.2110", updated_at: "2026-06-30" }  # calc 94.9 THB / 450g batch
+  syrup-yuzu: { price: "0.3598", updated_at: "2026-06-30" }  # calc 180.3 THB / 501g batch
+  tea-earl-grey: { price: "9.16", updated_at: "2026-06-30" }  # TWININGS Earl Grey 2 g x25
+  tea-english-breakfast: { price: "9.16", updated_at: "2026-06-30" }  # TWININGS English Breakfast 2 g x25
+  tea-lemongrass: { price: "0.097", updated_at: "2026-06-30" }  # MAKRO Lemon Grass 300 g (fresh) / Dr.Green herbal tea  [check]
+  tea-peach: { price: "9.16", updated_at: "2026-06-30" }  # TWININGS-style fruit teabag (proxy)  [check]
+  tobiko: { price: "0.72", updated_at: "2026-06-30" }  # Siam Food Capelin Roe (Ebiko) 500 g
+  tofu: { price: "0.114", updated_at: "2026-06-30" }  # MOKI Tofu 1.2 kg
+  tofu-cold: { price: "0.114", updated_at: "2026-06-30" }  # MOKI Tofu 1.2 kg
+  tomato: { price: "0.045", updated_at: "2026-06-30" }  # ARO Tomatoes 1 kg
+  tomato-cherry: { price: "0.09", updated_at: "2026-06-30" }  # Makro cherry tomato 500g=45
+  tonic-water: { price: "0.042", updated_at: "2026-06-30" }  # SCHWEPPES Tonic Water 330 ml (x6=83)
+  topping-caramel: { price: "0.0797", updated_at: "2026-06-30" }  # calc 45.0 THB / 565g batch
+  tortilla: { price: "7.51", updated_at: "2026-06-30" }  # Mission wrap case=10 packs  [check]
+  tuna-canned: { price: "0.202", updated_at: "2026-06-30" }  # ARO x NAUTILUS Tuna Chunk in Brine 165 g x4
+  tuna-fresh: { price: "0.645", updated_at: "2026-06-30" }  # MOWI trim 645/kg  [check]
+  vinegar: { price: "0.043", updated_at: "2026-06-30" }  # Makro vinegar 1L=43
+  waffle: { price: "0.067", updated_at: "2026-06-30" }  # UFM Waffle Mix 1 kg
+  wasabi-fresh: { price: "0.678", updated_at: "2026-06-30" }  # ARO Frozen Wasabi Paste 500 g
+  water-filtered: { price: "0.00", updated_at: "2026-06-30" }  # filtered tap (negligible)
+  whipping-cream: { price: "0.229", updated_at: "2026-06-30" }  # ANCHOR Whipping Cream 1 l
+  whipping-gold: { price: "0.154", updated_at: "2026-06-30" }  # MILLAC Gold Cream 1 l
+  yogurt-greek: { price: "0.50", updated_at: "2026-06-30" }  # Greek yogurt 500g = 250
+  yogurt-homemade: { price: "0.0208", updated_at: "2026-06-30" }  # calc 25.0 THB / 1200g batch  [check]
+  yuzu-concentrate: { price: "0.778", updated_at: "2026-06-30" }  # NAKAMURA CAPTAIN Yuzu Syrup 600 ml (x3=1400)  [check]
+
+  # --------------------------------------------------------------------------
+  # Priced but not used by any current recipe (workbook "2. Costs not in
+  # recipes" tab). Kept for reference; the engine simply ignores unused SKUs.
+  # --------------------------------------------------------------------------
+  pork-belly: { price: "0.186", updated_at: "2026-06-30" }  # Makro pork belly sliced 186/kg (06-20)
+  mushroom-king-oyster: { price: "0.14", updated_at: "2026-06-30" }  # Makro king oyster 300g=42 (06-20)

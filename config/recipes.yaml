@@ -5,24 +5,1373 @@
 # review (PRD user story 22: recipes are high-stakes — a wrong quantity
 # silently corrupts every margin number).
 #
-# Convention: quantities and target margins are quoted strings so YAML does
-# not coerce them to float (the engine carries Decimal money throughout).
+# Convention (CONTEXT.md "Cost unit convention"): quantities are in the SKU's
+# smallest unit — ml for liquids, g for solids, "unit" for countables (eggs,
+# slices, pieces). Quantities and target margins are quoted strings so YAML
+# does not coerce them to float (the engine carries Decimal money throughout).
+#
+# Authored from the partner-supplied source documents (Feb 2024–Feb 2026):
+#   - Tangerine_Ptor_Revise03092024.xlsx  (drinks: coffee/tea/matcha/yuzu/
+#                                          fruit/milk&yogurt/cocoa)
+#   - Tangerine Kitchen Recipe.docx       (kitchen food + cold-pressed juice)
+#   - Recipe Book Feb 2024 (Sauce & Meat).pdf / menu PDF
+#   - menu.tsv                            (Loyverse item ids for mappings)
+#
+# Granularity: per-variant SKUs (one SKU per blend/brand/menu item), per the
+# partner's decision. Quantities for Thai spoon measures are converted at
+# 1 tbsp (ช้อนโต๊ะ) = 15, 1 tsp (ช้อนชา) = 5, 1 pinch (หยิบมือ) = 2,
+# 1 pepper grind (หมุน) ≈ 0.2, 1 butter knob (ก้อน) ≈ 10. Where the source
+# gave a range, the midpoint is used. These are best-effort from the recipe
+# book; partners refine quantities through the normal review (PR) flow.
+#
+# Costs are intentionally omitted from config/costs.yaml for the new ingredient
+# SKUs below (no price data in the source docs). The margin engine flags such
+# items as "unpriced" and excludes them from totals until a partner fills the
+# price — correct Wave 1 behaviour, not a bug.
+#
+# Segment: the whole recipe book is the cafe/kitchen daytime operation, so all
+# recipes below are tagged `cafe`. Bar-segment lines (draught beer, wine, RTD
+# cocktails, soft drinks) have no recipe in the source docs and correctly
+# surface in the daily review's "unmapped" section.
 
 recipes:
-  - sku_id: chang-draft-500
-    name: Chang Draft 500ml
-    segment: bar
-    ingredients:
-      - { sku_id: chang-keg, quantity: "500" }
 
-  - sku_id: espresso-latte
-    name: Espresso Latte
+  # ======================================================================
+  # PREP SUB-RECIPES (internal, not sold directly — not mapped to Loyverse)
+  # Documented here so the composition is captured; the engine costs sold
+  # items from their ingredient SKUs (it does not recurse into prep recipes),
+  # so each prep output below is also a costable ingredient SKU in its own
+  # right once a partner prices it.
+  # ======================================================================
+
+  - sku_id: prep-dark-con
+    name: "Prep: Dark Concentrate (Robusta cold brew 1:4)"
     segment: cafe
     ingredients:
-      - { sku_id: beans-arabica, quantity: "20" }
-      - { sku_id: milk-fresh, quantity: "200" }
+      - { sku_id: coffee-beans-robusta, quantity: "400" }
+      - { sku_id: water-filtered, quantity: "1600" }
+    yield_units: 1
 
-# Loyverse item id -> master SKU mappings. Add one per Loyverse menu item that
-# maps to a recipe above. Items without a mapping are surfaced in the daily
-# review's "unmapped" section rather than silently costed at zero.
-mappings: []
+  - sku_id: prep-latte-con
+    name: "Prep: Latte Concentrate (Robusta+House 1:1, cold brew 1:4)"
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-robusta, quantity: "200" }
+      - { sku_id: coffee-beans-house, quantity: "200" }
+      - { sku_id: water-filtered, quantity: "1600" }
+    yield_units: 1
+
+  - sku_id: prep-cold-brew-dark
+    name: "Prep: Dark Cold Brew, ready-to-drink (Robusta 1:10)"
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-robusta, quantity: "200" }
+      - { sku_id: water-filtered, quantity: "2000" }
+    yield_units: 1
+
+  - sku_id: prep-tangerine-syrup
+    name: "Prep: Tangerine Syrup"
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-mandarin-sunquick, quantity: "250" }
+      - { sku_id: syrup-haleblueboy-red, quantity: "100" }
+      - { sku_id: syrup-strawberry, quantity: "100" }
+    yield_units: 1
+
+  - sku_id: prep-yuzu-syrup
+    name: "Prep: Yuzu Syrup (Yuzu:Honey:Syrup 2:2:1)"
+    segment: cafe
+    ingredients:
+      - { sku_id: yuzu-concentrate, quantity: "200" }
+      - { sku_id: honey, quantity: "200" }
+      - { sku_id: syrup-sugar, quantity: "100" }
+      - { sku_id: salt-pink, quantity: "1" }
+    yield_units: 1
+
+  - sku_id: prep-matcha-mixed
+    name: "Prep: Matcha Mixed blend (Maki:MatchaKai 1:2)"
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-maki, quantity: "100" }
+      - { sku_id: matcha-kai, quantity: "200" }
+    yield_units: 1
+
+  - sku_id: prep-spicy-sandwich-sauce
+    name: "Prep: Spicy Sandwich Sauce (mayo + sriracha)"
+    segment: cafe
+    ingredients:
+      - { sku_id: mayonnaise, quantity: "100" }
+      - { sku_id: sauce-sriracha, quantity: "50" }
+      - { sku_id: pepper-black, quantity: "0.6" }
+    yield_units: 1
+
+  - sku_id: prep-caramel-sauce
+    name: "Prep: Caramel Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: sugar-unbleached, quantity: "250" }
+      - { sku_id: water-filtered, quantity: "5" }
+      - { sku_id: whipping-gold, quantity: "125" }
+      - { sku_id: milk-condensed, quantity: "125" }
+      - { sku_id: milk-fresh, quantity: "50" }
+      - { sku_id: butter-salted, quantity: "10" }
+    yield_units: 1
+
+  - sku_id: prep-pesto-sauce
+    name: "Prep: Pesto Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: basil-leaves, quantity: "150" }
+      - { sku_id: garlic, quantity: "80" }
+      - { sku_id: salt, quantity: "20" }
+      - { sku_id: pepper-black, quantity: "15" }
+      - { sku_id: olive-oil, quantity: "500" }
+    yield_units: 1
+
+  - sku_id: prep-homemade-yogurt
+    name: "Prep: Homemade Yogurt"
+    segment: cafe
+    ingredients:
+      - { sku_id: yogurt-starter, quantity: "200" }
+      - { sku_id: milk-fresh, quantity: "1000" }
+    yield_units: 1
+
+  - sku_id: prep-pork-marinade
+    name: "Prep: HK Fried Pork (marinated neck)"
+    segment: cafe
+    ingredients:
+      - { sku_id: pork-neck, quantity: "150" }
+      - { sku_id: water-filtered, quantity: "30" }
+      - { sku_id: baking-soda, quantity: "1" }
+      - { sku_id: sauce-kikkoman, quantity: "10" }
+      - { sku_id: sauce-oyster, quantity: "10" }
+      - { sku_id: sugar, quantity: "3" }
+      - { sku_id: cooking-wine-chinese, quantity: "8" }
+      - { sku_id: pepper-white, quantity: "2" }
+      - { sku_id: flour-corn, quantity: "5" }
+      - { sku_id: flour-crispy, quantity: "20" }
+      - { sku_id: breadcrumbs, quantity: "10" }
+    yield_units: 1
+
+  # ======================================================================
+  # CAFE — COFFEE
+  # ======================================================================
+
+  - sku_id: espresso
+    name: Espresso
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "18" }
+
+  - sku_id: americano-hot
+    name: Americano (Hot)
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "18" }
+      - { sku_id: water-filtered, quantity: "120" }
+
+  - sku_id: americano-orange
+    name: Americano Orange
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "18" }
+      - { sku_id: water-filtered, quantity: "100" }
+      - { sku_id: syrup-mandarin-sunquick, quantity: "15" }
+
+  - sku_id: latte
+    name: Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-latte-con, quantity: "50" }
+      - { sku_id: milk-fresh, quantity: "100" }
+      - { sku_id: milk-condensed, quantity: "25" }
+
+  - sku_id: piccolo-latte
+    name: Piccolo Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "19.5" }
+      - { sku_id: milk-fresh, quantity: "60" }
+
+  - sku_id: cappuccino
+    name: Cappuccino
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "19.5" }
+      - { sku_id: milk-fresh, quantity: "125" }
+
+  - sku_id: flat-white
+    name: Flat White
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "19.5" }
+      - { sku_id: milk-fresh, quantity: "125" }
+
+  - sku_id: espresso-macchiato
+    name: Espresso Macchiato
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "19.5" }
+      - { sku_id: milk-fresh, quantity: "30" }
+
+  - sku_id: mocha
+    name: Mocha (Iced)
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-dark-con, quantity: "50" }
+      - { sku_id: cocoa-powder, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "20" }
+      - { sku_id: milk-condensed, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "60" }
+      - { sku_id: choc-syrup-hershey, quantity: "10" }
+
+  - sku_id: caramel-cafe-latte
+    name: Caramel Cafe Latte (Iced)
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "19.5" }
+      - { sku_id: syrup-caramel, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "100" }
+      - { sku_id: topping-caramel, quantity: "10" }
+
+  - sku_id: drip-coffee
+    name: Drip Coffee
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "20" }
+      - { sku_id: water-filtered, quantity: "200" }
+
+  - sku_id: white-wash
+    name: White Wash
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-dark-con, quantity: "50" }
+      - { sku_id: milk-condensed, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "60" }
+      - { sku_id: choc-syrup-hershey, quantity: "10" }
+      - { sku_id: candy-tubtab, quantity: "1" }
+      - { sku_id: milk-foam, quantity: "20" }
+
+  - sku_id: coffee-tonic
+    name: C&T (Coffee Tonic)
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-dark-con, quantity: "50" }
+      - { sku_id: syrup-sugar, quantity: "5" }
+      - { sku_id: tonic-water, quantity: "120" }
+      - { sku_id: lemon, quantity: "0.05" }
+
+  - sku_id: coffee-cola
+    name: Coffee Cola
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "18" }
+      - { sku_id: syrup-lemon-honey, quantity: "15" }
+      - { sku_id: coke, quantity: "120" }
+
+  - sku_id: yuzu-coffee
+    name: Yuzu Coffee
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-yuzu, quantity: "25" }
+      - { sku_id: coffee-cold-brew-dark, quantity: "100" }
+      - { sku_id: soda-water, quantity: "20" }
+
+  - sku_id: sun-down
+    name: Sun Down
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-latte-con, quantity: "50" }
+      - { sku_id: syrup-tangerine, quantity: "30" }
+      - { sku_id: citric-acid, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "50" }
+
+  - sku_id: pbnc
+    name: PBNC (Peanut Butter Nutella Coffee)
+    segment: cafe
+    ingredients:
+      - { sku_id: nutella, quantity: "15" }
+      - { sku_id: peanut-butter, quantity: "15" }
+      - { sku_id: milk-condensed, quantity: "20" }
+      - { sku_id: water-filtered, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "60" }
+      - { sku_id: coffee-dark-con, quantity: "50" }
+      - { sku_id: cream-cheese, quantity: "30" }
+
+  - sku_id: chocoholic
+    name: Chocoholic
+    segment: cafe
+    ingredients:
+      - { sku_id: milo-powder, quantity: "15" }
+      - { sku_id: cocoa-powder, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "40" }
+      - { sku_id: milk-condensed, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "60" }
+      - { sku_id: cream-cheese, quantity: "20" }
+
+  # ======================================================================
+  # CAFE — TEA
+  # ======================================================================
+
+  - sku_id: peach-tea
+    name: Peach Tea
+    segment: cafe
+    ingredients:
+      - { sku_id: tea-peach, quantity: "1" }
+      - { sku_id: water-filtered, quantity: "120" }
+      - { sku_id: syrup-sugar, quantity: "25" }
+      - { sku_id: citric-acid, quantity: "5" }
+
+  - sku_id: earl-grey
+    name: Earl Grey
+    segment: cafe
+    ingredients:
+      - { sku_id: tea-earl-grey, quantity: "1" }
+      - { sku_id: water-filtered, quantity: "220" }
+
+  - sku_id: lemon-lemongrass-tea
+    name: Lemon Lemongrass Tea
+    segment: cafe
+    ingredients:
+      - { sku_id: tea-lemongrass, quantity: "1" }
+      - { sku_id: water-filtered, quantity: "120" }
+      - { sku_id: syrup-lemon, quantity: "25" }
+      - { sku_id: citric-acid, quantity: "5" }
+
+  - sku_id: tangerine-signature-tea
+    name: Tangerine Signature Tea
+    segment: cafe
+    ingredients:
+      - { sku_id: tea-signature, quantity: "1" }
+      - { sku_id: water-filtered, quantity: "120" }
+      - { sku_id: syrup-tangerine, quantity: "30" }
+      - { sku_id: citric-acid, quantity: "5" }
+
+  - sku_id: english-breakfast-tea
+    name: English Breakfast Tea
+    segment: cafe
+    ingredients:
+      - { sku_id: tea-english-breakfast, quantity: "1" }
+      - { sku_id: water-filtered, quantity: "220" }
+
+  # ======================================================================
+  # CAFE — MATCHA
+  # ======================================================================
+
+  - sku_id: matcha-latte
+    name: Matcha Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-mixed, quantity: "3" }
+      - { sku_id: milk-fresh, quantity: "150" }
+      - { sku_id: milk-condensed, quantity: "20" }
+
+  - sku_id: matcha-nutella
+    name: Matcha Nutella
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-mixed, quantity: "3" }
+      - { sku_id: milk-fresh, quantity: "150" }
+      - { sku_id: nutella, quantity: "15" }
+
+  - sku_id: matcha-coconut
+    name: Matcha Coconut
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-mixed, quantity: "3" }
+      - { sku_id: milk-coconut, quantity: "150" }
+      - { sku_id: syrup-sugar, quantity: "15" }
+
+  - sku_id: clear-matcha
+    name: Clear Matcha
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-maki, quantity: "3" }
+      - { sku_id: water-filtered, quantity: "120" }
+      - { sku_id: lemon, quantity: "0.05" }
+
+  - sku_id: lemon-usucha
+    name: Lemon Usucha
+    segment: cafe
+    ingredients:
+      - { sku_id: matcha-maki, quantity: "3" }
+      - { sku_id: water-filtered, quantity: "120" }
+      - { sku_id: syrup-lemon, quantity: "17" }
+      - { sku_id: lemon-dried, quantity: "1" }
+
+  # ======================================================================
+  # CAFE — FRUIT SODA
+  # ======================================================================
+
+  - sku_id: tangerine-soda
+    name: Tangerine Fruit Soda
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-tangerine, quantity: "30" }
+      - { sku_id: citric-acid, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "30" }
+      - { sku_id: soda-water, quantity: "120" }
+
+  - sku_id: strawberry-soda
+    name: Strawberry Soda
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-strawberry, quantity: "30" }
+      - { sku_id: citric-acid, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "30" }
+      - { sku_id: soda-water, quantity: "120" }
+
+  - sku_id: yuzu-soda
+    name: Yuzu Soda
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-yuzu, quantity: "25" }
+      - { sku_id: water-filtered, quantity: "30" }
+      - { sku_id: soda-water, quantity: "100" }
+
+  # ======================================================================
+  # CAFE — MILK & YOGURT
+  # ======================================================================
+
+  - sku_id: caramel-milk
+    name: Caramel Milk (Iced)
+    segment: cafe
+    ingredients:
+      - { sku_id: syrup-caramel, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "130" }
+      - { sku_id: topping-caramel, quantity: "10" }
+
+  - sku_id: pbnm
+    name: PBNM (Peanut Butter Nutella Milk)
+    segment: cafe
+    ingredients:
+      - { sku_id: nutella, quantity: "15" }
+      - { sku_id: peanut-butter, quantity: "15" }
+      - { sku_id: water-filtered, quantity: "20" }
+      - { sku_id: milk-condensed, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "120" }
+      - { sku_id: cream-cheese, quantity: "30" }
+
+  - sku_id: yogurt-milkshake
+    name: Yogurt Milkshake
+    segment: cafe
+    ingredients:
+      - { sku_id: yogurt-homemade, quantity: "100" }
+      - { sku_id: milk-fresh, quantity: "100" }
+
+  # ======================================================================
+  # CAFE — COCOA
+  # ======================================================================
+
+  - sku_id: cocoa
+    name: Cocoa (Iced)
+    segment: cafe
+    ingredients:
+      - { sku_id: cocoa-powder, quantity: "10" }
+      - { sku_id: water-filtered, quantity: "20" }
+      - { sku_id: milk-condensed, quantity: "25" }
+      - { sku_id: milk-fresh, quantity: "100" }
+
+  # ======================================================================
+  # CAFE — COLD-PRESSED JUICE
+  # ======================================================================
+
+  - sku_id: golden-glow
+    name: "Golden Glow (carrot + ginger + green apple)"
+    segment: cafe
+    ingredients:
+      - { sku_id: carrot, quantity: "180" }
+      - { sku_id: apple-green, quantity: "150" }
+      - { sku_id: ginger, quantity: "5" }
+
+  - sku_id: beet-the-heat
+    name: "Beet the Heat (beetroot + lime + red apple)"
+    segment: cafe
+    ingredients:
+      - { sku_id: beetroot, quantity: "100" }
+      - { sku_id: apple-red, quantity: "160" }
+      - { sku_id: lime, quantity: "15" }
+
+  - sku_id: green-bliss
+    name: "Green Bliss (greens + green apple + pineapple + lime)"
+    segment: cafe
+    ingredients:
+      - { sku_id: lettuce-romaine, quantity: "60" }
+      - { sku_id: apple-green, quantity: "150" }
+      - { sku_id: pineapple, quantity: "110" }
+      - { sku_id: lime, quantity: "15" }
+
+  - sku_id: yellow-mellow
+    name: "Yellow Mellow (pineapple + red apple + ginger)"
+    segment: cafe
+    ingredients:
+      - { sku_id: pineapple, quantity: "180" }
+      - { sku_id: apple-red, quantity: "120" }
+      - { sku_id: ginger, quantity: "5" }
+
+  - sku_id: fresh-fix
+    name: "Fresh Fix (green apple + celery + chia)"
+    segment: cafe
+    ingredients:
+      - { sku_id: apple-green, quantity: "180" }
+      - { sku_id: celery, quantity: "100" }
+      - { sku_id: lime, quantity: "5" }
+      - { sku_id: chia-seed, quantity: "0.5" }
+
+  # ======================================================================
+  # KITCHEN — SUSHI TACOS
+  # ======================================================================
+
+  - sku_id: spicy-salmon-sushi-taco
+    name: Spicy Salmon Sushi Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: taco-shell-nori, quantity: "1" }
+      - { sku_id: rice-sushi, quantity: "15" }
+      - { sku_id: salmon, quantity: "35" }
+      - { sku_id: sauce-spicy-mayo, quantity: "15" }
+      - { sku_id: tobiko, quantity: "0.6" }
+      - { sku_id: spring-onion, quantity: "2.5" }
+      - { sku_id: sesame-white, quantity: "0.6" }
+      - { sku_id: radish-red, quantity: "3" }
+      - { sku_id: edamame, quantity: "3" }
+
+  - sku_id: ahi-tuna-sushi-taco
+    name: Ahi Tuna Sushi Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: taco-shell-nori, quantity: "1" }
+      - { sku_id: rice-sushi, quantity: "15" }
+      - { sku_id: tuna-fresh, quantity: "35" }
+      - { sku_id: spring-onion, quantity: "5" }
+      - { sku_id: onion, quantity: "5" }
+      - { sku_id: ginger-young, quantity: "2" }
+      - { sku_id: oil-sesame, quantity: "0.6" }
+      - { sku_id: sauce-ahi, quantity: "5" }
+      - { sku_id: kombu, quantity: "3" }
+      - { sku_id: chili-powder-togarashi, quantity: "1" }
+      - { sku_id: sesame-white, quantity: "0.5" }
+      - { sku_id: onion-fried, quantity: "2" }
+
+  - sku_id: lemon-ebi-sushi-taco
+    name: Lemon Ebi Sushi Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: taco-shell-nori, quantity: "1" }
+      - { sku_id: rice-sushi, quantity: "15" }
+      - { sku_id: shrimp-white, quantity: "4" }
+      - { sku_id: flour-tempura, quantity: "20" }
+      - { sku_id: sauce-lemon, quantity: "10" }
+      - { sku_id: sauce-passionfruit, quantity: "5" }
+      - { sku_id: cucumber-japanese, quantity: "3" }
+      - { sku_id: spring-onion, quantity: "1" }
+      - { sku_id: sesame-white, quantity: "0.5" }
+
+  - sku_id: wasabi-crabstick-sushi-taco
+    name: Wasabi Crabstick Sushi Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: taco-shell-nori, quantity: "1" }
+      - { sku_id: rice-sushi, quantity: "15" }
+      - { sku_id: crabstick, quantity: "1" }
+      - { sku_id: sauce-wasabi-mayo, quantity: "15" }
+      - { sku_id: tobiko, quantity: "1.25" }
+      - { sku_id: cucumber-japanese, quantity: "3.5" }
+      - { sku_id: onion-fried, quantity: "5" }
+
+  - sku_id: mexican-beef-taco
+    name: Mexican Beef + Guac Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: taco-shell-nori, quantity: "1" }
+      - { sku_id: rice-sushi, quantity: "15" }
+      - { sku_id: sauce-mexican, quantity: "30" }
+      - { sku_id: guacamole, quantity: "20" }
+      - { sku_id: radish-red, quantity: "3" }
+
+  # ======================================================================
+  # KITCHEN — POKE BOWLS
+  # ======================================================================
+
+  - sku_id: spicy-salmon-poke
+    name: Spicy Salmon Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-poke, quantity: "150" }
+      - { sku_id: sauce-oba, quantity: "25" }
+      - { sku_id: salmon, quantity: "70" }
+      - { sku_id: sauce-spicy-mayo, quantity: "15" }
+      - { sku_id: tobiko, quantity: "2" }
+      - { sku_id: seaweed-salad, quantity: "15" }
+      - { sku_id: tomato-cherry, quantity: "20" }
+      - { sku_id: orange, quantity: "15" }
+      - { sku_id: avocado, quantity: "15" }
+      - { sku_id: pomegranate, quantity: "5" }
+      - { sku_id: edamame, quantity: "5" }
+      - { sku_id: sesame-black, quantity: "1" }
+
+  - sku_id: ahi-tuna-poke
+    name: Ahi Tuna Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-poke, quantity: "150" }
+      - { sku_id: sauce-oba, quantity: "25" }
+      - { sku_id: tuna-fresh, quantity: "70" }
+      - { sku_id: sauce-ahi, quantity: "15" }
+      - { sku_id: oil-sesame, quantity: "1" }
+      - { sku_id: ginger-young, quantity: "1" }
+      - { sku_id: onion, quantity: "5" }
+      - { sku_id: kombu, quantity: "5" }
+      - { sku_id: chili-powder-togarashi, quantity: "1" }
+      - { sku_id: spring-onion, quantity: "5" }
+      - { sku_id: edamame, quantity: "10" }
+      - { sku_id: pomegranate, quantity: "5" }
+      - { sku_id: pomelo, quantity: "20" }
+      - { sku_id: orange, quantity: "10" }
+      - { sku_id: onion-fried, quantity: "5" }
+      - { sku_id: bonito-flakes, quantity: "15" }
+      - { sku_id: wasabi-fresh, quantity: "1" }
+      - { sku_id: sesame-black, quantity: "1" }
+
+  - sku_id: shrimp-poke
+    name: Shrimp Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-poke, quantity: "150" }
+      - { sku_id: sauce-oba, quantity: "25" }
+      - { sku_id: shrimp-sushi, quantity: "2" }
+      - { sku_id: seaweed-salad, quantity: "5" }
+      - { sku_id: tobiko, quantity: "5" }
+      - { sku_id: cucumber-pickled, quantity: "10" }
+      - { sku_id: shrimp-white, quantity: "8" }
+      - { sku_id: dressing-ranch, quantity: "15" }
+      - { sku_id: shallot, quantity: "5" }
+      - { sku_id: spring-onion, quantity: "2" }
+      - { sku_id: avocado, quantity: "5" }
+      - { sku_id: orange, quantity: "10" }
+      - { sku_id: pomegranate, quantity: "10" }
+      - { sku_id: bonito-flakes, quantity: "15" }
+      - { sku_id: sesame-black, quantity: "1" }
+
+  - sku_id: tofu-poke
+    name: Tofu Poke (Ahi Tofu Poke)
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-poke, quantity: "150" }
+      - { sku_id: tofu, quantity: "100" }
+      - { sku_id: sauce-ahi, quantity: "45" }
+      - { sku_id: oil-sesame, quantity: "0.6" }
+      - { sku_id: onion, quantity: "5" }
+      - { sku_id: kombu, quantity: "4" }
+      - { sku_id: sesame-white, quantity: "0.6" }
+      - { sku_id: spring-onion, quantity: "1.25" }
+      - { sku_id: chili-powder-togarashi, quantity: "1" }
+      - { sku_id: ginger-young, quantity: "1" }
+      - { sku_id: edamame, quantity: "10" }
+      - { sku_id: pomegranate, quantity: "5" }
+      - { sku_id: pomelo, quantity: "5" }
+      - { sku_id: orange, quantity: "5" }
+      - { sku_id: onion-fried, quantity: "5" }
+      - { sku_id: wasabi-fresh, quantity: "0.6" }
+
+  - sku_id: poke-mix
+    name: Poke Mix
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-poke, quantity: "150" }
+      - { sku_id: sauce-oba, quantity: "25" }
+      - { sku_id: shrimp-white, quantity: "4" }
+      - { sku_id: flour-tempura, quantity: "15" }
+      - { sku_id: salmon, quantity: "20" }
+      - { sku_id: tuna-fresh, quantity: "20" }
+      - { sku_id: sauce-spicy-mayo, quantity: "10" }
+      - { sku_id: sauce-ahi, quantity: "10" }
+      - { sku_id: tobiko, quantity: "3" }
+      - { sku_id: spring-onion, quantity: "5" }
+      - { sku_id: seaweed-salad, quantity: "15" }
+      - { sku_id: orange, quantity: "10" }
+      - { sku_id: edamame, quantity: "5" }
+      - { sku_id: tamagoyaki, quantity: "10" }
+      - { sku_id: sesame-black, quantity: "1" }
+      - { sku_id: onion-fried, quantity: "5" }
+      - { sku_id: sauce-passionfruit, quantity: "5" }
+
+  # ======================================================================
+  # KITCHEN — MEXICAN BOWL
+  # ======================================================================
+
+  - sku_id: mexican-beef-bowl
+    name: Mexican Beef Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: rice-japanese, quantity: "150" }
+      - { sku_id: corn-grilled, quantity: "10" }
+      - { sku_id: lettuce-mixed, quantity: "10" }
+      - { sku_id: tomato, quantity: "50" }
+      - { sku_id: shallot, quantity: "5" }
+      - { sku_id: pineapple-grilled, quantity: "25" }
+      - { sku_id: guacamole, quantity: "10" }
+      - { sku_id: beef-chili-con-carne, quantity: "80" }
+      - { sku_id: cheese-cheddar, quantity: "5" }
+      - { sku_id: sour-cream, quantity: "5" }
+      - { sku_id: onion-fried, quantity: "9" }
+      - { sku_id: dressing-ranch, quantity: "10" }
+
+  # ======================================================================
+  # KITCHEN — SALADS
+  # ======================================================================
+
+  - sku_id: tangerine-salad
+    name: Tangerine Salad
+    segment: cafe
+    ingredients:
+      - { sku_id: lettuce-mixed, quantity: "30" }
+      - { sku_id: spam, quantity: "50" }
+      - { sku_id: sauce-teriyaki, quantity: "15" }
+      - { sku_id: tomato-cherry, quantity: "40" }
+      - { sku_id: pineapple-grilled, quantity: "50" }
+      - { sku_id: pomelo, quantity: "30" }
+      - { sku_id: dressing-balsamic-mustard, quantity: "30" }
+      - { sku_id: bonito-flakes, quantity: "15" }
+
+  - sku_id: chicken-salad
+    name: Grilled Chicken Salad
+    segment: cafe
+    ingredients:
+      - { sku_id: chicken-thigh, quantity: "80" }
+      - { sku_id: pineapple-grilled, quantity: "50" }
+      - { sku_id: sauce-teriyaki, quantity: "30" }
+      - { sku_id: lettuce-mixed, quantity: "50" }
+      - { sku_id: tomato-cherry, quantity: "40" }
+      - { sku_id: dressing-balsamic, quantity: "45" }
+      - { sku_id: pomelo, quantity: "30" }
+      - { sku_id: bonito-flakes, quantity: "30" }
+
+  - sku_id: tofu-salad
+    name: Tofu Salad
+    segment: cafe
+    ingredients:
+      - { sku_id: tofu-cold, quantity: "100" }
+      - { sku_id: lettuce-mixed, quantity: "50" }
+      - { sku_id: orange, quantity: "30" }
+      - { sku_id: tomato-cherry, quantity: "40" }
+      - { sku_id: dressing-sesame, quantity: "45" }
+      - { sku_id: seaweed-shredded, quantity: "15" }
+      - { sku_id: onion-fried, quantity: "15" }
+      - { sku_id: sesame-white, quantity: "2.5" }
+
+  - sku_id: mexican-corn-salad
+    name: Mexican Corn Salad
+    segment: cafe
+    ingredients:
+      - { sku_id: lettuce-mixed, quantity: "50" }
+      - { sku_id: tomato-cherry, quantity: "30" }
+      - { sku_id: corn, quantity: "100" }
+      - { sku_id: olive-oil, quantity: "45" }
+      - { sku_id: shallot, quantity: "10" }
+      - { sku_id: sauce-mexican, quantity: "75" }
+
+  - sku_id: smoked-salmon-salad
+    name: Smoked Salmon Salad
+    segment: cafe
+    ingredients:
+      - { sku_id: salmon-smoked, quantity: "60" }
+      - { sku_id: lettuce-mixed, quantity: "50" }
+      - { sku_id: tomato-cherry, quantity: "40" }
+      - { sku_id: dressing-balsamic, quantity: "15" }
+      - { sku_id: olive-oil, quantity: "45" }
+
+  # ======================================================================
+  # KITCHEN — OPEN-FACED TOASTS
+  # ======================================================================
+
+  - sku_id: cheesy-avocado-toast
+    name: Cheesy Avocado Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "1" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: avocado, quantity: "40" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: sauce-spicy-mayo, quantity: "15" }
+      - { sku_id: cheese-slice, quantity: "1" }
+
+  - sku_id: smashed-avocado-toast
+    name: Smashed Avocado + Corn Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-sourdough, quantity: "1" }
+      - { sku_id: guacamole, quantity: "30" }
+      - { sku_id: corn, quantity: "30" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: vinegar, quantity: "45" }
+
+  - sku_id: smoked-salmon-cream-cheese-toast
+    name: Smoked Salmon & Cream Cheese Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-sourdough, quantity: "1" }
+      - { sku_id: salmon-smoked, quantity: "60" }
+      - { sku_id: cream-cheese, quantity: "45" }
+      - { sku_id: lemon, quantity: "0.25" }
+      - { sku_id: shallot, quantity: "5" }
+
+  - sku_id: mushroom-egg-toast
+    name: Mushroom & Egg Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-sourdough, quantity: "1" }
+      - { sku_id: mushroom-champignon, quantity: "100" }
+      - { sku_id: salt, quantity: "0.6" }
+      - { sku_id: pepper-black, quantity: "0.6" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: butter, quantity: "10" }
+      - { sku_id: tomato, quantity: "60" }
+
+  # ======================================================================
+  # KITCHEN — SANDWICHES (served with fries)
+  # ======================================================================
+
+  - sku_id: spam-cheese-sandwich
+    name: Spam & Cheese Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "2" }
+      - { sku_id: spam, quantity: "50" }
+      - { sku_id: cheese-slice-orange, quantity: "1" }
+      - { sku_id: cheese-slice-white, quantity: "1" }
+      - { sku_id: mayonnaise, quantity: "15" }
+
+  - sku_id: cubano-sandwich
+    name: Cubano Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "2" }
+      - { sku_id: cheese-slice-orange, quantity: "1" }
+      - { sku_id: cheese-shredded, quantity: "15" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: jalapeno, quantity: "10" }
+      - { sku_id: mayonnaise, quantity: "15" }
+      - { sku_id: mustard, quantity: "10" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: tuna-melt-sandwich
+    name: Tuna Melt Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-sourdough, quantity: "2" }
+      - { sku_id: tuna-canned, quantity: "30" }
+      - { sku_id: mayonnaise, quantity: "15" }
+      - { sku_id: corn, quantity: "5" }
+      - { sku_id: sauce-pesto, quantity: "10" }
+      - { sku_id: cheese-slice, quantity: "1" }
+      - { sku_id: cheese-shredded, quantity: "15" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: grilled-cheese-sandwich
+    name: Grilled Cheese Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-sourdough, quantity: "2" }
+      - { sku_id: cheese-shredded, quantity: "20" }
+      - { sku_id: cheese-slice, quantity: "1" }
+      - { sku_id: mayonnaise, quantity: "10" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: bacon-egg-sandwich
+    name: Bacon & Egg Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "2" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: cheese-slice, quantity: "1" }
+      - { sku_id: mayonnaise, quantity: "15" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: sausage-egg-sandwich
+    name: Sausage & Egg Sandwich
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "2" }
+      - { sku_id: sausage-chorizo, quantity: "1" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: cheese-shredded, quantity: "15" }
+      - { sku_id: mayonnaise, quantity: "15" }
+      - { sku_id: sauce-tomato-ketchup, quantity: "15" }
+      - { sku_id: butter, quantity: "10" }
+
+  # ======================================================================
+  # KITCHEN — YOGURT BOWL
+  # ======================================================================
+
+  - sku_id: greek-yogurt-bowl
+    name: Greek Yogurt Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: yogurt-homemade, quantity: "120" }
+      - { sku_id: granola, quantity: "10" }
+      - { sku_id: blueberry, quantity: "10" }
+      - { sku_id: orange, quantity: "20" }
+      - { sku_id: biscoff, quantity: "10" }
+      - { sku_id: honey, quantity: "10" }
+
+  # ======================================================================
+  # KITCHEN — DESSERTS / CROFFLES / SWEET TOASTS
+  # ======================================================================
+
+  - sku_id: blueberry-cream-croffle
+    name: Blueberry Cream Croffle
+    segment: cafe
+    ingredients:
+      - { sku_id: croffle, quantity: "1" }
+      - { sku_id: whipping-cream, quantity: "45" }
+      - { sku_id: sauce-blueberry, quantity: "30" }
+
+  - sku_id: banoffee-croffle
+    name: Banoffee Croffle
+    segment: cafe
+    ingredients:
+      - { sku_id: croffle, quantity: "1" }
+      - { sku_id: whipping-cream, quantity: "45" }
+      - { sku_id: banana, quantity: "1" }
+      - { sku_id: syrup-caramel, quantity: "15" }
+      - { sku_id: cocoa-powder, quantity: "1" }
+      - { sku_id: oreo, quantity: "15" }
+
+  - sku_id: ice-cream-croffle
+    name: Croffle & Ice Cream
+    segment: cafe
+    ingredients:
+      - { sku_id: croffle, quantity: "1" }
+      - { sku_id: ice-cream, quantity: "1" }
+      - { sku_id: cocoa-powder, quantity: "1" }
+
+  - sku_id: yogurt-biscoff-croffle
+    name: Yogurt Biscoff Croffle
+    segment: cafe
+    ingredients:
+      - { sku_id: croffle, quantity: "1" }
+      - { sku_id: yogurt-greek, quantity: "45" }
+      - { sku_id: biscoff, quantity: "2" }
+      - { sku_id: syrup-caramel, quantity: "10" }
+
+  - sku_id: french-toast
+    name: Signature French Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-shokupan, quantity: "1" }
+      - { sku_id: french-toast-batter, quantity: "50" }
+      - { sku_id: custard-cream, quantity: "45" }
+      - { sku_id: sugar, quantity: "30" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: banana-nutella-pancake
+    name: Banana Nutella Pancake
+    segment: cafe
+    ingredients:
+      - { sku_id: pancake, quantity: "2" }
+      - { sku_id: banana, quantity: "1" }
+      - { sku_id: nutella, quantity: "30" }
+      - { sku_id: almond-ground, quantity: "5" }
+      - { sku_id: choc-syrup-hershey, quantity: "10" }
+
+  - sku_id: peanut-butter-nutella-toast
+    name: Peanut Butter Nutella Toast
+    segment: cafe
+    ingredients:
+      - { sku_id: bread-white, quantity: "1" }
+      - { sku_id: peanut-butter, quantity: "30" }
+      - { sku_id: nutella, quantity: "30" }
+      - { sku_id: almond-ground, quantity: "5" }
+
+  - sku_id: ice-cream-waffles
+    name: Ice Cream Waffles
+    segment: cafe
+    ingredients:
+      - { sku_id: waffle, quantity: "2" }
+      - { sku_id: ice-cream, quantity: "1" }
+      - { sku_id: almond-ground, quantity: "5" }
+
+  # ======================================================================
+  # KITCHEN — BREAKFAST
+  # ======================================================================
+
+  - sku_id: breakfast-set
+    name: Breakfast Set
+    segment: cafe
+    ingredients:
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: mushroom-champignon, quantity: "30" }
+      - { sku_id: lettuce-mixed, quantity: "10" }
+      - { sku_id: tomato, quantity: "20" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: sausage-chorizo, quantity: "1" }
+      - { sku_id: bread-sourdough, quantity: "1" }
+      - { sku_id: olive-oil, quantity: "10" }
+
+  - sku_id: omelette
+    name: Omelette
+    segment: cafe
+    ingredients:
+      - { sku_id: egg, quantity: "3" }
+      - { sku_id: milk-carnation, quantity: "15" }
+      - { sku_id: water-filtered, quantity: "15" }
+      - { sku_id: mushroom-champignon, quantity: "30" }
+      - { sku_id: onion, quantity: "15" }
+      - { sku_id: ham, quantity: "20" }
+      - { sku_id: salt, quantity: "0.6" }
+      - { sku_id: pepper-black, quantity: "0.6" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: chicken-quesadilla
+    name: Chicken Quesadilla
+    segment: cafe
+    ingredients:
+      - { sku_id: tortilla, quantity: "2" }
+      - { sku_id: sauce-mexican, quantity: "30" }
+      - { sku_id: chicken-thigh, quantity: "80" }
+      - { sku_id: onion, quantity: "30" }
+      - { sku_id: shallot, quantity: "15" }
+      - { sku_id: garlic-powder, quantity: "0.6" }
+      - { sku_id: paprika-powder, quantity: "1.25" }
+      - { sku_id: cumin-powder, quantity: "0.6" }
+      - { sku_id: salt, quantity: "2" }
+      - { sku_id: cheese-slice, quantity: "1" }
+      - { sku_id: cheese-shredded, quantity: "15" }
+      - { sku_id: jalapeno, quantity: "10" }
+
+  - sku_id: pancake-bacon-egg
+    name: Pancake Bacon & Egg
+    segment: cafe
+    ingredients:
+      - { sku_id: pancake, quantity: "2" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: syrup-maple, quantity: "15" }
+      - { sku_id: butter, quantity: "10" }
+
+  - sku_id: pancake-sausage-egg
+    name: Pancake Sausage & Egg
+    segment: cafe
+    ingredients:
+      - { sku_id: pancake, quantity: "2" }
+      - { sku_id: sausage-pork, quantity: "1" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: butter, quantity: "10" }
+      - { sku_id: syrup-maple, quantity: "15" }
+
+  - sku_id: hashbrown-set
+    name: Hashbrown Set
+    segment: cafe
+    ingredients:
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: potato, quantity: "150" }
+      - { sku_id: sausage-pork, quantity: "1" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: onion, quantity: "50" }
+      - { sku_id: butter, quantity: "20" }
+
+  # ======================================================================
+  # KITCHEN — SNACKS / MUSUBI
+  # ======================================================================
+
+  - sku_id: classic-musubi
+    name: Classic Musubi
+    segment: cafe
+    ingredients:
+      - { sku_id: spam-homemade, quantity: "75" }
+      - { sku_id: sauce-teriyaki, quantity: "5" }
+      - { sku_id: rice-nori, quantity: "60" }
+      - { sku_id: nori-sheet, quantity: "2" }
+
+  - sku_id: tamago-musubi
+    name: Tamago Musubi
+    segment: cafe
+    ingredients:
+      - { sku_id: spam-homemade, quantity: "75" }
+      - { sku_id: sauce-teriyaki, quantity: "5" }
+      - { sku_id: rice-nori, quantity: "60" }
+      - { sku_id: nori-sheet, quantity: "2" }
+      - { sku_id: tamagoyaki, quantity: "20" }
+
+  # ======================================================================
+  # KITCHEN — RICE BOWLS
+  # ======================================================================
+
+  - sku_id: teriyaki-spam-rice
+    name: Teriyaki Spam on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: spam-homemade, quantity: "80" }
+      - { sku_id: rice-nori, quantity: "150" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: sauce-teriyaki, quantity: "15" }
+      - { sku_id: sesame-white, quantity: "1" }
+
+  - sku_id: loco-moco-rice
+    name: Loco Moco on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: beef-burger-patty, quantity: "1" }
+      - { sku_id: rice-japanese, quantity: "150" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: lettuce-mixed, quantity: "20" }
+      - { sku_id: dressing-ranch, quantity: "20" }
+      - { sku_id: sauce-loco-moco, quantity: "60" }
+      - { sku_id: cheese-cheddar, quantity: "5" }
+      - { sku_id: spring-onion, quantity: "2" }
+
+  - sku_id: fried-chili-tofu-rice
+    name: Fried Chili Tofu on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: tofu, quantity: "90" }
+      - { sku_id: rice-japanese, quantity: "150" }
+      - { sku_id: chili-fresh, quantity: "5" }
+      - { sku_id: garlic, quantity: "10" }
+      - { sku_id: salt, quantity: "1.25" }
+      - { sku_id: sugar, quantity: "0.6" }
+      - { sku_id: flour-corn, quantity: "5" }
+      - { sku_id: garlic-fried, quantity: "15" }
+      - { sku_id: spring-onion, quantity: "2" }
+      - { sku_id: oil-vegetable, quantity: "1.25" }
+
+  - sku_id: fried-pork-hk-rice
+    name: HK-Style Fried Pork on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: pork-neck, quantity: "100" }
+      - { sku_id: flour-corn, quantity: "10" }
+      - { sku_id: breadcrumbs, quantity: "10" }
+      - { sku_id: rice-thai, quantity: "150" }
+      - { sku_id: egg, quantity: "1" }
+      - { sku_id: spring-onion, quantity: "2" }
+      - { sku_id: garlic, quantity: "5" }
+      - { sku_id: oil-vegetable, quantity: "10" }
+      - { sku_id: salt, quantity: "2" }
+
+  - sku_id: garlic-chili-ebi-rice
+    name: Garlic Chili Ebi with Eggs on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: shrimp-white, quantity: "40" }
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: rice-thai, quantity: "150" }
+      - { sku_id: oil-vegetable, quantity: "30" }
+      - { sku_id: flour-water-chestnut, quantity: "30" }
+      - { sku_id: water-filtered, quantity: "15" }
+      - { sku_id: chili-fresh, quantity: "5" }
+      - { sku_id: garlic, quantity: "20" }
+      - { sku_id: salt, quantity: "2" }
+      - { sku_id: sugar, quantity: "1" }
+      - { sku_id: garlic-fried, quantity: "15" }
+      - { sku_id: spring-onion, quantity: "5" }
+
+  - sku_id: minced-pork-egg-rice
+    name: Stir-Fried Minced Pork with Eggs on Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: pork-minced, quantity: "100" }
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: rice-thai, quantity: "150" }
+      - { sku_id: garlic, quantity: "15" }
+      - { sku_id: sauce-soy-green, quantity: "5" }
+      - { sku_id: sugar, quantity: "2.5" }
+      - { sku_id: onion, quantity: "10" }
+      - { sku_id: pepper-white, quantity: "0.6" }
+
+  # ======================================================================
+  # KITCHEN — PASTA (boiled spaghetti: 150 g per serve)
+  # ======================================================================
+
+  - sku_id: carbonara
+    name: Carbonara
+    segment: cafe
+    ingredients:
+      - { sku_id: spaghetti, quantity: "150" }
+      - { sku_id: bacon, quantity: "2" }
+      - { sku_id: onion, quantity: "15" }
+      - { sku_id: cheese-parmesan, quantity: "30" }
+      - { sku_id: whipping-gold, quantity: "30" }
+      - { sku_id: egg, quantity: "2" }
+      - { sku_id: salt, quantity: "0.6" }
+      - { sku_id: pepper-black, quantity: "1.8" }
+
+  - sku_id: pesto-grilled-chicken-pasta
+    name: Spaghetti Pesto with Grilled Chicken
+    segment: cafe
+    ingredients:
+      - { sku_id: spaghetti, quantity: "150" }
+      - { sku_id: sauce-pesto, quantity: "30" }
+      - { sku_id: chicken-thigh, quantity: "100" }
+      - { sku_id: tomato, quantity: "50" }
+      - { sku_id: cheese-parmesan, quantity: "15" }
+      - { sku_id: salt, quantity: "0.6" }
+
+  - sku_id: tomato-chorizo-pasta
+    name: Spaghetti Tomato Sauce with Chorizo
+    segment: cafe
+    ingredients:
+      - { sku_id: spaghetti, quantity: "150" }
+      - { sku_id: chorizo, quantity: "40" }
+      - { sku_id: tomato, quantity: "100" }
+      - { sku_id: onion, quantity: "10" }
+      - { sku_id: sauce-spaghetti-tomato, quantity: "30" }
+      - { sku_id: sauce-tomato-ketchup, quantity: "15" }
+      - { sku_id: salt, quantity: "2" }
+      - { sku_id: oregano, quantity: "0.5" }
+
+  - sku_id: tuna-spaghetti
+    name: Tuna Spaghetti
+    segment: cafe
+    ingredients:
+      - { sku_id: spaghetti, quantity: "150" }
+      - { sku_id: tuna-canned, quantity: "60" }
+      - { sku_id: garlic, quantity: "10" }
+      - { sku_id: onion, quantity: "5" }
+      - { sku_id: chili-dried, quantity: "2" }
+      - { sku_id: sauce-tomato-ketchup, quantity: "15" }
+      - { sku_id: salt, quantity: "0.6" }
+      - { sku_id: pepper-black, quantity: "0.6" }
+      - { sku_id: oil-vegetable, quantity: "15" }
+
+# ----------------------------------------------------------------------------
+# Loyverse item id -> master SKU mappings. One per Loyverse menu item that maps
+# to a recipe above. Item ids are from menu.tsv. Menu lines with no recipe in
+# the source docs (draught beer, wine, RTD cocktails, soft drinks, retail
+# merch, add-on extras) are intentionally NOT mapped — they surface in the
+# daily review's "unmapped" section, which is their correct home.
+# ----------------------------------------------------------------------------
+mappings:
+  # Coffee
+  - { item_id: 0fe310ba-9e63-4c79-bacf-4c28a2bf6afe, sku_id: espresso }
+  - { item_id: cf29cb7f-6ab9-41ee-8fb1-fc378738f71c, sku_id: americano-hot }
+  - { item_id: d71527c7-ba61-41eb-89a4-bbba60b57ca7, sku_id: americano-orange }
+  - { item_id: 5fc3d0af-6084-4e53-a899-cb08e2ffdb6c, sku_id: latte }
+  - { item_id: be9d829c-95be-4983-abc7-5d08b595150f, sku_id: piccolo-latte }
+  - { item_id: 2a7e4602-f4ac-418d-87b4-ea87ea92a18f, sku_id: cappuccino }
+  - { item_id: f966e345-92ac-48d1-b148-838be51c63a1, sku_id: flat-white }
+  - { item_id: d9c11a2a-3371-4684-a430-6207edcd4497, sku_id: espresso-macchiato }
+  - { item_id: 79dcfb9d-4f9c-405d-a1df-29100257adad, sku_id: mocha }
+  - { item_id: fcf3c08b-58ce-4c9f-86c9-d48cd5b64c99, sku_id: caramel-cafe-latte }
+  - { item_id: c954fa83-6764-4503-91d9-f8011682199d, sku_id: drip-coffee }
+  - { item_id: 368d77b4-7ede-40a4-8cc4-cf294ee0dcd7, sku_id: white-wash }
+  - { item_id: 59f7448b-9aa3-46bf-962b-e047e12f48ee, sku_id: coffee-tonic }
+  - { item_id: ab2fd4d8-e5c7-4d65-bc23-3e887a4831ec, sku_id: coffee-cola }
+  - { item_id: 1172c0f8-3349-4788-94ae-42aaafde8fd6, sku_id: yuzu-coffee }
+  - { item_id: b0d36c92-1247-4e4d-a89a-9a7cad490abf, sku_id: sun-down }
+  - { item_id: 4723bf8d-6a82-47ed-a256-6db49b860624, sku_id: pbnc }
+  - { item_id: a8c32b9b-e947-45d8-aa67-22efaf99323b, sku_id: chocoholic }
+
+  # Tea
+  - { item_id: 097e6d1c-c0d6-4f12-95d3-ab44b01046d9, sku_id: peach-tea }
+  - { item_id: 3bd8b98b-c734-4ca4-b326-ecc28783a8f5, sku_id: earl-grey }
+  - { item_id: 7b5ca336-411e-4a20-ac03-7a39c3e9ac55, sku_id: lemon-lemongrass-tea }
+  - { item_id: e10fc411-03a0-4f37-8b31-db7f38dae43a, sku_id: tangerine-signature-tea }
+  - { item_id: 8cfd25f4-8b40-4d90-80ec-9fed6354a8d9, sku_id: english-breakfast-tea }
+
+  # Matcha
+  - { item_id: cb45e15c-2a4b-47b4-965d-92e2873a5ab1, sku_id: matcha-latte }
+  - { item_id: 2a80235c-e88a-4003-9d62-c886c72f9f17, sku_id: matcha-nutella }
+  - { item_id: 4c2d42f1-7fc6-4181-9e85-5e3d5a572207, sku_id: matcha-coconut }
+  - { item_id: ee7870c0-4dda-4c72-9295-3dea64424168, sku_id: clear-matcha }
+  - { item_id: 747e5570-dc63-406d-9d62-3234901527d8, sku_id: lemon-usucha }
+
+  # Fruit soda
+  - { item_id: 7c4a98a1-f4e8-4808-a3ef-33feb83fe810, sku_id: tangerine-soda }
+  - { item_id: 8271d32f-a06c-468d-ae31-41cbde2f6a33, sku_id: strawberry-soda }
+  - { item_id: 0dfd909d-0f96-4b8c-afb3-62420023c876, sku_id: yuzu-soda }
+
+  # Milk & yogurt
+  - { item_id: 3b437257-02d6-41b9-bead-4afd16724958, sku_id: caramel-milk }
+  - { item_id: 5631ad84-4a07-4feb-bc30-529afccb58a9, sku_id: pbnm }
+  - { item_id: 768ff9cc-57d5-40f3-b151-ecce86342f97, sku_id: yogurt-milkshake }
+
+  # Cocoa
+  - { item_id: 65a8c425-9551-4f42-83b7-c91475282205, sku_id: cocoa }
+
+  # Cold-pressed juice
+  - { item_id: 4c0c8b6f-96c6-4337-b829-015c55f6126a, sku_id: golden-glow }
+  - { item_id: aea00032-ee93-4a4a-8fb3-e1fd12cb6375, sku_id: beet-the-heat }
+  - { item_id: f3d0c32b-4520-41af-a16d-df4614cd8d36, sku_id: green-bliss }
+  - { item_id: 315ce1d0-1bd6-4a58-b1df-1cd12627b841, sku_id: yellow-mellow }
+  - { item_id: fe6adf2d-e1bb-4658-9a86-47b1505ad26b, sku_id: fresh-fix }
+
+  # Sushi tacos
+  - { item_id: a9243b7f-8249-4f77-a0d7-1deb724a81fa, sku_id: spicy-salmon-sushi-taco }
+  - { item_id: bf20955c-ce0a-47e6-a67e-c022bea143b9, sku_id: ahi-tuna-sushi-taco }
+  - { item_id: 2c0d9c10-ad15-43ff-80e1-bb7e2b648527, sku_id: lemon-ebi-sushi-taco }
+  - { item_id: 80f91511-32fe-4586-bc32-caa0713897e9, sku_id: wasabi-crabstick-sushi-taco }
+  - { item_id: b6442caa-ba97-42a3-910b-9ce33f06ca3e, sku_id: mexican-beef-taco }
+
+  # Poke bowls
+  - { item_id: e427391a-2d90-4709-9134-5eb637151cbd, sku_id: spicy-salmon-poke }
+  - { item_id: 9bdaef5b-8e95-4b39-82bf-e949c3502d90, sku_id: ahi-tuna-poke }
+  - { item_id: 0b359857-12e5-484c-bab0-023216ade89f, sku_id: shrimp-poke }
+  - { item_id: 8ae46cd0-76a0-4616-9695-87affb8f1eef, sku_id: tofu-poke }
+  - { item_id: bc039b14-0733-49b6-a2fd-ca22a87316ce, sku_id: poke-mix }
+
+  # Mexican bowl
+  - { item_id: 80b4c894-7525-4227-9988-ef67f6aaa6e1, sku_id: mexican-beef-bowl }
+
+  # Salads
+  - { item_id: 3df6a7fd-3fe7-4f87-a2a9-0342e78931ca, sku_id: tangerine-salad }
+  - { item_id: 18752a58-3be8-4732-b3b9-d1c4015c22e3, sku_id: chicken-salad }
+  - { item_id: e0640440-f45b-4e77-a227-3c2fbe827ea3, sku_id: tofu-salad }
+  - { item_id: 6c6c67eb-996e-4fab-adef-137747ade38b, sku_id: mexican-corn-salad }
+  - { item_id: 9f472098-17d8-44be-8a47-645416b9489c, sku_id: smoked-salmon-salad }
+
+  # Open-faced toasts
+  - { item_id: 88db43d4-1b7b-4a05-8223-038e53d2c395, sku_id: cheesy-avocado-toast }
+  - { item_id: e39d0df2-80fe-459b-941c-748b089b7050, sku_id: smashed-avocado-toast }
+  - { item_id: bfa25c67-c130-4fa4-92c9-cf093619f1c1, sku_id: smoked-salmon-cream-cheese-toast }
+  - { item_id: 7849557d-7c1a-4a35-bab9-1db27615b479, sku_id: mushroom-egg-toast }
+
+  # Sandwiches
+  - { item_id: bfed6d03-2f7a-4feb-becf-b1713aa2feb5, sku_id: spam-cheese-sandwich }
+  - { item_id: 69e6b390-4289-4734-a3ec-f02e96155728, sku_id: cubano-sandwich }
+  - { item_id: 70aadf7b-192b-46c3-8ce9-d6d8621f8b65, sku_id: tuna-melt-sandwich }
+  - { item_id: 5b67fd1e-7892-4008-aa88-5b75bdd6497b, sku_id: grilled-cheese-sandwich }
+  - { item_id: b2e6196c-457a-441a-a129-1cbc6ea9cd8e, sku_id: bacon-egg-sandwich }
+  - { item_id: 04f12385-6698-43b0-af81-4e25012acbc0, sku_id: sausage-egg-sandwich }
+
+  # Yogurt bowl
+  - { item_id: 7d4a1602-6321-4aff-b205-dc9951403133, sku_id: greek-yogurt-bowl }
+
+  # Desserts / croffles / sweet toasts
+  - { item_id: d773826b-33c6-416d-a263-74f6879a2dd7, sku_id: blueberry-cream-croffle }
+  - { item_id: 9621ba08-521e-442b-89af-4a85469fa455, sku_id: banoffee-croffle }
+  - { item_id: f929036c-f103-4c56-85b8-506a3206eab9, sku_id: ice-cream-croffle }
+  - { item_id: 941aed1e-cd3a-4a9a-9fbd-e641d91b71a3, sku_id: yogurt-biscoff-croffle }
+  - { item_id: 40358f28-0a31-4dd4-9c3c-d789d8cb804d, sku_id: french-toast }
+  - { item_id: d1e38337-fbb8-447c-b317-980e452d9ff6, sku_id: banana-nutella-pancake }
+  - { item_id: 0cb61ab8-1367-423c-a700-da1618d09484, sku_id: peanut-butter-nutella-toast }
+  - { item_id: 5d8a974b-18e3-45b3-9ff6-c85397269b79, sku_id: ice-cream-waffles }
+
+  # Breakfast
+  - { item_id: 3e3df4db-bf93-4ec5-a5c7-60f83f116db5, sku_id: breakfast-set }
+  - { item_id: 6df9180d-7a85-447e-a03f-38e3f0dafba8, sku_id: omelette }
+  - { item_id: d9a92a88-73ca-4dcd-b3c4-9fecd87b9660, sku_id: chicken-quesadilla }
+  - { item_id: a936888b-1fb7-4ce8-9660-07430ce7e6d1, sku_id: pancake-bacon-egg }
+  - { item_id: 5ff43044-4848-4b06-8c24-880c613f2105, sku_id: pancake-sausage-egg }
+  - { item_id: 31663440-4fb9-49f4-a6d2-0123a2d58b7a, sku_id: hashbrown-set }
+
+  # Snacks / musubi
+  - { item_id: 5226940d-53b1-4b17-8087-bf8c815f5b23, sku_id: classic-musubi }
+  - { item_id: ec479e4b-b0ab-4ca1-b9d9-1bd7c32bd89d, sku_id: tamago-musubi }
+
+  # Rice bowls
+  - { item_id: fd9d4a1f-72b4-42f8-92c5-1624e5304132, sku_id: teriyaki-spam-rice }
+  - { item_id: 64a7fbfa-7a1b-465c-a6e2-4c8f055fdafb, sku_id: loco-moco-rice }
+  - { item_id: b4f2dd79-9190-45b7-97b1-7bba8b8e9013, sku_id: fried-chili-tofu-rice }
+  - { item_id: 1cde675a-2c65-4a95-ae7c-f457cd437b3b, sku_id: fried-pork-hk-rice }
+  - { item_id: c922ba16-f4b8-4240-b1b1-29a4f0996aeb, sku_id: garlic-chili-ebi-rice }
+  - { item_id: 32cc1384-f18c-4976-9782-1a4c4153c7fd, sku_id: minced-pork-egg-rice }
+
+  # Pasta
+  - { item_id: 8f9b200a-76d2-4603-bc05-e591f2dbdd0a, sku_id: carbonara }
+  - { item_id: 583a8451-3a52-47b0-8f70-ccf06b12c58b, sku_id: pesto-grilled-chicken-pasta }
+  - { item_id: c0bd2128-0809-435e-804f-740d70ba5bca, sku_id: tomato-chorizo-pasta }
+  - { item_id: 3b793b28-5c09-4796-8440-8f9d5307f929, sku_id: tuna-spaghetti }
