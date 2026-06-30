@@ -318,13 +318,30 @@ def test_cli_persists_across_invocations(tmp_path: Path) -> None:
 # --- AC: default shipped config files ----------------------------------------
 
 
-def test_shipped_default_config_loads_and_matches_seeded_values() -> None:
+def test_shipped_default_config_loads_cleanly() -> None:
     """The shipped ``config/recipes.yaml`` and ``config/costs.yaml`` load
-    cleanly and reproduce the seeded recipes/costs the pre-Slice-1 CLI used.
+    cleanly through the production loaders.
 
-    These are the operator-editable defaults that ship in the repo so the tool
-    starts out-of-the-box. If a partner never edits config, the review shows
-    the same recipes and costs the seeded source used to.
+    This is the smoke test for the operator-editable defaults that ship in
+    the repo. Originally it pinned the pre-Slice-1 seeded fixtures
+    (``chang-draft-500`` / ``espresso-latte`` / ``beans-arabica``); commit
+    3257cfa replaced those with the real partner-authored recipe book and
+    cost workbook, so the assertion now checks the *shape* of the shipped
+    config (it loads, it has many recipes, it carries mappings, at least
+    one recipe is fully costable) rather than specific named SKUs.
+
+    The shipped book is cafe/kitchen-only (104 cafe recipes, 0 bar), and
+    that is the steady state, not a placeholder: bar sales are draught beer,
+    wine, RTD cocktails, and soft drinks — items with no recipe to cost,
+    just a sell price. They are intentionally unmapped and surface in the
+    daily review's "unmapped" section, which is their correct home
+    (CONTEXT.md "Regular item"; recipes.yaml header comment). There is no
+    "when bar recipes land" milestone to wait for.
+
+    Per ``CONTEXT.md`` "Recipe review", the recipe/cost files go through PR
+    review and the partner-authoring is the source of truth — this test
+    guards against a malformed file shipping, not against the recipes
+    themselves changing.
     """
     repo_root = Path(__file__).resolve().parent.parent
     recipes_path = repo_root / "config" / "recipes.yaml"
@@ -333,14 +350,22 @@ def test_shipped_default_config_loads_and_matches_seeded_values() -> None:
     catalog = load_recipes(recipes_path)
     book = load_costs(costs_path)
 
-    # The two seeded recipes (Chang draft, espresso latte) are present.
-    chang = catalog.recipe_for_sku("chang-draft-500")
-    latte = catalog.recipe_for_sku("espresso-latte")
-    assert chang is not None
-    assert latte is not None
-    assert chang.segment is Segment.BAR
-    assert latte.segment is Segment.CAFE
-    # Costs mirror the seeded values.
-    assert book.price("chang-keg").price == D("0.07")  # type: ignore[union-attr]
-    assert book.price("beans-arabica").price == D("2")  # type: ignore[union-attr]
-    assert book.price("milk-fresh").price == D("0.025")  # type: ignore[union-attr]
+    recipes = catalog.all()
+    assert len(recipes) >= 50  # the partner-authored book is large
+    segments = {r.segment for r in recipes}
+    assert Segment.CAFE in segments
+    # Bar is not "missing recipes" — draught beer, wine, RTD cocktails, soft
+    # drinks are sold as-is with no recipe to cost, so they correctly stay
+    # unmapped and surface in the daily review's "unmapped" section
+    # (recipes.yaml header; CONTEXT.md "Regular item"). Steady state, not a
+    # TODO; do not add a ``Segment.BAR in segments`` assertion here.
+    assert catalog.mappings(), "shipped recipes.yaml must carry mappings"
+
+    # At least one mapped ingredient SKU is priced, so the daily review has
+    # a real margin to show on first run. Exact SKUs drift as partners edit
+    # costs; just assert *some* price resolves.
+    priced = [
+        r for r in recipes
+        if all(book.price(ing.sku_id) is not None for ing in r.ingredients)
+    ]
+    assert priced, "no recipe is fully costable — every item would flag unpriced"
