@@ -14,6 +14,7 @@ environment variable in production (ADR-0001).
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import date, datetime, timezone
 
 from ..loyverse.store import (
@@ -35,11 +36,22 @@ class SqliteLoyverseStore:
     builds an in-process database (used by tests); ``connect(path)`` opens or
     creates a file-backed database (used by the running tool, so refreshes and
     cross-device access survive a process restart).
+
+    The connection is serialised by a per-store lock. SQLite connections are
+    NOT safe for concurrent use from multiple threads even with
+    ``check_same_thread=False`` — that flag only lifts Python's same-thread
+    guard, it does not make the C-level connection thread-safe. FastAPI serves
+    sync routes from a threadpool and the nightly sync cron runs alongside the
+    web app, so two writers race the same connection in production. Without
+    the lock, pysqlite surfaces the resulting state corruption as
+    ``sqlite3.InterfaceError: bad parameter or other API misuse``.
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        apply_migrations(self._conn)
+        self._lock = threading.Lock()
+        with self._lock:
+            apply_migrations(self._conn)
 
     @classmethod
     def connect(cls, database: str) -> SqliteLoyverseStore:
@@ -63,7 +75,7 @@ class SqliteLoyverseStore:
         Re-inserting a record with the same key is a no-op (``INSERT OR IGNORE``
         against the primary key), so a replayed sync never double-counts.
         """
-        with self._conn:
+        with self._lock, self._conn:
             for rec in records:
                 self._conn.execute(
                     "INSERT OR IGNORE INTO sales"
@@ -83,10 +95,11 @@ class SqliteLoyverseStore:
 
     def sales(self) -> list[Sale]:
         """All stored sales, in insertion order (row id)."""
-        rows = self._conn.execute(
-            "SELECT item_id, timestamp, sell_price, quantity, segment"
-            " FROM sales ORDER BY rowid"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT item_id, timestamp, sell_price, quantity, segment"
+                " FROM sales ORDER BY rowid"
+            ).fetchall()
         return [self._row_to_sale(r) for r in rows]
 
     @staticmethod
@@ -109,13 +122,16 @@ class SqliteLoyverseStore:
         store) so both implementations produce identical change histories for
         the same inputs. The snapshot's items are persisted so
         ``current_menu`` reflects the latest state.
+
+        The previous-menu read and the snapshot write happen under one lock so
+        a concurrent snapshot cannot slip between them and produce a stale
+        diff (and a duplicated/missed change record).
         """
         incoming = {mi.item_id: mi for mi in snapshot.items}
-        previous = self.current_menu()
-        changes = diff_menu(previous, incoming, at)
-
         at_iso = _datetime_to_iso(at)
-        with self._conn:
+        with self._lock, self._conn:
+            previous = self._current_menu_locked()
+            changes = diff_menu(previous, incoming, at)
             cur = self._conn.execute(
                 "INSERT INTO menu_snapshots (at) VALUES (?)", (at_iso,)
             )
@@ -153,6 +169,11 @@ class SqliteLoyverseStore:
         Reads the items belonging to the highest-id snapshot. An empty dict when
         no snapshot has been recorded yet.
         """
+        with self._lock:
+            return self._current_menu_locked()
+
+    def _current_menu_locked(self) -> dict[str, MenuItem]:
+        """``current_menu`` assuming the caller already holds ``self._lock``."""
         latest = self._conn.execute(
             "SELECT id FROM menu_snapshots ORDER BY id DESC LIMIT 1"
         ).fetchone()
@@ -186,7 +207,7 @@ class SqliteLoyverseStore:
         Returns ``None`` when no snapshot has been recorded yet (a store that
         has never synced).
         """
-        row = self._conn.execute(
+        row = self._execute_locked(
             "SELECT at FROM menu_snapshots ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if row is None:
@@ -195,7 +216,7 @@ class SqliteLoyverseStore:
 
     def menu_change_history(self) -> tuple[MenuChange, ...]:
         """Every recorded menu change, in chronological then insertion order."""
-        rows = self._conn.execute(
+        rows = self._execute_locked(
             "SELECT item_id, change_kind, at, from_value, to_value"
             " FROM menu_changes ORDER BY id"
         ).fetchall()
@@ -209,6 +230,17 @@ class SqliteLoyverseStore:
             )
             for row in rows
         )
+
+    def _execute_locked(self, sql: str, params: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        """Run ``self._conn.execute`` under the store lock.
+
+        Read-only helpers (``last_sync_at``, ``menu_change_history``) share this
+        so they too are serialised against concurrent writers; without it, a
+        read that races a write on the same connection raises the same
+        ``InterfaceError`` that ``record_sales`` used to.
+        """
+        with self._lock:
+            return self._conn.execute(sql, params)
 
 
 def _datetime_to_iso(at: datetime) -> str:

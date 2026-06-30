@@ -244,10 +244,13 @@ def create_app(
 
     # FastAPI serves sync route handlers from a threadpool, so the SQLite
     # connection must be safe to use across threads. ``check_same_thread=False``
-    # lifts Python's default same-thread guard; serialised access is guaranteed
-    # because each request opens its own short transaction and the underlying
-    # SQLite writes are serialised by the database file lock. The store itself
-    # is connection-agnostic (Slice 1), so we hand it a pre-built connection.
+    # lifts Python's default same-thread guard — but that is *not* sufficient
+    # for safe concurrent use: the underlying C-level connection is not
+    # thread-safe, and unsynchronised concurrent writes surface as
+    # ``sqlite3.InterfaceError: bad parameter or other API misuse``. The store
+    # owns a per-instance lock and serialises every connection touch, so this
+    # single shared connection is safe under the threadpool and alongside the
+    # nightly sync cron.
     conn = sqlite3.connect(db, check_same_thread=False)
     store = SqliteLoyverseStore(conn)
     # Cross-check every mapping's item_id against the synced Loyverse menu

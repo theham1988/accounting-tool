@@ -368,3 +368,79 @@ def test_migration_runner_records_applied_migrations(tmp_path) -> None:  # type:
     raw2.close()
     second.close()
     assert reapplied == applied
+
+
+# --- AC: concurrent access is safe (production InterfaceError regression) -----
+
+
+def test_concurrent_writers_do_not_corrupt_the_connection(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Multiple threads writing through one shared store must not raise.
+
+    Regression for the production ``sqlite3.InterfaceError: bad parameter or
+    other API misuse`` traceback seen in the server logs (2026-06-30). The
+    store is built with a single ``sqlite3.Connection(check_same_thread=False)``
+    and shared across FastAPI's sync-route threadpool; SQLite connections are
+    NOT safe for concurrent use even with that flag (it only lifts Python's
+    same-thread guard, not the C-level connection's lack of thread safety).
+    Without per-store serialisation, racing writers corrupt the connection
+    state and pysqlite surfaces it as ``InterfaceError``.
+
+    This test drives the exact failure shape — N threads, one shared store,
+    interleaved ``record_sales`` — and asserts no thread raises. Before the
+    fix this raised on 2–3 of 4 threads within ~10 iterations each.
+    """
+    import sqlite3
+    import threading
+
+    db_path = str(tmp_path / "concurrent.db")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    store = SqliteLoyverseStore(conn)
+    try:
+        # Seed one menu item so records reference a real id (closer to prod).
+        store.record_menu_snapshot(
+            MenuSnapshot(
+                items=(
+                    MenuItem(
+                        item_id="i-1",
+                        name="Latte",
+                        sell_price=Money("80"),
+                        segment=Segment.CAFE,
+                    ),
+                )
+            ),
+            datetime.now(timezone.utc),
+        )
+
+        errors: list[BaseException] = []
+
+        def worker(thread_id: int) -> None:
+            try:
+                for i in range(20):
+                    store.record_sales(
+                        [_sale_record(
+                            receipt_number=f"R{thread_id}-{i}",
+                            line_id="0",
+                            item_id="i-1",
+                        )]
+                    )
+                    # A read interleaved with the other threads' writes is the
+                    # other race surface — exercise it too.
+                    store.sales()
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(t,)) for t in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], (
+            f"concurrent writers raised {len(errors)} error(s); first: "
+            f"{errors[0]!r}"
+        )
+        # Sanity: all 80 sales landed (idempotency is per (receipt, line_id),
+        # and every receipt here is unique, so nothing was deduped).
+        assert len(store.sales()) == 80
+    finally:
+        conn.close()
