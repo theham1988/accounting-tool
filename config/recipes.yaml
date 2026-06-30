@@ -1246,153 +1246,132 @@ recipes:
 # ----------------------------------------------------------------------------
 mappings:
   # Coffee
-  - { item_id: "10042", sku_id: espresso }
-  - { item_id: "10043", sku_id: espresso }
-  - { item_id: "10068", sku_id: americano-hot }
-  - { item_id: "10004", sku_id: americano-hot }
-  - { item_id: "10005", sku_id: americano-hot }
-  - { item_id: "10103", sku_id: americano-orange }
-  - { item_id: "10046", sku_id: latte }
-  - { item_id: "10069", sku_id: latte }
-  - { item_id: "10051", sku_id: latte }
-  - { item_id: "10012", sku_id: piccolo-latte }
-  - { item_id: "10054", sku_id: piccolo-latte }
-  - { item_id: "10009", sku_id: cappuccino }
-  - { item_id: "10055", sku_id: cappuccino }
-  - { item_id: "10052", sku_id: flat-white }
-  - { item_id: "10053", sku_id: flat-white }
-  - { item_id: "10044", sku_id: espresso-macchiato }
-  - { item_id: "10045", sku_id: espresso-macchiato }
-  - { item_id: "10006", sku_id: mocha }
-  - { item_id: "10056", sku_id: mocha }
-  - { item_id: "10018", sku_id: caramel-cafe-latte }
-  - { item_id: "10110", sku_id: drip-coffee }
-  - { item_id: "10015", sku_id: white-wash }
-  - { item_id: "10013", sku_id: coffee-tonic }
-  - { item_id: "10014", sku_id: coffee-cola }
-  - { item_id: "10011", sku_id: yuzu-coffee }
-  - { item_id: "10017", sku_id: sun-down }
-  - { item_id: "10016", sku_id: pbnc }
-  - { item_id: "10029", sku_id: chocoholic }
+  - { item_id: 0fe310ba-9e63-4c79-bacf-4c28a2bf6afe, sku_id: espresso }
+  - { item_id: cf29cb7f-6ab9-41ee-8fb1-fc378738f71c, sku_id: americano-hot }
+  - { item_id: d71527c7-ba61-41eb-89a4-bbba60b57ca7, sku_id: americano-orange }
+  - { item_id: 5fc3d0af-6084-4e53-a899-cb08e2ffdb6c, sku_id: latte }
+  - { item_id: be9d829c-95be-4983-abc7-5d08b595150f, sku_id: piccolo-latte }
+  - { item_id: 2a7e4602-f4ac-418d-87b4-ea87ea92a18f, sku_id: cappuccino }
+  - { item_id: f966e345-92ac-48d1-b148-838be51c63a1, sku_id: flat-white }
+  - { item_id: d9c11a2a-3371-4684-a430-6207edcd4497, sku_id: espresso-macchiato }
+  - { item_id: 79dcfb9d-4f9c-405d-a1df-29100257adad, sku_id: mocha }
+  - { item_id: fcf3c08b-58ce-4c9f-86c9-d48cd5b64c99, sku_id: caramel-cafe-latte }
+  - { item_id: c954fa83-6764-4503-91d9-f8011682199d, sku_id: drip-coffee }
+  - { item_id: 368d77b4-7ede-40a4-8cc4-cf294ee0dcd7, sku_id: white-wash }
+  - { item_id: 59f7448b-9aa3-46bf-962b-e047e12f48ee, sku_id: coffee-tonic }
+  - { item_id: ab2fd4d8-e5c7-4d65-bc23-3e887a4831ec, sku_id: coffee-cola }
+  - { item_id: 1172c0f8-3349-4788-94ae-42aaafde8fd6, sku_id: yuzu-coffee }
+  - { item_id: b0d36c92-1247-4e4d-a89a-9a7cad490abf, sku_id: sun-down }
+  - { item_id: 4723bf8d-6a82-47ed-a256-6db49b860624, sku_id: pbnc }
+  - { item_id: a8c32b9b-e947-45d8-aa67-22efaf99323b, sku_id: chocoholic }
 
   # Tea
-  - { item_id: "10019", sku_id: peach-tea }
-  - { item_id: "10024", sku_id: peach-tea }
-  - { item_id: "10022", sku_id: earl-grey }
-  - { item_id: "10023", sku_id: earl-grey }
-  - { item_id: "10049", sku_id: lemon-lemongrass-tea }
-  - { item_id: "10050", sku_id: lemon-lemongrass-tea }
-  - { item_id: "10047", sku_id: tangerine-signature-tea }
-  - { item_id: "10048", sku_id: tangerine-signature-tea }
-  - { item_id: "10020", sku_id: english-breakfast-tea }
-  - { item_id: "10021", sku_id: english-breakfast-tea }
+  - { item_id: 097e6d1c-c0d6-4f12-95d3-ab44b01046d9, sku_id: peach-tea }
+  - { item_id: 3bd8b98b-c734-4ca4-b326-ecc28783a8f5, sku_id: earl-grey }
+  - { item_id: 7b5ca336-411e-4a20-ac03-7a39c3e9ac55, sku_id: lemon-lemongrass-tea }
+  - { item_id: e10fc411-03a0-4f37-8b31-db7f38dae43a, sku_id: tangerine-signature-tea }
+  - { item_id: 8cfd25f4-8b40-4d90-80ec-9fed6354a8d9, sku_id: english-breakfast-tea }
 
   # Matcha
-  - { item_id: "10027", sku_id: matcha-latte }
-  - { item_id: "10164", sku_id: matcha-nutella }
-  - { item_id: "10228", sku_id: matcha-coconut }
-  - { item_id: "10084", sku_id: clear-matcha }
-  - { item_id: "10028", sku_id: lemon-usucha }
+  - { item_id: cb45e15c-2a4b-47b4-965d-92e2873a5ab1, sku_id: matcha-latte }
+  - { item_id: 2a80235c-e88a-4003-9d62-c886c72f9f17, sku_id: matcha-nutella }
+  - { item_id: 4c2d42f1-7fc6-4181-9e85-5e3d5a572207, sku_id: matcha-coconut }
+  - { item_id: ee7870c0-4dda-4c72-9295-3dea64424168, sku_id: clear-matcha }
+  - { item_id: 747e5570-dc63-406d-9d62-3234901527d8, sku_id: lemon-usucha }
 
   # Fruit soda
-  - { item_id: "10025", sku_id: tangerine-soda }
-  - { item_id: "10026", sku_id: strawberry-soda }
-  - { item_id: "10008", sku_id: yuzu-soda }
+  - { item_id: 7c4a98a1-f4e8-4808-a3ef-33feb83fe810, sku_id: tangerine-soda }
+  - { item_id: 8271d32f-a06c-468d-ae31-41cbde2f6a33, sku_id: strawberry-soda }
+  - { item_id: 0dfd909d-0f96-4b8c-afb3-62420023c876, sku_id: yuzu-soda }
 
   # Milk & yogurt
-  - { item_id: "10070", sku_id: caramel-milk }
-  - { item_id: "10035", sku_id: pbnm }
-  - { item_id: "10032", sku_id: yogurt-milkshake }
-  - { item_id: "10034", sku_id: yogurt-milkshake }
-  - { item_id: "10060", sku_id: yogurt-milkshake }
-  - { item_id: "10033", sku_id: yogurt-milkshake }
+  - { item_id: 3b437257-02d6-41b9-bead-4afd16724958, sku_id: caramel-milk }
+  - { item_id: 5631ad84-4a07-4feb-bc30-529afccb58a9, sku_id: pbnm }
+  - { item_id: 768ff9cc-57d5-40f3-b151-ecce86342f97, sku_id: yogurt-milkshake }
 
   # Cocoa
-  - { item_id: "10030", sku_id: cocoa }
+  - { item_id: 65a8c425-9551-4f42-83b7-c91475282205, sku_id: cocoa }
 
   # Cold-pressed juice
-  - { item_id: "10158", sku_id: golden-glow }
-  - { item_id: "10159", sku_id: beet-the-heat }
-  - { item_id: "10160", sku_id: green-bliss }
-  - { item_id: "10161", sku_id: yellow-mellow }
-  - { item_id: "10157", sku_id: fresh-fix }
+  - { item_id: 4c0c8b6f-96c6-4337-b829-015c55f6126a, sku_id: golden-glow }
+  - { item_id: aea00032-ee93-4a4a-8fb3-e1fd12cb6375, sku_id: beet-the-heat }
+  - { item_id: f3d0c32b-4520-41af-a16d-df4614cd8d36, sku_id: green-bliss }
+  - { item_id: 315ce1d0-1bd6-4a58-b1df-1cd12627b841, sku_id: yellow-mellow }
+  - { item_id: fe6adf2d-e1bb-4658-9a86-47b1505ad26b, sku_id: fresh-fix }
 
   # Sushi tacos
-  - { item_id: "HC04", sku_id: spicy-salmon-sushi-taco }
-  - { item_id: "HC03", sku_id: ahi-tuna-sushi-taco }
-  - { item_id: "10000", sku_id: lemon-ebi-sushi-taco }
-  - { item_id: "10147", sku_id: wasabi-crabstick-sushi-taco }
-  - { item_id: "10040", sku_id: mexican-beef-taco }
+  - { item_id: a9243b7f-8249-4f77-a0d7-1deb724a81fa, sku_id: spicy-salmon-sushi-taco }
+  - { item_id: bf20955c-ce0a-47e6-a67e-c022bea143b9, sku_id: ahi-tuna-sushi-taco }
+  - { item_id: 2c0d9c10-ad15-43ff-80e1-bb7e2b648527, sku_id: lemon-ebi-sushi-taco }
+  - { item_id: 80f91511-32fe-4586-bc32-caa0713897e9, sku_id: wasabi-crabstick-sushi-taco }
+  - { item_id: b6442caa-ba97-42a3-910b-9ce33f06ca3e, sku_id: mexican-beef-taco }
 
   # Poke bowls
-  - { item_id: "C02", sku_id: spicy-salmon-poke }
-  - { item_id: "10001", sku_id: ahi-tuna-poke }
-  - { item_id: "C03", sku_id: shrimp-poke }
-  - { item_id: "10124", sku_id: tofu-poke }
-  - { item_id: "HC08", sku_id: poke-mix }
+  - { item_id: e427391a-2d90-4709-9134-5eb637151cbd, sku_id: spicy-salmon-poke }
+  - { item_id: 9bdaef5b-8e95-4b39-82bf-e949c3502d90, sku_id: ahi-tuna-poke }
+  - { item_id: 0b359857-12e5-484c-bab0-023216ade89f, sku_id: shrimp-poke }
+  - { item_id: 8ae46cd0-76a0-4616-9695-87affb8f1eef, sku_id: tofu-poke }
+  - { item_id: bc039b14-0733-49b6-a2fd-ca22a87316ce, sku_id: poke-mix }
 
   # Mexican bowl
-  - { item_id: "HC01", sku_id: mexican-beef-bowl }
+  - { item_id: 80b4c894-7525-4227-9988-ef67f6aaa6e1, sku_id: mexican-beef-bowl }
 
   # Salads
-  - { item_id: "HC06", sku_id: tangerine-salad }
-  - { item_id: "10121", sku_id: chicken-salad }
-  - { item_id: "10116", sku_id: tofu-salad }
-  - { item_id: "10104", sku_id: mexican-corn-salad }
-  - { item_id: "10109", sku_id: smoked-salmon-salad }
+  - { item_id: 3df6a7fd-3fe7-4f87-a2a9-0342e78931ca, sku_id: tangerine-salad }
+  - { item_id: 18752a58-3be8-4732-b3b9-d1c4015c22e3, sku_id: chicken-salad }
+  - { item_id: e0640440-f45b-4e77-a227-3c2fbe827ea3, sku_id: tofu-salad }
+  - { item_id: 6c6c67eb-996e-4fab-adef-137747ade38b, sku_id: mexican-corn-salad }
+  - { item_id: 9f472098-17d8-44be-8a47-645416b9489c, sku_id: smoked-salmon-salad }
 
   # Open-faced toasts
-  - { item_id: "10079", sku_id: cheesy-avocado-toast }
-  - { item_id: "10080", sku_id: smashed-avocado-toast }
-  - { item_id: "10150", sku_id: smoked-salmon-cream-cheese-toast }
-  - { item_id: "10151", sku_id: mushroom-egg-toast }
+  - { item_id: 88db43d4-1b7b-4a05-8223-038e53d2c395, sku_id: cheesy-avocado-toast }
+  - { item_id: e39d0df2-80fe-459b-941c-748b089b7050, sku_id: smashed-avocado-toast }
+  - { item_id: bfa25c67-c130-4fa4-92c9-cf093619f1c1, sku_id: smoked-salmon-cream-cheese-toast }
+  - { item_id: 7849557d-7c1a-4a35-bab9-1db27615b479, sku_id: mushroom-egg-toast }
 
   # Sandwiches
-  - { item_id: "10081", sku_id: spam-cheese-sandwich }
-  - { item_id: "10082", sku_id: cubano-sandwich }
-  - { item_id: "10168", sku_id: tuna-melt-sandwich }
-  - { item_id: "10193", sku_id: grilled-cheese-sandwich }
-  - { item_id: "10169", sku_id: bacon-egg-sandwich }
-  - { item_id: "10170", sku_id: sausage-egg-sandwich }
+  - { item_id: bfed6d03-2f7a-4feb-becf-b1713aa2feb5, sku_id: spam-cheese-sandwich }
+  - { item_id: 69e6b390-4289-4734-a3ec-f02e96155728, sku_id: cubano-sandwich }
+  - { item_id: 70aadf7b-192b-46c3-8ce9-d6d8621f8b65, sku_id: tuna-melt-sandwich }
+  - { item_id: 5b67fd1e-7892-4008-aa88-5b75bdd6497b, sku_id: grilled-cheese-sandwich }
+  - { item_id: b2e6196c-457a-441a-a129-1cbc6ea9cd8e, sku_id: bacon-egg-sandwich }
+  - { item_id: 04f12385-6698-43b0-af81-4e25012acbc0, sku_id: sausage-egg-sandwich }
 
   # Yogurt bowl
-  - { item_id: "10067", sku_id: greek-yogurt-bowl }
-  - { item_id: "10133", sku_id: greek-yogurt-bowl }
-  - { item_id: "10162", sku_id: greek-yogurt-bowl }
+  - { item_id: 7d4a1602-6321-4aff-b205-dc9951403133, sku_id: greek-yogurt-bowl }
 
   # Desserts / croffles / sweet toasts
-  - { item_id: "10061", sku_id: blueberry-cream-croffle }
-  - { item_id: "10063", sku_id: banoffee-croffle }
-  - { item_id: "10126", sku_id: ice-cream-croffle }
-  - { item_id: "10062", sku_id: yogurt-biscoff-croffle }
-  - { item_id: "10108", sku_id: french-toast }
-  - { item_id: "10163", sku_id: banana-nutella-pancake }
-  - { item_id: "10171", sku_id: peanut-butter-nutella-toast }
-  - { item_id: "10172", sku_id: ice-cream-waffles }
+  - { item_id: d773826b-33c6-416d-a263-74f6879a2dd7, sku_id: blueberry-cream-croffle }
+  - { item_id: 9621ba08-521e-442b-89af-4a85469fa455, sku_id: banoffee-croffle }
+  - { item_id: f929036c-f103-4c56-85b8-506a3206eab9, sku_id: ice-cream-croffle }
+  - { item_id: 941aed1e-cd3a-4a9a-9fbd-e641d91b71a3, sku_id: yogurt-biscoff-croffle }
+  - { item_id: 40358f28-0a31-4dd4-9c3c-d789d8cb804d, sku_id: french-toast }
+  - { item_id: d1e38337-fbb8-447c-b317-980e452d9ff6, sku_id: banana-nutella-pancake }
+  - { item_id: 0cb61ab8-1367-423c-a700-da1618d09484, sku_id: peanut-butter-nutella-toast }
+  - { item_id: 5d8a974b-18e3-45b3-9ff6-c85397269b79, sku_id: ice-cream-waffles }
 
   # Breakfast
-  - { item_id: "10195", sku_id: breakfast-set }
-  - { item_id: "10152", sku_id: omelette }
-  - { item_id: "10192", sku_id: chicken-quesadilla }
-  - { item_id: "10155", sku_id: pancake-bacon-egg }
-  - { item_id: "10156", sku_id: pancake-sausage-egg }
-  - { item_id: "10165", sku_id: hashbrown-set }
-  - { item_id: "10166", sku_id: hashbrown-set }
+  - { item_id: 3e3df4db-bf93-4ec5-a5c7-60f83f116db5, sku_id: breakfast-set }
+  - { item_id: 6df9180d-7a85-447e-a03f-38e3f0dafba8, sku_id: omelette }
+  - { item_id: d9a92a88-73ca-4dcd-b3c4-9fecd87b9660, sku_id: chicken-quesadilla }
+  - { item_id: a936888b-1fb7-4ce8-9660-07430ce7e6d1, sku_id: pancake-bacon-egg }
+  - { item_id: 5ff43044-4848-4b06-8c24-880c613f2105, sku_id: pancake-sausage-egg }
+  - { item_id: 31663440-4fb9-49f4-a6d2-0123a2d58b7a, sku_id: hashbrown-set }
 
   # Snacks / musubi
-  - { item_id: "H01", sku_id: classic-musubi }
-  - { item_id: "H02", sku_id: tamago-musubi }
+  - { item_id: 5226940d-53b1-4b17-8087-bf8c815f5b23, sku_id: classic-musubi }
+  - { item_id: ec479e4b-b0ab-4ca1-b9d9-1bd7c32bd89d, sku_id: tamago-musubi }
 
   # Rice bowls
-  - { item_id: "H03", sku_id: teriyaki-spam-rice }
-  - { item_id: "H04", sku_id: loco-moco-rice }
-  - { item_id: "10122", sku_id: fried-chili-tofu-rice }
-  - { item_id: "10115", sku_id: fried-pork-hk-rice }
-  - { item_id: "10086", sku_id: garlic-chili-ebi-rice }
-  - { item_id: "10002", sku_id: minced-pork-egg-rice }
+  - { item_id: fd9d4a1f-72b4-42f8-92c5-1624e5304132, sku_id: teriyaki-spam-rice }
+  - { item_id: 64a7fbfa-7a1b-465c-a6e2-4c8f055fdafb, sku_id: loco-moco-rice }
+  - { item_id: b4f2dd79-9190-45b7-97b1-7bba8b8e9013, sku_id: fried-chili-tofu-rice }
+  - { item_id: 1cde675a-2c65-4a95-ae7c-f457cd437b3b, sku_id: fried-pork-hk-rice }
+  - { item_id: c922ba16-f4b8-4240-b1b1-29a4f0996aeb, sku_id: garlic-chili-ebi-rice }
+  - { item_id: 32cc1384-f18c-4976-9782-1a4c4153c7fd, sku_id: minced-pork-egg-rice }
 
   # Pasta
-  - { item_id: "10119", sku_id: carbonara }
-  - { item_id: "10120", sku_id: pesto-grilled-chicken-pasta }
-  - { item_id: "10143", sku_id: tomato-chorizo-pasta }
-  - { item_id: "10125", sku_id: tuna-spaghetti }
+  - { item_id: 8f9b200a-76d2-4603-bc05-e591f2dbdd0a, sku_id: carbonara }
+  - { item_id: 583a8451-3a52-47b0-8f70-ccf06b12c58b, sku_id: pesto-grilled-chicken-pasta }
+  - { item_id: c0bd2128-0809-435e-804f-740d70ba5bca, sku_id: tomato-chorizo-pasta }
+  - { item_id: 3b793b28-5c09-4796-8440-8f9d5307f929, sku_id: tuna-spaghetti }
