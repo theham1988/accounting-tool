@@ -226,6 +226,44 @@ recipes:
         load_recipes(bad)
 
 
+def test_catalog_exposes_loaded_mappings(tmp_path: Path) -> None:
+    """``RecipeCatalog.mappings()`` round-trips the mappings the loader gave it.
+
+    A startup caller (the menu-vs-mappings cross-check) needs the loaded
+    mappings without re-parsing the YAML or keeping a second copy of the
+    list alongside the catalog. This pins that ``mappings()`` returns the
+    same ``SkuMapping``s the file declared, in declaration order.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: chang-draft-500
+    name: Chang Draft 500ml
+    segment: bar
+    ingredients:
+      - { sku_id: chang-keg, quantity: "500" }
+  - sku_id: espresso-latte
+    name: Espresso Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "20" }
+
+mappings:
+  - { item_id: i-1, sku_id: chang-draft-500 }
+  - { item_id: i-2, sku_id: espresso-latte }
+""",
+    )
+
+    catalog = load_recipes(recipes_yaml)
+
+    assert catalog.mappings() == (
+        SkuMapping(item_id="i-1", sku_id="chang-draft-500"),
+        SkuMapping(item_id="i-2", sku_id="espresso-latte"),
+    )
+
+
 def test_unpriced_ingredient_is_not_a_startup_error(tmp_path: Path) -> None:
     """A recipe ingredient with no entry in the cost book loads fine.
 

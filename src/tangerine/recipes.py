@@ -53,3 +53,16 @@ class RecipeCatalog:
     def all(self) -> tuple[Recipe, ...]:
         """All recipes in the catalog, for introspection."""
         return tuple(self._by_sku.values())
+
+    def mappings(self) -> tuple[SkuMapping, ...]:
+        """All Loyverse-item -> SKU mappings the catalog was built with.
+
+        The config loader hands mappings in at load time; this exposes them
+        so a startup caller can cross-check their ``item_id`` side against
+        the live Loyverse menu without having to keep a second copy of the
+        list around.
+        """
+        return tuple(
+            SkuMapping(item_id=item_id, sku_id=sku_id)
+            for item_id, sku_id in self._item_to_sku.items()
+        )
