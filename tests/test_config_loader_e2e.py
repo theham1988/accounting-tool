@@ -25,6 +25,7 @@ from tangerine.config.loader import (
     load_assignees,
     load_costs,
     load_recipes,
+    validate_mappings_against_menu,
 )
 from tangerine.recipes import RecipeCatalog
 from tangerine.types import Assignee, Segment, SkuMapping
@@ -391,3 +392,76 @@ assignees:
 
     with pytest.raises(ConfigError, match="duplicate assignee_id 'daniel'"):
         load_assignees(bad)
+
+
+# --- AC: menu-vs-mappings startup guard --------------------------------------
+
+
+def test_validate_mappings_happy_path() -> None:
+    """Mappings whose ``item_id`` are all on the menu pass silently.
+
+    The guard's job is to catch ghosts, not to do anything on a clean file.
+    With every mapping's ``item_id`` present in ``known_item_ids`` it returns
+    None and raises nothing.
+    """
+    mappings = [
+        SkuMapping(item_id="i-1", sku_id="chang-draft-500"),
+        SkuMapping(item_id="i-2", sku_id="espresso-latte"),
+    ]
+    # Values are unused; only the key set matters (mirrors current_menu()).
+    known_item_ids = {"i-1": object(), "i-2": object()}
+
+    # Returns None, raises nothing.
+    assert validate_mappings_against_menu(mappings, known_item_ids) is None
+
+
+def test_validate_mappings_names_every_ghost() -> None:
+    """A mapping whose ``item_id`` is not on the menu raises ``ConfigError``
+    naming every ghost, not just the first.
+
+    This is the regression guard for the bug behind commit dc90d4e: 93 working
+    UUID mappings were replaced with 114 invented codes ("10042", "HC04", ...)
+    that matched no Loyverse payload. The file still loaded (the codes were
+    well-formed strings pointing at real SKUs), so the file-level validators
+    passed; every sale then resolved to unmapped and headline revenue silently
+    zeroed. The guard runs *after* the store opens, against the real synced
+    menu, and lists all ghosts in one error so a partner fixes the file once
+    rather than one-at-a-time across restarts.
+    """
+    mappings = [
+        SkuMapping(item_id="real-1", sku_id="chang-draft-500"),
+        SkuMapping(item_id="ghost-a", sku_id="espresso-latte"),
+        SkuMapping(item_id="real-2", sku_id="latte"),
+        SkuMapping(item_id="ghost-b", sku_id="cappuccino"),
+    ]
+    known_item_ids = {"real-1": object(), "real-2": object()}
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_mappings_against_menu(mappings, known_item_ids)
+
+    msg = str(exc_info.value)
+    # One error, not two: all ghosts named in a single message.
+    assert "2 mapping(s)" in msg
+    assert "'ghost-a'" in msg
+    assert "'ghost-b'" in msg
+    # Real ids are not flagged.
+    assert "real-1" not in msg
+    assert "real-2" not in msg
+
+
+def test_validate_mappings_noop_on_empty_menu() -> None:
+    """An empty ``known_item_ids`` is a cold start, not a failure.
+
+    The menu is runtime state: it arrives via sync, not config. On a fresh DB
+    (before the first sync has landed) ``store.current_menu()`` is empty, and
+    every mapping's ``item_id`` would technically be a "ghost". Blocking there
+    would make a brand-new deployment unbootable until a sync completes — which
+    it can't, because the tool needs to start to run the sync. So an empty menu
+    short-circuits to a no-op; the guard becomes active after the first sync.
+    """
+    mappings = [
+        SkuMapping(item_id="anything", sku_id="chang-draft-500"),
+    ]
+
+    # Empty menu -> no-op, regardless of mappings.
+    assert validate_mappings_against_menu(mappings, {}) is None

@@ -18,7 +18,7 @@ import os
 from datetime import date
 from decimal import Decimal
 
-from .config.loader import load_costs, load_recipes
+from .config.loader import load_costs, load_recipes, validate_mappings_against_menu
 from .daily_review import DailyReview, build_daily_review
 from .loyverse.source import StoreSource
 from .storage.sqlite_store import SqliteLoyverseStore
@@ -56,6 +56,14 @@ def main(
     cost = load_costs(costs_yaml)
     store = SqliteLoyverseStore.connect(db)
     try:
+        # Cross-check every mapping's item_id against the synced Loyverse menu
+        # before doing any work. A ghost mapping (item_id that matches nothing
+        # on the menu) would silently zero every sale it should have resolved;
+        # this catches it at startup instead. No-op on a fresh DB (empty menu)
+        # so cold start is not blocked before the first sync.
+        validate_mappings_against_menu(
+            list(catalog.mappings()), store.current_menu()
+        )
         source = StoreSource(
             store=store, recipes=list(catalog.all()), cost=cost
         )

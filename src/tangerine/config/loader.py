@@ -33,7 +33,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -163,6 +163,52 @@ def _validate_mappings_target_real_recipes(
                 f"{path}: mapping for item {m.item_id!r} references sku_id "
                 f"{m.sku_id!r}, which has no recipe defined"
             )
+
+
+def validate_mappings_against_menu(
+    mappings: list[SkuMapping], known_item_ids: Mapping[str, object]
+) -> None:
+    """Cross-check every mapping's ``item_id`` against the synced Loyverse menu.
+
+    A mapping's ``item_id`` is the key the sync resolves sales by (the parser
+    falls back to ``item_id`` whenever a line has no ``sku``, which at this
+    venue is always). If the id matches nothing on the menu, the mapping is a
+    ghost: it neither resolves any sale nor errors at file-load time, because
+    the menu is runtime state (it arrives via sync), not config. The result is
+    the failure mode the project just shipped — every sale resolves to
+    unmapped and headline revenue silently zeroes.
+
+    This guard runs at startup, *after* the store has opened and the menu is
+    available. It is deliberately separate from :func:`load_recipes`:
+
+    - folding it into the file loader would force every test fixture to supply
+      a menu, even tests that have nothing to do with mappings;
+    - the menu is runtime state, so it is not available at file-load time
+      anyway (a cold start has no menu until the first sync completes).
+
+    ``known_item_ids`` is the mapping returned by
+    :meth:`~tangerine.loyverse.store.LoyverseStore.current_menu` (item_id ->
+    ``MenuItem``). Its values are unused; only the key set matters. An empty
+    mapping is treated as "no menu synced yet" and the guard is a no-op, so
+    cold-start / fresh-DB startup is not blocked before the first sync lands.
+
+    Raises :class:`ConfigError` naming every ghost if any mapping's
+    ``item_id`` is absent from ``known_item_ids`` — one error listing all of
+    them, rather than failing on the first, so a partner fixing the file gets
+    the whole picture in one pass.
+    """
+    if not known_item_ids:
+        # Cold start: no sync has landed a menu yet. Nothing to cross-check;
+        # blocking here would make a fresh DB unbootable.
+        return
+    ghosts = [m.item_id for m in mappings if m.item_id not in known_item_ids]
+    if ghosts:
+        rendered = ", ".join(repr(g) for g in ghosts)
+        raise ConfigError(
+            f"{len(ghosts)} mapping(s) reference Loyverse item id(s) not on "
+            f"the synced menu: {rendered}. Re-sync the menu or fix the "
+            f"mappings in config/recipes.yaml."
+        )
 
 
 # --- assignees (slice 4) -----------------------------------------------------
@@ -320,4 +366,10 @@ def _parse_date(value: Any, path: str | Path, ctx: str) -> date:
     raise ConfigError(f"{path}: {ctx} must be a date string (YYYY-MM-DD)")
 
 
-__all__ = ["ConfigError", "load_assignees", "load_costs", "load_recipes"]
+__all__ = [
+    "ConfigError",
+    "load_assignees",
+    "load_costs",
+    "load_recipes",
+    "validate_mappings_against_menu",
+]
