@@ -35,12 +35,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
-from ..config.loader import (
-    load_assignees,
-    load_costs,
-    load_recipes,
-    validate_mappings_against_menu,
-)
+from ..config.loader import load_assignees, load_costs, load_recipes
 from ..daily_review import DailyReview, build_daily_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
@@ -253,12 +248,6 @@ def create_app(
     # nightly sync cron.
     conn = sqlite3.connect(db, check_same_thread=False)
     store = SqliteLoyverseStore(conn)
-    # Cross-check every mapping's item_id against the synced Loyverse menu
-    # before the app starts serving. A ghost mapping (item_id matching nothing
-    # on the menu) silently zeroes the sales it should have resolved; this
-    # surfaces it at construction so a bad deploy fails loudly. No-op on a
-    # fresh DB (empty menu) so cold start is not blocked before the first sync.
-    validate_mappings_against_menu(list(catalog.mappings()), store.current_menu())
     source = StoreSource(store=store, recipes=list(catalog.all()), cost=cost)
 
     @asynccontextmanager
