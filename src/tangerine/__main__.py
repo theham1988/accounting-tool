@@ -7,6 +7,14 @@ the SQLite store, and builds the daily review against whatever sales are
 persisted. On a fresh database the review is empty (sales arrive via Slice 3's
 sync, not yet built); the CLI surfaces that gracefully rather than crashing.
 
+Wave 1.5 Step 1 (ADR-0003 decision 1): recipes/costs/mappings are seeded into
+SQLite (idempotent — a no-op once seeded) and read live from there via
+``SqliteConfigStore``, the same config path ``create_app`` uses for the web
+review. This keeps the CLI and the 9am review agreeing on COGS and margins
+— including the VAT fix (net-of-VAT costs) and any edits made through the
+config-authoring UI — instead of the CLI re-reading the shipped YAML files
+directly on every run.
+
 Paths are configurable so tests can drive the CLI in-process without env
 mutation. The real entrypoint (run by ``python -m tangerine``) reads defaults
 from environment variables and delegates to :func:`main`.
@@ -15,12 +23,14 @@ from environment variables and delegates to :func:`main`.
 from __future__ import annotations
 
 import os
+import sqlite3
+import threading
 from datetime import date
 from decimal import Decimal
 
-from .config.loader import load_costs, load_recipes
 from .daily_review import DailyReview, build_daily_review
 from .loyverse.source import StoreSource
+from .storage.config_store import SqliteConfigStore, seed_config
 from .storage.sqlite_store import SqliteLoyverseStore
 from .types import Sale
 
@@ -52,16 +62,16 @@ def main(
     recipes_yaml = recipes_path or DEFAULT_RECIPES_PATH
     costs_yaml = costs_path or DEFAULT_COSTS_PATH
 
-    catalog = load_recipes(recipes_yaml)
-    cost = load_costs(costs_yaml)
-    store = SqliteLoyverseStore.connect(db)
+    # One connection shared by both stores, serialised by one lock — mirrors
+    # ``create_app``'s wiring so the CLI and the web review read the same
+    # SQLite-backed config (see module docstring).
+    conn = sqlite3.connect(db)
+    conn_lock = threading.Lock()
+    store = SqliteLoyverseStore(conn, lock=conn_lock)
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+    config_store = SqliteConfigStore(conn, lock=conn_lock)
     try:
-        source = StoreSource(
-            store=store,
-            recipes=list(catalog.all()),
-            cost=cost,
-            mappings=list(catalog.mappings()),
-        )
+        source = StoreSource(store=store, config=config_store)
         review_date = _pick_review_date(source.sales())
         review = build_daily_review(source=source, review_date=review_date)
         _print_review(review)
