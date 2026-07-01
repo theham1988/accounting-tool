@@ -257,8 +257,9 @@ def _flagged_row(
 def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     """Compute item-level and rolled-up gross margin for a single day.
 
-    Recipes come from ``source.recipes()``; their ingredient costs are looked
-    up from ``source.cost_book()``. Rows flagged ``unmapped`` or
+    Recipes come from ``source.recipes()``, resolved via ``source.mappings()``
+    (item -> SKU -> recipe, per ``RecipeCatalog``); their ingredient costs are
+    looked up from ``source.cost_book()``. Rows flagged ``unmapped`` or
     ``unknown_price`` are excluded from the totals (their COGS is unknown);
     their revenue is summed into ``flagged_revenue`` so it stays visible.
 
@@ -267,7 +268,7 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     revenue into a segment's CM would over-state it. Both segments are always
     present; a segment with no reliable sales carries zeros.
     """
-    recipes = RecipeCatalog(list(source.recipes()))
+    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
     cost = source.cost_book()
     rows = compute_item_margins(
         sales=source.sales(), recipes=recipes, cost=cost, day=day
@@ -321,7 +322,7 @@ def compute_period_segment_margins(
             f"period end {end} precedes start {start}; range must be inclusive"
         )
     sales = source.sales()
-    recipes = RecipeCatalog(list(source.recipes()))
+    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
     cost = source.cost_book()
 
     accumulated = _empty_segment_buckets()

@@ -634,6 +634,94 @@ def test_get_root_surfaces_unmapped_and_unknown_price_rows(
         )
 
 
+# --- AC: create_app wires a recipes.yaml mapping through end-to-end ------------
+
+
+def _recipes_yaml_with_item_to_sku_mapping() -> str:
+    """A recipe keyed by a master SKU, sold under a *different* Loyverse item id.
+
+    Mirrors the real ``config/recipes.yaml`` shape post-re-key: the recipe's
+    own ``sku_id`` (``espresso``) is a human-readable slug, but the item that
+    actually sells carries a distinct Loyverse variant SKU (``10042``) that
+    only resolves to the recipe via the ``mappings:`` block.
+    """
+    return """
+recipes:
+  - sku_id: espresso
+    name: Espresso
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "10" }
+
+mappings:
+  - { item_id: "10042", sku_id: espresso }
+"""
+
+
+def test_get_root_resolves_sale_through_recipes_yaml_mapping(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """A sold Loyverse item resolves through ``config/recipes.yaml``'s
+    ``mappings:`` block all the way to the rendered headline revenue.
+
+    Regression test: ``compute_daily_margin``/``compute_period_segment_margins``
+    once rebuilt their ``RecipeCatalog`` from only the recipe list, silently
+    dropping the loaded ``mappings:`` — so a mapping-only YAML edit (exactly
+    what the recipe re-key was) had zero effect on the running app, and every
+    real sale (whose Loyverse identity is a variant SKU, never equal to a
+    recipe's own ``sku_id``) surfaced as unmapped. This drives the full HTTP
+    seam (``create_app`` -> route -> template) the way a partner's browser
+    does, so it catches a broken wiring point that a lower-level
+    ``compute_item_margins``-with-a-hand-built-``RecipeCatalog`` test cannot.
+
+    Worked example: one Espresso (Loyverse item id ``10042``) sold at 70 THB,
+    costing 10g beans @ 2 THB/g = 20 THB -> 50 THB margin. It must show up in
+    the headline revenue and NOT in the "needs attention" unmapped list.
+    """
+    db_path = str(tmp_path / "tangerine.db")
+    recipes_path, costs_path, assignees_path = _write_custom_recipes(
+        tmp_path, _recipes_yaml_with_item_to_sku_mapping()
+    )
+
+    store = SqliteLoyverseStore.connect(db_path)
+    store.record_sales(
+        [
+            _sale_record(
+                receipt_number="2-1",
+                item_id="10042",
+                day=yesterday,
+                price="70",
+            ),
+        ]
+    )
+    store.close()
+
+    from tangerine.web.app import create_app
+
+    app = create_app(
+        db_path=db_path,
+        recipes_path=recipes_path,
+        costs_path=costs_path,
+        assignees_path=assignees_path,
+        today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
+    )
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    # Headline revenue/margin reflect the mapped item, not zero.
+    assert "70.00" in html  # revenue
+    assert "50.00" in html  # gross margin (70 - 20)
+    # The item is fully resolved (mapped + priced), so the needs-attention
+    # section (only rendered when something is flagged) must be absent.
+    assert "Needs attention" not in html
+    assert "<!--section:needs-attention-->" not in html
+
+
 # --- AC: goal progress section (rolling avg, target, met/missing, days) ---------
 
 

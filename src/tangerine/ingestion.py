@@ -16,15 +16,20 @@ from __future__ import annotations
 from typing import Protocol
 
 from .cost import CostBook
-from .types import Recipe, Sale
+from .types import Recipe, Sale, SkuMapping
 
 
 class Source(Protocol):
     """Read-side boundary for the pipeline.
 
-    A source yields the sales, recipes, and cost book the margin engine
-    consumes. Concrete sources (seeded fixtures today; Loyverse + receipt
-    processor later) satisfy this protocol.
+    A source yields the sales, recipes, cost book, and Loyverse-item -> SKU
+    mappings the margin engine consumes. Concrete sources (seeded fixtures
+    today; Loyverse + receipt processor later) satisfy this protocol.
+
+    ``mappings()`` was added alongside the recipes.yaml SKU re-key: the
+    margin engine resolves a sold item to its recipe via ``RecipeCatalog``
+    (item -> SKU -> recipe), and that resolution is meaningless without the
+    mappings a Source's mapping-carrying recipe catalog was built from.
     """
 
     def sales(self) -> list[Sale]: ...
@@ -32,3 +37,5 @@ class Source(Protocol):
     def recipes(self) -> list[Recipe]: ...
 
     def cost_book(self) -> CostBook: ...
+
+    def mappings(self) -> list[SkuMapping]: ...

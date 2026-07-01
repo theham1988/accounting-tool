@@ -248,7 +248,12 @@ def create_app(
     # nightly sync cron.
     conn = sqlite3.connect(db, check_same_thread=False)
     store = SqliteLoyverseStore(conn)
-    source = StoreSource(store=store, recipes=list(catalog.all()), cost=cost)
+    source = StoreSource(
+        store=store,
+        recipes=list(catalog.all()),
+        cost=cost,
+        mappings=list(catalog.mappings()),
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

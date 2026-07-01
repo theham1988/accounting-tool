@@ -473,6 +473,47 @@ def test_item_with_no_mapping_and_no_matching_recipe_is_unmapped(
     assert margins[0].unmapped is True
 
 
+def test_compute_daily_margin_honours_source_mappings(day: date) -> None:
+    """A Source's ``mappings()`` must reach the margin engine, not just
+    ``recipes()``.
+
+    Regression test for a bug where ``compute_daily_margin`` /
+    ``compute_period_segment_margins`` rebuilt a ``RecipeCatalog`` from only
+    ``source.recipes()``, silently dropping ``source.mappings()`` — every
+    Loyverse item -> SKU mapping in ``config/recipes.yaml`` was therefore
+    never consulted in production (regardless of whether it was correct),
+    because ``compute_item_margins``-level tests exercise ``RecipeCatalog``
+    directly and never go through a ``Source``.     Here the sold Loyverse item
+    id (``10042``, a real variant SKU shape) differs from the recipe's own
+    ``sku_id`` (``espresso``) and only resolves through the mapping — this
+    must reach the daily rollup, not just flag as unmapped.
+    """
+    from tangerine.margin import compute_daily_margin
+    from tangerine.seeded import SeededSource
+
+    cost = CostBook({"beans-arabica": (D("2"), date(2026, 6, 1))})
+    recipe = Recipe(
+        sku_id="espresso",
+        name="Espresso",
+        segment=Segment.CAFE,
+        ingredients=(RecipeIngredient(sku_id="beans-arabica", quantity=D("10")),),
+    )
+    sales = [Sale(item_id="10042", timestamp=day, sell_price=D("70"))]
+    source = SeededSource(
+        sales=sales,
+        recipes=[recipe],
+        cost=cost,
+        mappings=[SkuMapping(item_id="10042", sku_id="espresso")],
+    )
+
+    result = compute_daily_margin(source, day)
+
+    assert result.total_revenue == D("70")
+    assert result.total_gross_margin == D("50")  # 70 - (10 * 2)
+    assert result.flagged_revenue == D("0")
+    assert result.item_margins[0].unmapped is False
+
+
 # --- target-margin violations flagged (PRD user story 13) -------------------
 
 

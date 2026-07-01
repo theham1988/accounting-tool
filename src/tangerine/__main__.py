@@ -57,7 +57,10 @@ def main(
     store = SqliteLoyverseStore.connect(db)
     try:
         source = StoreSource(
-            store=store, recipes=list(catalog.all()), cost=cost
+            store=store,
+            recipes=list(catalog.all()),
+            cost=cost,
+            mappings=list(catalog.mappings()),
         )
         review_date = _pick_review_date(source.sales())
         review = build_daily_review(source=source, review_date=review_date)
