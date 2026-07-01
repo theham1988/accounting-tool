@@ -1,0 +1,72 @@
+# Domain Context — Tangerine Phuket Accounting Tool
+
+A glossary of the terms the project uses, sharpened as decisions resolve.
+This file is *only* a glossary — implementation decisions live in
+`docs/adr/`, the operational runbook lives in `DEPLOY.md`.
+
+## Venue
+
+**Tangerine Phuket** — the dual-concept venue this tool serves. Cafe
+8am–5pm, bar 5pm–10pm. Two equal partners (Daniel, Noi) alternate
+day/night shifts.
+
+## Partners
+
+The two co-owners. Each is an **Assignee** for the engine's task
+assignment (slice 12) and the `cashier_id`/`assignee_id` audit trail.
+There is no on-site manager; the tool does the
+segregation-of-duties work a manager would do.
+
+## Wave 1 sync surface
+
+The set of Loyverse data the Wave 1 nightly sync pulls: **SALE/REFUND
+receipts** and **menu state** (item → category, current prices). Loyverse
+**voids**, shift closes, and per-cashier sales counts are *not* part of
+the Wave 1 sync — they arrive in Wave 3. A Wave 1 daily review therefore
+has an empty anomaly section by design; this is correct, not a bug.
+
+## Regular item
+
+A **regular item** is a Loyverse menu item sold more than once a week.
+Wave 1's mapping-coverage bar is "every regular item is mapped to a
+recipe"; one-off and seasonal items are allowed to surface in the daily
+review's `unmapped` section (that is their correct home — revenue the
+tool cannot cost is surfaced, not silently dropped). The bar is reviewed
+at every menu change.
+
+## Cost unit convention
+
+Every ingredient SKU's `price` in `config/costs.yaml` is **THB per
+smallest weight/volume unit**: per **ml** for liquids (beer, milk,
+syrups), per **g** for solids (beans, sugar, flour), per **unit** for
+countables (eggs, napkins). The recipe `quantity` for that ingredient
+uses the same unit. The convention is implicit — the file does not
+carry a `unit:` field — so it lives here as the durable reference. A
+partner editing `costs.yaml` quotes a per-ml/per-g/per-unit price; a
+partner editing a recipe's `quantity` writes ml/g/units to match.
+
+## Recipe review
+
+The control that "recipes go through code review" (PRD user story 22)
+means *in practice*: any change to `config/recipes.yaml`,
+`config/costs.yaml`, or `config/assignees.yaml` is a PR against `main`;
+`main` is branch-protected; the **other** partner must approve before
+merge. Self-merge is not permitted on config changes. This is the
+control that catches "wrong quantity in a hurry" before it ships, not
+the nightly sync.
+
+## Recovery posture
+
+The operational story when the server or its data dies. For Wave 1:
+
+- **Data** — nightly SQLite snapshot (`deploy/tangerine-snapshot.sh`),
+  rotated to the newest 14, restorable by file copy.
+- **Box** — both: a weekly DigitalOcean droplet snapshot for fast
+  restore, *and* the `DEPLOY.md` runbook as the tested-from-scratch
+  rebuild path. The runbook is the source of truth; the droplet snapshot
+  is the speed optimisation.
+- **Secrets** — the auth passphrase, cookie-signing secret, and Loyverse
+  access token live in a shared password manager both partners can reach
+  (alongside the runbook). The only on-server copy is
+  `/etc/tangerine/env`; without the off-box copy, a rebuilt droplet
+  cannot be logged into.
