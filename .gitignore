@@ -22,3 +22,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# One-shot worksheets (see scripts/dump_loyverse_items.py) -- generated
+# output, not source of truth.
+/menu.tsv

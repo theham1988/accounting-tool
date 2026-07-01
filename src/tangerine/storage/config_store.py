@@ -17,6 +17,7 @@ once by the migrator".
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from datetime import date, datetime, timezone
@@ -250,11 +251,14 @@ def _seed_costs(
     for sku_id, entry in raw_costs.items():
         if not (isinstance(entry, dict) and "price" in entry and "updated_at" in entry):
             continue
-        vat_inclusive = _looks_vat_inclusive(comments.get(sku_id))
+        comment = comments.get(sku_id)
+        vat_inclusive = _looks_vat_inclusive(comment)
         net = _net_per_unit(_parse_decimal(entry["price"]), vat_inclusive)
         rows.append(
             (sku_id, 1 if vat_inclusive else 0, str(net), entry["updated_at"], _MIGRATION_ACTOR)
         )
+        unit_comment = _resolve_unit_comment(sku_id, comments)
+        _ensure_sku_row(conn, sku_id, unit=_derive_unit(unit_comment), now=now)
     conn.executemany(
         "INSERT OR REPLACE INTO costs"
         " (sku_id, pack_price, pack_quantity, vat_inclusive,"
@@ -262,6 +266,95 @@ def _seed_costs(
         " VALUES (?, NULL, NULL, ?, ?, ?, ?)",
         rows,
     )
+
+
+def _ensure_sku_row(
+    conn: sqlite3.Connection, sku_id: str, *, unit: str | None, now: str
+) -> None:
+    """Make sure ``sku_id`` has a ``skus`` row, backfilling ``unit`` if known.
+
+    Most costed SKUs are pure ingredients (``almond-ground``, ``butter``, ...)
+    that are never a recipe's own ``sku_id`` and so never get a row from
+    ``_seed_recipes`` — this creates one, with ``segment`` left NULL (an
+    ingredient may feed both cafe and bar recipes, so it has no single
+    segment). For a SKU that *is* also a recipe output (a costed sub-recipe
+    like a batch-brewed concentrate), a row already exists with its segment
+    and name set; this only fills in ``unit`` when it is still unknown,
+    never overwriting a row's ``name``/``segment``.
+    """
+    conn.execute(
+        "INSERT INTO skus (sku_id, name, segment, unit, yield_units,"
+        " target_gross_margin_pct, created_at, created_by)"
+        " VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)"
+        " ON CONFLICT(sku_id) DO UPDATE SET unit = COALESCE(skus.unit, excluded.unit)",
+        (sku_id, sku_id, unit, now, _MIGRATION_ACTOR),
+    )
+
+
+# Matches a pack-size token immediately preceded by either a number (optionally
+# with a decimal point and/or a space -- "500 g", "5kg", "1.6 l") or a literal
+# "/" (the price-per-kilo shorthand used throughout costs.yaml for market
+# meat/fish, e.g. "79/kg", "645/kg"). The trailing word boundary avoids
+# matching inside longer words (the "g" in "gross", "pc" in "packs").
+_WEIGHT_RE = re.compile(r"(?:\d+(?:\.\d+)?\s*|/)k?g\b", re.IGNORECASE)
+_VOLUME_RE = re.compile(r"(?:\d+(?:\.\d+)?\s*|/)(?:ml|l)\b", re.IGNORECASE)
+_COUNT_RE = re.compile(r"\bpcs?\b", re.IGNORECASE)
+
+# Matches an alias comment such as "= corn" (see ``_resolve_unit_comment``).
+_ALIAS_RE = re.compile(r"^=\s*(\S+)$")
+
+
+def _resolve_unit_comment(sku_id: str, comments: dict[str, str]) -> str | None:
+    """Follow a ``# = other_sku`` alias comment to the unit-bearing comment.
+
+    Some cost entries are priced identically to another SKU and say so with
+    an alias comment instead of repeating the pack-size text (e.g.
+    ``corn-grilled: {...}  # = corn``). Read literally, ``_derive_unit`` would
+    see ``"= corn"`` — no weight/volume/count token — and give up as
+    ambiguous, even though the aliased SKU (``corn``) already carries a known
+    unit. This follows the alias chain to that SKU's own comment so its unit
+    derives correctly too. Cycle-guarded against a malformed alias loop.
+    """
+    seen: set[str] = set()
+    current = sku_id
+    while current not in seen:
+        seen.add(current)
+        comment = comments.get(current)
+        if comment is None:
+            return None
+        match = _ALIAS_RE.match(comment)
+        if not match:
+            return comment
+        current = match.group(1)
+    return None
+
+
+def _derive_unit(comment: str | None) -> str | None:
+    """Best-effort unit from a cost line's trailing pack-size comment.
+
+    Per ADR-0003 decision 3: a weight token (``g``/``kg``) means the SKU's
+    canonical unit is ``g``; a volume token (``ml``/``l``) means ``ml``; a
+    count token (``pc``/``pcs``) means ``unit``. A comment naming more than
+    one kind of token, or none at all (e.g. ``"120/30"`` for eggs, or no pack
+    size at all), is genuinely ambiguous from the text alone — this returns
+    ``None`` rather than guess, leaving the row queryable (``unit IS NULL``)
+    for partner confirmation later, exactly like the VAT flag's conservative
+    default in ``_looks_vat_inclusive``.
+    """
+    if not comment:
+        return None
+    kinds = {
+        unit
+        for pattern, unit in (
+            (_WEIGHT_RE, "g"),
+            (_VOLUME_RE, "ml"),
+            (_COUNT_RE, "unit"),
+        )
+        if pattern.search(comment)
+    }
+    if len(kinds) != 1:
+        return None
+    return next(iter(kinds))
 
 
 def _net_per_unit(gross: Decimal, vat_inclusive: bool) -> Decimal:

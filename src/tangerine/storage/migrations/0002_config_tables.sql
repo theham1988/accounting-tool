@@ -9,7 +9,7 @@
 CREATE TABLE IF NOT EXISTS skus (
     sku_id                      TEXT NOT NULL PRIMARY KEY,
     name                        TEXT NOT NULL,
-    segment                     TEXT NOT NULL,           -- 'cafe' | 'bar'
+    segment                     TEXT,                    -- 'cafe' | 'bar'; NULL for ingredient-only SKUs with no recipe of their own (they may feed both segments)
     unit                        TEXT,                    -- 'g' | 'ml' | 'unit'; NULL until confirmed (ADR-0003 decision 3)
     yield_units                 INTEGER,                 -- NULL means inherit from the recipe row
     target_gross_margin_pct     TEXT,                    -- Decimal as TEXT; NULL when unset

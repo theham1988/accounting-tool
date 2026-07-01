@@ -201,6 +201,177 @@ costs:
     assert basil.updated_at == date(2026, 6, 30)
 
 
+# --- AC: SKU unit is derived from the cost comment's pack size (ADR-0003 #3) -
+
+
+def test_cost_only_sku_gets_a_skus_row_with_unit_derived_from_weight_comment(
+    tmp_path: Path,
+) -> None:
+    """A costed ingredient with no recipe of its own still gets a ``skus`` row.
+
+    Worked example. ``almond-ground`` is never a recipe's own ``sku_id`` — it
+    only appears as a cost. Today's seeder never writes a ``skus`` row for it
+    at all, so there is nowhere to record its unit. After seeding, a ``skus``
+    row exists for it with ``unit='g'``, derived from the pack-size comment
+    ("500 g") per ADR-0003 decision 3.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(recipes_yaml, "recipes: []\n")
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  almond-ground: { price: "0.458", updated_at: "2026-06-30" }  # ARO Almond Powder 500 g
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute(
+        "SELECT unit FROM skus WHERE sku_id = 'almond-ground'"
+    ).fetchone()
+    assert row is not None, "expected a skus row for a cost-only ingredient"
+    assert row[0] == "g"
+
+
+def test_volume_comment_derives_unit_ml(tmp_path: Path) -> None:
+    """A pack-size comment naming a volume ("650 ml") derives ``unit='ml'``."""
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(recipes_yaml, "recipes: []\n")
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  oil-sesame: { price: "0.212", updated_at: "2026-06-30" }  # ARO Sesame Oil 650 ml
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute("SELECT unit FROM skus WHERE sku_id = 'oil-sesame'").fetchone()
+    assert row == ("ml",)
+
+
+def test_count_comment_derives_unit_unit(tmp_path: Path) -> None:
+    """A pack-size comment naming a count ("6 pcs") derives ``unit='unit'``."""
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(recipes_yaml, "recipes: []\n")
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  lemon: { price: "15.3", updated_at: "2026-06-30" }  # ARO Lemon 6 pcs
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute("SELECT unit FROM skus WHERE sku_id = 'lemon'").fetchone()
+    assert row == ("unit",)
+
+
+def test_price_per_kg_slash_notation_derives_unit_g(tmp_path: Path) -> None:
+    """A Thai-retail "X/kg" comment (no space, price-per-kg) still resolves.
+
+    Worked example. ``chicken-thigh``'s real comment is
+    ``"Makro 79/kg (06-20)"`` — the price-per-kilo shorthand used throughout
+    ``costs.yaml`` for market meat/fish prices, distinct from the
+    space-separated pack-size style ("500 g"). Both name a weight and must
+    resolve to the same ``unit='g'``.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(recipes_yaml, "recipes: []\n")
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  chicken-thigh: { price: "0.079", updated_at: "2026-06-30" }  # Makro 79/kg (06-20)
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute("SELECT unit FROM skus WHERE sku_id = 'chicken-thigh'").fetchone()
+    assert row == ("g",)
+
+
+def test_ambiguous_comment_leaves_unit_null_and_queryable(tmp_path: Path) -> None:
+    """A comment with no pack-size token leaves ``unit`` NULL, not a guess.
+
+    Worked example. ``egg``'s real ``costs.yaml`` comment ("Makro 120/30
+    (06-20)") names neither a weight, volume, nor count token — deriving
+    "unit" (each egg) would require outside knowledge the text doesn't carry.
+    Per ADR-0003 decision 3 this must stay unresolved rather than guessed, and
+    ``unit IS NULL`` is how a partner-confirmation UI would query for it later.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(recipes_yaml, "recipes: []\n")
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  egg: { price: "4.00", updated_at: "2026-06-30" }  # Makro 120/30 (06-20)
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute("SELECT unit FROM skus WHERE sku_id = 'egg'").fetchone()
+    assert row == (None,)
+    ambiguous = conn.execute(
+        "SELECT sku_id FROM skus WHERE unit IS NULL"
+    ).fetchall()
+    assert ("egg",) in ambiguous
+
+
+def test_costed_recipe_output_keeps_its_segment_and_only_backfills_unit(
+    tmp_path: Path,
+) -> None:
+    """A SKU that is both a recipe's own output and separately costed (a
+    batch-brewed concentrate, say) keeps the name/segment ``_seed_recipes``
+    gave it — seeding costs only fills in ``unit`` where it was unknown, it
+    never clobbers an existing row's identity.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: coffee-latte-con
+    name: Latte Concentrate
+    segment: cafe
+    ingredients:
+      - { sku_id: coffee-beans-house, quantity: "100" }
+""",
+    )
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  coffee-latte-con: { price: "0.0858", updated_at: "2026-06-30" }  # calc 171.6 THB / 2000g batch
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    row = conn.execute(
+        "SELECT name, segment, unit FROM skus WHERE sku_id = 'coffee-latte-con'"
+    ).fetchone()
+    assert row == ("Latte Concentrate", "cafe", "g")
+
+
 # --- AC: mappings round-trip through SQLite ----------------------------------
 
 
