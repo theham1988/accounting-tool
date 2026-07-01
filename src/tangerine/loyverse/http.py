@@ -87,6 +87,11 @@ class LoyverseHttpClient:
         self._urlopen: Urlopen = urlopen or _stdlib_open
         self._base_url = base_url.rstrip("/")
 
+    @property
+    def store_id(self) -> str | None:
+        """The configured store scope, if any (mirrors ``get_pages``'s own use)."""
+        return self._creds.store_id
+
     def get_pages(
         self, path: str, params: dict[str, Any] | None = None
     ) -> Iterator[dict[str, Any]]:

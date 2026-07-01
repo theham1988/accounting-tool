@@ -121,13 +121,17 @@ def test_loyverse_item_segment_tagged_from_category() -> None:
                     "id": "i-bar",
                     "item_name": "Chang Draft",
                     "category_id": "cat-bar",
-                    "variants": [{"id": "v", "name": "Chang", "sku": "c", "price": 120}],
+                    "variants": [
+                        {"variant_id": "v", "option1_value": "Chang", "sku": "c", "default_price": 120}
+                    ],
                 },
                 {
                     "id": "i-cafe",
                     "item_name": "Latte",
                     "category_id": CAFE_CATEGORY_ID,
-                    "variants": [{"id": "v", "name": "Latte", "sku": "l", "price": 80}],
+                    "variants": [
+                        {"variant_id": "v", "option1_value": "Latte", "sku": "l", "default_price": 80}
+                    ],
                 },
             ]
         }

@@ -101,7 +101,9 @@ class SyncOrchestrator:
         all_items: list[dict[str, Any]] = []
         for page in self._client.get_pages("items"):
             all_items.extend(page.get("items", []))
-        snapshot = parse_items_snapshot({"items": all_items})
+        snapshot = parse_items_snapshot(
+            {"items": all_items}, store_id=self._client.store_id
+        )
         self._store.record_menu_snapshot(snapshot, at=moment)
 
 

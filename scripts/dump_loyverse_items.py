@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
+from typing import Any, Iterator
 
 # Allow ``python scripts/dump_loyverse_items.py`` from a source checkout
 # without installing the package: prepend src/ to the path. Mirrors the
@@ -66,6 +66,8 @@ from tangerine.loyverse.http import (  # noqa: E402
     LoyverseApiError,
     LoyverseHttpClient,
 )
+from tangerine.loyverse.parser import variant_price  # noqa: E402
+from tangerine.loyverse.payloads import LoyverseItem  # noqa: E402
 
 #: Environment variables — mirror tangerine.sync so the same
 #: /etc/tangerine/env file sources every Loyverse-touching entrypoint.
@@ -120,15 +122,24 @@ def dump_menu(
     return 0
 
 
-def _iter_rows(client: LoyverseHttpClient, *, store_id: str | None) -> Any:
+def _iter_rows(
+    client: LoyverseHttpClient, *, store_id: str | None
+) -> Iterator[tuple[str, str, str, str, str, str]]:
     """Yield one TSV-formatted row per Loyverse *variant*, sorted for stable diffs.
 
     Implemented as a generator so the caller's ``list(...)`` materialises
     only after the API walk completes — a mid-walk failure raises before
     any partial output is written, so the worksheet file is never a
     half-broken mix of header + partial rows.
+
+    A variant's price is resolved by :func:`tangerine.loyverse.parser.
+    variant_price` — the same function the sync path uses to populate
+    ``MenuItem.sell_price`` — so the worksheet and the synced menu snapshot
+    can never read a variant's price differently from each other again.
+    Blank (rather than ``"0"``) when the variant has no price on record, so
+    a partner sees an unpriced item rather than mistaking it for a free one.
     """
-    items: list[dict[str, Any]] = []
+    items: list[LoyverseItem] = []
     for page in client.get_pages("items"):
         items.extend(page.get("items", []))
     items.sort(key=lambda raw: raw.get("id", ""))
@@ -144,32 +155,15 @@ def _iter_rows(client: LoyverseHttpClient, *, store_id: str | None) -> Any:
         for variant in sorted(variants, key=lambda v: v.get("variant_id", "")):
             variant_id = str(variant.get("variant_id", ""))
             sku = str(variant.get("sku", "") or "")
-            price = _variant_price(variant, store_id)
-            yield (item_id, item_name, category_id, variant_id, sku, price)
-
-
-def _variant_price(variant: dict[str, Any], store_id: str | None) -> str:
-    """The variant's price at this venue's store.
-
-    Loyverse's real payload puts price on the variant in one of two places:
-    a flat ``default_price`` when the variant is priced the same everywhere,
-    or per-store overrides in ``stores`` (this venue prices everything
-    per-store, so ``default_price`` is ``None`` in practice and every real
-    price lives in ``stores``). Falls back to the first store entry if no
-    ``store_id`` was configured to disambiguate — this venue only has one
-    store, so that is always correct here, but an unscoped dump across
-    multiple stores would need one row per store instead.
-    """
-    default = variant.get("default_price")
-    if default is not None:
-        return str(default)
-    stores = variant.get("stores") or []
-    for store in stores:
-        if store_id is None or store.get("store_id") == store_id:
-            price = store.get("price")
-            if price is not None:
-                return str(price)
-    return ""
+            price = variant_price(variant, store_id=store_id)
+            yield (
+                item_id,
+                item_name,
+                category_id,
+                variant_id,
+                sku,
+                "" if price is None else str(price),
+            )
 
 
 if __name__ == "__main__":

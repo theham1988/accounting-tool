@@ -91,20 +91,33 @@ def _item_json(
     sku: str,
     price: float,
     category_id: str = "cat-bar",
+    store_price: tuple[str, float] | None = None,
 ) -> dict[str, Any]:
+    """One minimal Loyverse ``/items`` entry (real field names, not guessed ones).
+
+    ``price`` maps to the real API's flat ``default_price`` (a ``FIXED``
+    variant). Pass ``store_price=(store_id, price)`` instead to exercise a
+    per-store-priced variant (this venue's actual configuration —
+    ``default_price`` is ``None`` and the real price lives in ``stores``);
+    see ``LoyverseVariant``'s docstring in ``payloads.py``.
+    """
+    variant: dict[str, Any] = {
+        "variant_id": f"{item_id}-v1",
+        "option1_value": name,
+        "sku": sku,
+    }
+    if store_price is not None:
+        sid, sprice = store_price
+        variant["default_price"] = None
+        variant["stores"] = [{"store_id": sid, "price": sprice}]
+    else:
+        variant["default_price"] = price
     return {
         "id": item_id,
         "item_name": name,
         "category_id": category_id,
         "sku": sku,
-        "variants": [
-            {
-                "id": f"{item_id}-v1",
-                "name": name,
-                "sku": sku,
-                "price": price,
-            }
-        ],
+        "variants": [variant],
     }
 
 
@@ -420,6 +433,35 @@ def test_parse_items_snapshot_captures_current_menu() -> None:
     assert by_id["i-1"].sell_price == D("120")
 
 
+def test_parse_items_snapshot_reads_per_store_price_when_default_price_is_none() -> None:
+    """A variant with no flat price still resolves ``sell_price`` from ``stores``.
+
+    Regression guard: this venue prices every real variant per-store, so
+    ``default_price`` is always ``None`` and a parser that only reads
+    ``variant.get("price", 0)`` (a field that does not exist on the real
+    payload) would silently record every ``MenuItem.sell_price`` as zero —
+    the same failure mode as the item-vs-variant SKU bug, one field over.
+    With ``sell_price`` wrongly pinned at zero, ``diff_menu`` can never see a
+    real price change (0 != 0 is always false), so price-change history goes
+    silently blind.
+    """
+    payload = {
+        "items": [
+            _item_json(
+                item_id="i-1",
+                name="Chang Draft",
+                sku="chang-draft-500",
+                price=0,  # unused: store_price below takes over
+                store_price=("store-1", 120),
+            )
+        ]
+    }
+
+    snapshot = parse_items_snapshot(payload, store_id="store-1")
+
+    assert snapshot.items[0].sell_price == D("120")
+
+
 def test_menu_change_history_preserved_with_timestamps() -> None:
     """Two snapshots at different times: a price change and a new item both
     appear in the store's menu-change history with their snapshot timestamps."""
@@ -583,6 +625,42 @@ def test_end_to_end_sync_stores_sales_and_menu() -> None:
     # Menu snapshot + at least one change record (the initial add).
     assert store.current_menu().get("i-1") is not None
     assert any(h.change_kind == "added" for h in store.menu_change_history())
+
+
+def test_end_to_end_sync_resolves_per_store_menu_price() -> None:
+    """The orchestrator threads its configured ``store_id`` into the menu parse.
+
+    This venue prices every real variant per-store (``default_price`` is
+    always ``None``); the orchestrator must pass the credentials' store id
+    through to ``parse_items_snapshot`` so ``MenuItem.sell_price`` resolves
+    from ``stores`` rather than silently landing at zero.
+    """
+    stub = StubHttp(
+        routes={
+            "/v1.0/receipts": [_receipts_envelope([], cursor=None)],
+            "/v1.0/items": [
+                _envelope(
+                    [
+                        _item_json(
+                            item_id="i-1",
+                            name="Chang Draft",
+                            sku="chang-draft-500",
+                            price=0,
+                            store_price=("store-1", 120),
+                        )
+                    ],
+                    cursor=None,
+                )
+            ],
+        }
+    )
+    # _credentials() scopes to "store-1", matching the item's store_price.
+    client = LoyverseHttpClient(_credentials(), urlopen=stub)
+    store = InMemoryLoyverseStore()
+
+    SyncOrchestrator(client=client, store=store).sync_sales_and_menu()
+
+    assert store.current_menu()["i-1"].sell_price == D("120")
 
 
 def test_sync_is_idempotent() -> None:

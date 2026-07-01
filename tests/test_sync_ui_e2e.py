@@ -86,6 +86,7 @@ def _item_json(
     price: float,
     category_id: str = "cat-bar",
 ) -> dict[str, Any]:
+    """Real field names, not guessed ones — mirrors test_loyverse_sync_e2e.py."""
     return {
         "id": item_id,
         "item_name": name,
@@ -93,10 +94,10 @@ def _item_json(
         "sku": sku,
         "variants": [
             {
-                "id": f"{item_id}-v1",
-                "name": name,
+                "variant_id": f"{item_id}-v1",
+                "option1_value": name,
                 "sku": sku,
-                "price": price,
+                "default_price": price,
             }
         ],
     }

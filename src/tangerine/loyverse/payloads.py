@@ -47,11 +47,28 @@ class ReceiptsResponse(TypedDict, total=False):
     cursor: str | None
 
 
-class LoyverseVariant(TypedDict, total=False):
-    id: str
-    name: str
-    sku: str | None
+class LoyverseVariantStore(TypedDict, total=False):
+    store_id: str
     price: float
+
+
+class LoyverseVariant(TypedDict, total=False):
+    """A Loyverse item variant, as returned by ``/items`` and ``/variants``.
+
+    There is no flat ``price`` field: a ``FIXED``-priced variant carries its
+    price in ``default_price``; a per-store-priced variant (this venue's
+    actual configuration — every real variant has ``default_price`` ``None``)
+    carries it in ``stores``, one entry per store. Confirmed against this
+    venue's real Loyverse account via ``scripts/dump_loyverse_items.py``.
+    There is also no variant-level ``name``; ``option1_value`` is the closest
+    analogue (the value of the item's first configured option, e.g. a size).
+    """
+
+    variant_id: str
+    option1_value: str
+    sku: str | None
+    default_price: float | None
+    stores: list[LoyverseVariantStore]
 
 
 class LoyverseItem(TypedDict, total=False):

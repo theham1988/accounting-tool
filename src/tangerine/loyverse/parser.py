@@ -24,7 +24,7 @@ from typing import Any
 
 from ..types import Money, Sale, Segment
 from ..segments import segment_for_timestamp
-from .payloads import LoyverseItem, LoyverseLineItem
+from .payloads import LoyverseItem, LoyverseLineItem, LoyverseVariant
 from .store import CAFE_CATEGORY_ID, MenuItem, MenuSnapshot, SaleRecord
 
 
@@ -132,11 +132,37 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
     return records
 
 
-def _first_variant_price(item: LoyverseItem) -> Decimal:
+def variant_price(variant: LoyverseVariant, *, store_id: str | None = None) -> Decimal | None:
+    """Resolve one Loyverse variant's price, or ``None`` if it has none on record.
+
+    Loyverse has no flat ``price`` field on a variant: a ``FIXED``-priced
+    variant carries it in ``default_price``; a per-store-priced variant
+    (this venue's actual configuration) carries it in ``stores``, one entry
+    per store. Falls back to the first ``stores`` entry when ``store_id``
+    is unset — this venue has a single store, so that is always correct
+    here (see ``LoyverseVariant``'s docstring for how this was confirmed).
+
+    Shared by the sync parser (:func:`parse_items_snapshot`) and the
+    recipe-authoring worksheet (``scripts/dump_loyverse_items.py``) so the
+    two callers cannot read a variant's price differently from each other.
+    """
+    default = variant.get("default_price")
+    if default is not None:
+        return _money(default)
+    for store in variant.get("stores") or []:
+        if store_id is None or store.get("store_id") == store_id:
+            price = store.get("price")
+            if price is not None:
+                return _money(price)
+    return None
+
+
+def _first_variant_price(item: LoyverseItem, store_id: str | None) -> Decimal:
     variants = item.get("variants") or []
     if not variants:
         return Decimal("0")
-    return _money(variants[0].get("price", 0))
+    price = variant_price(variants[0], store_id=store_id)
+    return price if price is not None else Decimal("0")
 
 
 def _item_name(item: LoyverseItem) -> str:
@@ -145,15 +171,19 @@ def _item_name(item: LoyverseItem) -> str:
         return name
     variants = item.get("variants") or []
     if variants:
-        return variants[0].get("name", "")
+        return variants[0].get("option1_value", "")
     return ""
 
 
-def parse_items_snapshot(payload: dict[str, Any]) -> MenuSnapshot:
+def parse_items_snapshot(
+    payload: dict[str, Any], *, store_id: str | None = None
+) -> MenuSnapshot:
     """Turn an ``/items`` response into a ``MenuSnapshot`` (current menu).
 
     One ``MenuItem`` per Loyverse item, keyed by Loyverse item id. Segment is
-    cafe when the item's category is the cafe category, else bar.
+    cafe when the item's category is the cafe category, else bar. ``store_id``
+    disambiguates a variant's per-store price (see :func:`variant_price`);
+    the sync orchestrator passes the configured credentials' store id.
     """
     raw_items = payload.get("items", [])
     menu_items: list[MenuItem] = []
@@ -168,7 +198,7 @@ def parse_items_snapshot(payload: dict[str, Any]) -> MenuSnapshot:
             MenuItem(
                 item_id=item_id,
                 name=_item_name(raw),
-                sell_price=_first_variant_price(raw),
+                sell_price=_first_variant_price(raw, store_id),
                 segment=segment,
             )
         )
@@ -191,6 +221,7 @@ def items_cursor(payload: dict[str, Any]) -> str | None:
 __all__ = [
     "parse_receipts_to_sales",
     "parse_items_snapshot",
+    "variant_price",
     "receipts_cursor",
     "items_cursor",
 ]
