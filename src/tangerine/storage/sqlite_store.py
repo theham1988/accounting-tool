@@ -47,9 +47,18 @@ class SqliteLoyverseStore:
     ``sqlite3.InterfaceError: bad parameter or other API misuse``.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self, conn: sqlite3.Connection, lock: threading.Lock | None = None
+    ) -> None:
+        """``lock`` lets a caller share one serialisation lock across every
+        store that wraps the *same* connection (e.g. ``create_app`` also
+        constructs a ``SqliteConfigStore`` on this connection) — two
+        independent locks over one connection would defeat the whole point
+        of locking. Defaults to a private lock for standalone use (tests,
+        the CLI's single-store setup).
+        """
         self._conn = conn
-        self._lock = threading.Lock()
+        self._lock = lock if lock is not None else threading.Lock()
         with self._lock:
             apply_migrations(self._conn)
 

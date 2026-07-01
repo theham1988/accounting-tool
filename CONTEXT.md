@@ -36,24 +36,65 @@ at every menu change.
 
 ## Cost unit convention
 
-Every ingredient SKU's `price` in `config/costs.yaml` is **THB per
-smallest weight/volume unit**: per **ml** for liquids (beer, milk,
-syrups), per **g** for solids (beans, sugar, flour), per **unit** for
-countables (eggs, napkins). The recipe `quantity` for that ingredient
-uses the same unit. The convention is implicit — the file does not
-carry a `unit:` field — so it lives here as the durable reference. A
-partner editing `costs.yaml` quotes a per-ml/per-g/per-unit price; a
-partner editing a recipe's `quantity` writes ml/g/units to match.
+Every ingredient SKU's per-unit cost is **THB per smallest weight/volume
+unit**: per **ml** for liquids (beer, milk, syrups), per **g** for solids
+(beans, sugar, flour), per **unit** for countables (eggs, napkins). The
+recipe `quantity` for that ingredient uses the same unit. The convention is
+still implicit *in practice* — Wave 1.5 Step 1 (ADR-0003 decision 3) added
+an explicit `unit` column to the `skus` table, but it is populated only
+where the migration could confidently derive it from a `costs.yaml`
+comment, and nothing yet enforces or displays it. Until Step 4's recipe
+editor ships, this glossary entry remains the durable reference: reasoning
+about a `quantity` value still means knowing per-g/per-ml/per-unit by
+convention, not by reading a column.
+
+`config/costs.yaml` and `config/recipes.yaml` are no longer read at
+runtime — see **Recipe review** below — they seed the `costs` / `recipes` /
+`recipe_ingredients` / `mappings` tables once, the first time the app boots
+against an empty database.
 
 ## Recipe review
 
-The control that "recipes go through code review" (PRD user story 22)
-means *in practice*: any change to `config/recipes.yaml`,
-`config/costs.yaml`, or `config/assignees.yaml` is a PR against `main`;
-`main` is branch-protected; the **other** partner must approve before
-merge. Self-merge is not permitted on config changes. This is the
-control that catches "wrong quantity in a hurry" before it ships, not
-the nightly sync.
+The control that "recipes go through code review" (PRD user story 22) was,
+through Wave 1: any change to `config/recipes.yaml`, `config/costs.yaml`,
+or `config/assignees.yaml` is a PR against `main`; `main` is
+branch-protected; the **other** partner must approve before merge.
+Self-merge is not permitted on config changes.
+
+**Wave 1.5 Step 1 has landed** (ADR-0003 decision 1): `recipes.yaml` and
+`costs.yaml` are now seed-only. They are read once, into SQLite, the first
+time the app boots against an empty database — after that, editing them
+has no effect on the running tool until a fresh database is seeded. The
+code-review gate above therefore no longer catches "wrong quantity in a
+hurry" for the running system, only for the seed data a new deployment
+would start from. `config/assignees.yaml` is unaffected — it stays
+file-based and is still read at every startup (ADR-0003 consequence).
+
+The replacement safety net — an in-UI editor plus an audit log with
+per-change and per-session revert — is **not yet built** (Wave 1.5 Steps
+2–5). Until it ships there is no in-browser way to change a recipe, cost,
+or mapping at all; the only path is editing the YAML seed and reseeding a
+fresh database. This entry will be rewritten again once the editor and
+audit-and-revert safety net land.
+
+## VAT model
+
+Every cost is entered as what the purchase actually showed: a pack price
+that may or may not include VAT. The migration (and, once it ships, the
+Step 3 cost editor) records a per-entry `vat_inclusive` flag alongside the
+price and stores the SKU's cost **net** of VAT — dividing by 1.07 only when
+`vat_inclusive` is set. VAT-ness is a property of the *purchase*, not the
+supplier or the SKU: the same SKU bought from a VAT-registered supplier
+(Makro, ARO) on one occasion and a wet-market stall on another carries a
+different flag each time.
+
+The Wave 1.5 Step 1 migration set `vat_inclusive=true` only for
+`costs.yaml` entries whose trailing comment clearly names Makro or ARO;
+every other entry defaults to `false` so the migration never makes a
+number *worse* by guessing wrong. This is why every margin the tool
+produces against a VAT-registered ingredient rose slightly (~7% of COGS) on
+cutover — the old numbers were silently gross, not net, and this is the
+fix, not a regression (ADR-0003 decision 4).
 
 ## Recovery posture
 

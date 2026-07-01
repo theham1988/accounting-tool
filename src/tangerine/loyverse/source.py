@@ -6,14 +6,27 @@ touching it: ``StoreSource`` implements ``ingestion.Source`` (``sales()``,
 Recipes come from slice 04; until then ``recipes()`` returns whatever the
 caller wires in (empty by default), so any sold item the recipes don't cover
 surfaces as unmapped (PRD user story 12).
+
+Wave 1.5 Step 1 (ADR-0003 decision 1) adds an optional ``config`` parameter:
+when given a :class:`~tangerine.storage.config_store.SqliteConfigStore`,
+``recipes()`` / ``cost_book()`` / ``mappings()`` read live from SQLite on
+every call instead of returning the fixed lists captured at construction.
+The in-memory path (``recipes=``/``cost=``/``mappings=``) stays supported
+unchanged for existing callers (tests, the CLI) that have no SQLite config
+store to wire in.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from ..cost import CostBook
 from ..recipes import RecipeCatalog
 from ..types import Recipe, Sale, SkuMapping
 from .store import LoyverseStore
+
+if TYPE_CHECKING:
+    from ..storage.config_store import SqliteConfigStore
 
 
 class StoreSource:
@@ -29,6 +42,10 @@ class StoreSource:
 
     ``cost`` is the cost book the margin engine looks ingredient prices up
     in. Real callers build it from the ``ApprovalBook``; tests seed it.
+
+    ``config``, when given, takes over ``recipes()`` / ``cost_book()`` /
+    ``mappings()`` entirely — the ``recipes``/``cost``/``mappings`` arguments
+    are ignored in that case (Wave 1.5 Step 1, ADR-0003 decision 1).
     """
 
     def __init__(
@@ -37,8 +54,10 @@ class StoreSource:
         recipes: list[Recipe] | None = None,
         cost: CostBook | None = None,
         mappings: list[SkuMapping] | None = None,
+        config: "SqliteConfigStore | None" = None,
     ) -> None:
         self._store = store
+        self._config = config
         self._recipes = list(recipes or [])
         self._cost = cost if cost is not None else CostBook()
         self._mappings = list(mappings or [])
@@ -47,12 +66,18 @@ class StoreSource:
         return self._store.sales()
 
     def recipes(self) -> list[Recipe]:
+        if self._config is not None:
+            return self._config.recipes()
         return list(self._recipes)
 
     def cost_book(self) -> CostBook:
+        if self._config is not None:
+            return self._config.cost_book()
         return self._cost
 
     def mappings(self) -> list[SkuMapping]:
+        if self._config is not None:
+            return self._config.mappings()
         return list(self._mappings)
 
     def unmapped_sold_item_ids(self) -> tuple[str, ...]:
@@ -65,7 +90,7 @@ class StoreSource:
         item's raw Loyverse identity against a recipe's ``sku_id`` directly
         (which is only ever true by coincidence in seeded fixtures).
         """
-        catalog = RecipeCatalog(self._recipes, self._mappings)
+        catalog = RecipeCatalog(self.recipes(), self.mappings())
         sold_ids = {s.item_id for s in self._store.sales()}
         return tuple(
             sorted(

@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -35,11 +36,12 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
-from ..config.loader import load_assignees, load_costs, load_recipes
+from ..config.loader import load_assignees
 from ..daily_review import DailyReview, build_daily_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
+from ..storage.config_store import SqliteConfigStore, seed_config
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..types import Assignee, Segment, SegmentMargin
 from .auth import (
@@ -200,8 +202,6 @@ def create_app(
     )
     loyverse_urlopen_param = loyverse_urlopen
 
-    catalog = load_recipes(recipes_yaml)
-    cost = load_costs(costs_yaml)
     assignees = load_assignees(assignees_yaml)
 
     # Fail loudly at startup on a missing/empty passphrase or signing secret.
@@ -247,13 +247,17 @@ def create_app(
     # single shared connection is safe under the threadpool and alongside the
     # nightly sync cron.
     conn = sqlite3.connect(db, check_same_thread=False)
-    store = SqliteLoyverseStore(conn)
-    source = StoreSource(
-        store=store,
-        recipes=list(catalog.all()),
-        cost=cost,
-        mappings=list(catalog.mappings()),
-    )
+    # One shared lock serialises every touch of this connection across the
+    # two stores that wrap it — two independent locks over one connection
+    # would defeat the whole point of locking (see SqliteLoyverseStore's
+    # docstring). Wave 1.5 Step 1 (ADR-0003 decision 1): recipes/costs/
+    # mappings are seeded into SQLite once, then read live on every request
+    # instead of being loaded into memory at startup.
+    conn_lock = threading.Lock()
+    store = SqliteLoyverseStore(conn, lock=conn_lock)
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+    config_store = SqliteConfigStore(conn, lock=conn_lock)
+    source = StoreSource(store=store, config=config_store)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
