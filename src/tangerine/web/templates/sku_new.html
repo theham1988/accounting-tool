@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New SKU — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review cost-editor">
+    <h1>New SKU</h1>
+    <p class="day">
+      {% if item_id %}
+      Will be mapped to item <strong>{{ item_id }}</strong> on create.
+      — <a href="/items">&larr; Item coverage</a>
+      {% else %}
+      <a href="/skus">&larr; SKU view</a>
+      {% endif %}
+    </p>
+
+    <section class="cost-form">
+      <form method="post" action="/skus">
+        {% if item_id %}
+        <input type="hidden" name="item_id" value="{{ item_id }}">
+        {% endif %}
+        <label>
+          SKU id
+          <input type="text" name="sku_id" required placeholder="e.g. oat-milk">
+        </label>
+        <label>
+          Name
+          <input type="text" name="name" required placeholder="e.g. Oat Milk">
+        </label>
+        <label>
+          Unit (how this SKU is measured)
+          <select name="unit">
+            <option value="g">g — solids, priced per gram</option>
+            <option value="ml">ml — liquids, priced per millilitre</option>
+            <option value="unit">unit — countables, priced per piece</option>
+          </select>
+        </label>
+        <label>
+          Price per unit (THB, net) — optional
+          <input type="number" name="price" step="any" min="0">
+        </label>
+        <button type="submit">Create SKU</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

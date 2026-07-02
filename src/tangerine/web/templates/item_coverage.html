@@ -46,6 +46,7 @@
                 <a href="/skus">{{ row.mapped_sku_id }}</a>
               {% else %}
                 <span class="item-row__unmapped-label">unmapped</span>
+                — <a href="/skus/new?item_id={{ row.item_id }}">create new SKU&hellip;</a>
               {% endif %}
             </td>
             <td>

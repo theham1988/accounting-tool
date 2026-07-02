@@ -1,0 +1,4 @@
+{# The HTMX response to an inline "Create new SKU…" — a replacement picker
+   with the just-created SKU selected (see _ingredient_picker.html). #}
+{% from "_ingredient_picker.html" import ingredient_picker %}
+{{ ingredient_picker(recipe_sku_id, all_skus, selected_sku_id) }}

@@ -581,6 +581,131 @@ body {
   white-space: normal;
 }
 
+/* --- Slice 4: recipe editor with inline ingredient creation (issue 26) ------ */
+
+/* One recipe row: picker + quantity + reorder/remove controls, wrapping on
+   a phone rather than overflowing. */
+.recipe-rows {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.recipe-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.recipe-row select,
+.recipe-editor input[type="text"],
+.recipe-editor input[type="number"],
+.sku-create input,
+.sku-create select {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.recipe-row input[name="quantity"] {
+  width: 7.5rem;
+}
+
+/* Reorder/remove are quiet, secondary controls beside the row's content. */
+.recipe-row__up,
+.recipe-row__down,
+.recipe-row__remove {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recipe-row__add {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recipe-editor form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 560px;
+}
+
+.recipe-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.recipe-editor button[type="submit"] {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.6rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--text);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* The inline "Create new SKU…" sub-form, revealed when the picker's
+   create option is chosen. */
+.sku-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface-alt);
+}
+
+.sku-create[hidden] {
+  display: none;
+}
+
+.sku-create__submit {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--text);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* The live per-row + total cost preview: the answer to the rows above it. */
+.recipe-preview__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.recipe-preview__total {
+  margin: 0.3rem 0 0;
+  font-size: 1rem;
+}
+
 /* --- Progressive enhancement for wider viewports (tablet / desktop) ---------- */
 @media (min-width: 700px) {
   .review {

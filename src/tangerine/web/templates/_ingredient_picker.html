@@ -1,0 +1,47 @@
+{#
+  The recipe editor's ingredient picker + its inline "Create new SKU…"
+  sub-form. Lives in its own template because two callers render it: the
+  editor page (one per recipe row) and the ``POST /skus`` HTMX fragment
+  (which swaps a fresh picker — new SKU selected — back into the row after
+  an inline create, so the partner never leaves the page).
+
+  The sub-form is a <span>, not a nested <form> (invalid HTML inside the
+  recipe form); HTMX posts its inputs via hx-include scoped to this row's
+  picker-wrap. Its field names (sku_id, name, unit, price) are ignored by
+  the recipe-save route if they ride along on a full-form submit.
+#}
+{% macro ingredient_picker(recipe_sku_id, all_skus, selected_sku_id) -%}
+<span class="picker-wrap">
+  <select name="ingredient_sku_id"
+          {% if recipe_sku_id %}
+          hx-get="/skus/{{ recipe_sku_id }}/recipe-preview"
+          hx-trigger="change"
+          hx-target="#recipe-preview"
+          hx-include="closest form"
+          {% endif %}
+          onchange="this.closest('.picker-wrap').querySelector('.sku-create').hidden = this.value !== '__create__';">
+    {% for option in all_skus %}
+    <option value="{{ option.sku_id }}"{% if option.sku_id == selected_sku_id %} selected{% endif %}>{{ option.name }}</option>
+    {% endfor %}
+    <option value="__create__">Create new SKU…</option>
+  </select>
+  <span class="sku-create" hidden>
+    <input type="hidden" name="recipe_sku_id" value="{{ recipe_sku_id }}">
+    <input type="text" name="sku_id" placeholder="sku_id (e.g. oat-milk)">
+    <input type="text" name="name" placeholder="Name">
+    <select name="unit">
+      <option value="g">g</option>
+      <option value="ml">ml</option>
+      <option value="unit">unit</option>
+    </select>
+    <input type="number" name="price" step="any" min="0" placeholder="Price/unit (THB, net)">
+    <button type="button" class="sku-create__submit"
+            hx-post="/skus"
+            hx-include="closest .picker-wrap"
+            hx-target="closest .picker-wrap"
+            hx-swap="outerHTML">
+      Create
+    </button>
+  </span>
+</span>
+{%- endmacro %}

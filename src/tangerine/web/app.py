@@ -30,7 +30,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, Form, Request, Response, UploadFile
+from fastapi import FastAPI, Form, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -43,6 +43,7 @@ from ..daily_review import DailyReview, build_daily_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
+from ..quantity import QuantityError, parse_quantity
 from ..storage.config_store import SqliteConfigStore, net_price_per_unit, seed_config
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..upload import generate_template_csv, parse_upload
@@ -486,26 +487,120 @@ def create_app(
             context={"request": request, "rows": rows},
         )
 
+    @app.get("/skus/new", response_class=HTMLResponse)
+    def new_sku_form(request: Request, item_id: str | None = None) -> HTMLResponse:
+        """The create-SKU form — one page, two entry points.
+
+        The SKU view's "New SKU" button arrives plain; the item coverage
+        view's "create new SKU…" option arrives with ``?item_id=``, and the
+        created SKU is mapped to that item in the same stroke. (Registered
+        before ``GET /skus/{sku_id}`` so "new" is never read as a sku_id.)
+        """
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="sku_new.html",
+            context={"request": request, "item_id": item_id},
+        )
+
+    @app.post("/skus", response_model=None)
+    def create_sku(
+        request: Request,
+        sku_id: str = Form(""),
+        name: str = Form(""),
+        unit: str = Form(""),
+        price: str = Form(""),
+        recipe_sku_id: str = Form(""),
+        item_id: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Create a new SKU and land in its (empty) editor.
+
+        The four fields are the inline sub-form's shape (issue 26): sku_id,
+        name, unit, price. ``price`` is the per-unit price in THB, optional —
+        stored net as entered (pack quantity 1, no VAT flag; a receipt-shaped
+        cost can replace it any time through the cost editor).
+
+        Two callers, two responses: a plain form post (the "New SKU" page)
+        redirects into the new SKU's editor; the recipe editor's inline
+        sub-form posts over HTMX and gets back a replacement picker with the
+        new ingredient selected — so the partner finishes the recipe without
+        context-switching (``recipe_sku_id`` says whose editor the picker
+        belongs to, for the preview wiring).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        sku_id = sku_id.strip()
+        name = name.strip()
+        if not sku_id or not name:
+            return HTMLResponse("sku_id and name are required.", status_code=400)
+        if unit not in ("g", "ml", "unit"):
+            return HTMLResponse("Unit must be g, ml, or unit.", status_code=400)
+        if cfg.sku(sku_id) is not None:
+            return HTMLResponse(f"SKU {sku_id} already exists.", status_code=400)
+        price_value: Decimal | None = None
+        if price.strip():
+            try:
+                price_value = Decimal(price.strip())
+            except InvalidOperation:
+                return HTMLResponse("Price must be a number.", status_code=400)
+            if price_value < 0:
+                return HTMLResponse("Price must be ≥ 0.", status_code=400)
+        actor: str = request.state.assignee_id
+        cfg.create_sku(sku_id, name=name, unit=unit, created_by=actor)
+        if price_value is not None:
+            cfg.save_cost(
+                sku_id,
+                pack_price=price_value,
+                pack_quantity=Decimal("1"),
+                vat_inclusive=False,
+                updated_by=actor,
+                updated_on=app.state.today,
+            )
+        if item_id.strip():
+            # The item-coverage entry point: the new SKU exists to cost this
+            # unmapped item, so the mapping lands in the same stroke.
+            cfg.save_mapping(item_id.strip(), sku_id, updated_by=actor)
+        if request.headers.get("hx-request"):
+            t: Jinja2Templates = app.state.templates
+            return cast(
+                HTMLResponse,
+                t.TemplateResponse(
+                    request=request,
+                    name="ingredient_picker_fragment.html",
+                    context={
+                        "request": request,
+                        "recipe_sku_id": recipe_sku_id,
+                        "all_skus": cfg.skus(),
+                        "selected_sku_id": sku_id,
+                    },
+                ),
+            )
+        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+
     @app.get("/skus/{sku_id}", response_class=HTMLResponse)
     def sku_detail(request: Request, sku_id: str) -> HTMLResponse:
-        """The cost editor for one SKU (Wave 1.5, Slice 3).
+        """The editor page for one SKU: recipe (Slice 4) + cost (Slice 3).
 
-        Captures what the partner actually sees on a receipt — pack price,
-        pack quantity, VAT-inclusive flag — and shows the current stored
-        (net) cost for context. The recipe editor joins this page in Slice 4.
+        The recipe section renders the ingredient rows in stored order with
+        an existing-SKUs-only picker (plus inline create); the cost section
+        captures what the partner actually sees on a receipt — pack price,
+        pack quantity, VAT-inclusive flag — with the current stored (net)
+        cost for context.
         """
         cfg: SqliteConfigStore = app.state.config_store
         sku = cfg.sku(sku_id)
         if sku is None:
             return HTMLResponse("Unknown SKU.", status_code=404)
+        recipe = next((r for r in cfg.recipes() if r.sku_id == sku_id), None)
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
-            name="cost_editor.html",
+            name="sku_editor.html",
             context={
                 "request": request,
                 "sku": sku,
                 "current_cost": cfg.cost_book().price(sku_id),
+                "recipe": recipe,
+                "all_skus": cfg.skus(),
             },
         )
 
@@ -580,6 +675,102 @@ def create_app(
             vat_inclusive=vat_inclusive is not None,
             updated_by=request.state.assignee_id,
             updated_on=app.state.today,
+        )
+        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+
+    @app.get("/skus/{sku_id}/recipe-preview", response_class=HTMLResponse)
+    def recipe_preview(
+        sku_id: str,
+        ingredient_sku_id: list[str] = Query([]),
+        quantity: list[str] = Query([]),
+    ) -> HTMLResponse:
+        """The live recipe-cost fragment the editor's rows swap in.
+
+        Spells out each row's arithmetic (``0.65/g × 18 g = 11.70 THB``)
+        and the recipe total below — so a typo'd quantity is a visibly
+        wrong number *before* save. Applies the same shorthand conversion
+        as the save, so the preview never disagrees with what saving would
+        store. Half-typed rows and unpriced ingredients are skipped calmly
+        — the partner is mid-edit, not wrong.
+        """
+        del sku_id  # the preview depends only on the rows, not the recipe SKU
+        cfg: SqliteConfigStore = app.state.config_store
+        unit_by_sku = {s.sku_id: s.unit for s in cfg.skus()}
+        book = cfg.cost_book()
+        row_html: list[str] = []
+        total = Decimal("0")
+        for ing_sku_id, qty_text in zip(ingredient_sku_id, quantity):
+            entry = book.price(ing_sku_id)
+            if entry is None or ing_sku_id not in unit_by_sku:
+                continue
+            try:
+                qty = parse_quantity(qty_text, unit_by_sku[ing_sku_id])
+            except QuantityError:
+                continue
+            unit = unit_by_sku[ing_sku_id] or "unit"
+            row_cost = entry.price * qty
+            total += row_cost
+            row_html.append(
+                f'<li class="recipe-preview__row">{ing_sku_id}: '
+                f"{entry.price}/{unit} × {qty} {unit} = "
+                f"<strong>{_money(row_cost)}</strong> THB</li>"
+            )
+        if not row_html:
+            return HTMLResponse("")
+        return HTMLResponse(
+            '<ul class="recipe-preview__rows">'
+            + "".join(row_html)
+            + "</ul>"
+            + f'<p class="recipe-preview__total">Recipe cost: '
+            f"<strong>{_money(total)}</strong> THB</p>"
+        )
+
+    @app.post("/skus/{sku_id}/recipe", response_model=None)
+    def save_recipe(
+        request: Request,
+        sku_id: str,
+        ingredient_sku_id: list[str] = Form([]),
+        quantity: list[str] = Form([]),
+        target_gross_margin_pct: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Save the recipe editor's rows and target margin for one SKU.
+
+        The form posts parallel lists — one picker + one quantity input per
+        row, in display order — so the saved positions mirror what the
+        partner saw. The redirect lands back on the editor, which re-reads
+        the DB: the rows shown after saving are the rows tomorrow's review
+        will cost.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        if cfg.sku(sku_id) is None:
+            return HTMLResponse("Unknown SKU.", status_code=404)
+        unit_by_sku = {s.sku_id: s.unit for s in cfg.skus()}
+        ingredients: list[tuple[str, Decimal]] = []
+        for ing_sku_id, qty_text in zip(ingredient_sku_id, quantity):
+            if ing_sku_id not in unit_by_sku:
+                return HTMLResponse(f"Unknown ingredient SKU: {ing_sku_id}.", status_code=400)
+            try:
+                qty = parse_quantity(qty_text, unit_by_sku[ing_sku_id])
+            except QuantityError as exc:
+                return HTMLResponse(f"{ing_sku_id}: {exc}", status_code=400)
+            ingredients.append((ing_sku_id, qty))
+        if not ingredients:
+            # An empty recipe would be costed as zero COGS — the margin
+            # engine can't tell "no ingredients" from "free" — so it is
+            # rejected rather than silently inflating tomorrow's review.
+            return HTMLResponse(
+                "A recipe needs at least one ingredient row.", status_code=400
+            )
+        target: Decimal | None = None
+        if target_gross_margin_pct.strip():
+            try:
+                target = Decimal(target_gross_margin_pct.strip())
+            except InvalidOperation:
+                return HTMLResponse(
+                    "Target gross margin must be a number.", status_code=400
+                )
+        cfg.save_recipe(
+            sku_id, ingredients=ingredients, target_gross_margin_pct=target
         )
         return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
 

@@ -237,6 +237,93 @@ class SqliteConfigStore:
                 (item_id, sku_id, _utc_now_iso(), updated_by),
             )
 
+    def create_sku(
+        self,
+        sku_id: str,
+        *,
+        name: str,
+        unit: str,
+        created_by: str,
+    ) -> None:
+        """Create a new SKU with its unit confirmed from the start.
+
+        Unlike migrated rows (whose ``unit`` may be NULL pending partner
+        confirmation), an editor-created SKU always carries its unit —
+        ADR-0003 decision 3: an editor without the unit field is a
+        silent-corruption machine. Segment stays NULL until the SKU gains
+        a recipe of its own (an ingredient may feed both cafe and bar).
+        """
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO skus"
+                " (sku_id, name, segment, unit, yield_units,"
+                "  target_gross_margin_pct, created_at, created_by)"
+                " VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)",
+                (sku_id, name, unit, _utc_now_iso(), created_by),
+            )
+
+    def save_recipe(
+        self,
+        sku_id: str,
+        *,
+        ingredients: list[tuple[str, Decimal]],
+        target_gross_margin_pct: Decimal | None = None,
+    ) -> None:
+        """Replace ``sku_id``'s ingredient rows with ``ingredients``, in order.
+
+        Each ``(ingredient_sku_id, quantity)`` pair is written at its list
+        position, so the editor's row order round-trips (and the same
+        ingredient may legitimately appear twice — e.g. water in two stages).
+        Quantities are already in the ingredient's canonical unit; shorthand
+        conversion happens at the edge (the web route), not here.
+
+        ``target_gross_margin_pct`` is the recipe's whole-header optional
+        field: the editor posts it with every save (an empty input means
+        "no target"), so it is written unconditionally rather than preserved.
+
+        The recipe header is created on first save — name and segment come
+        from the SKU row (segment defaults to cafe for a SKU that has none;
+        an ingredient-only SKU gaining a recipe must produce *something*
+        saleable, and the editor lets the partner change it later) — and
+        its name/segment/yield are preserved as-is on subsequent saves.
+        """
+        target_str = _decimal_or_none_to_str(target_gross_margin_pct)
+        with self._lock, self._conn:
+            header = self._conn.execute(
+                "SELECT sku_id FROM recipes WHERE sku_id = ?", (sku_id,)
+            ).fetchone()
+            if header is None:
+                sku_row = self._conn.execute(
+                    "SELECT name, segment FROM skus WHERE sku_id = ?", (sku_id,)
+                ).fetchone()
+                name, segment = sku_row if sku_row else (sku_id, None)
+                self._conn.execute(
+                    "INSERT INTO recipes"
+                    " (sku_id, name, segment, yield_units, target_gross_margin_pct)"
+                    " VALUES (?, ?, ?, 1, ?)",
+                    (sku_id, name, segment or Segment.CAFE.value, target_str),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE recipes SET target_gross_margin_pct = ?"
+                    " WHERE sku_id = ?",
+                    (target_str, sku_id),
+                )
+            self._conn.execute(
+                "DELETE FROM recipe_ingredients WHERE sku_id = ?", (sku_id,)
+            )
+            self._conn.executemany(
+                "INSERT INTO recipe_ingredients"
+                " (sku_id, ingredient_sku_id, quantity, position)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (sku_id, ingredient_sku_id, str(quantity), position)
+                    for position, (ingredient_sku_id, quantity) in enumerate(
+                        ingredients
+                    )
+                ],
+            )
+
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
 

@@ -507,6 +507,525 @@ def test_upload_with_missing_column_names_the_column(tmp_path: Path) -> None:
     assert 'name="confirm"' not in html
 
 
+# =============================================================================
+# Recipe editor with inline ingredient creation (Wave 1.5, Slice 4 / issue 26)
+# =============================================================================
+
+# The latte recipe: 18 g of beans then 200 ml of milk, in that order. Costs
+# carry pack-size comments (no Makro/ARO marker, so prices seed net as-is):
+# beans 0.65/g, milk 0.02/ml. Flour (0.05/g) is a costed ingredient no recipe
+# uses yet — it exists so shorthand tests can compare "1 tbsp" of a g-SKU
+# against an ml-SKU.
+_RECIPE_EDITOR_RECIPES_YAML = """
+recipes:
+  - sku_id: latte
+    name: Cafe Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans, quantity: "18" }
+      - { sku_id: milk, quantity: "200" }
+
+mappings:
+  - { item_id: i-latte, sku_id: latte }
+"""
+
+_RECIPE_EDITOR_COSTS_YAML = """
+costs:
+  beans: { price: "0.65", updated_at: "2026-06-01" }  # 1 kg bag
+  milk: { price: "0.02", updated_at: "2026-06-01" }  # 2 l bottle
+  flour: { price: "0.05", updated_at: "2026-06-01" }  # 1 kg bag
+"""
+
+
+def _recipe_app(tmp_path: Path, today: date | None = None):  # type: ignore[no-untyped-def]
+    return _build_app(
+        tmp_path,
+        recipes_yaml=_RECIPE_EDITOR_RECIPES_YAML,
+        costs_yaml=_RECIPE_EDITOR_COSTS_YAML,
+        today=today or date(2026, 7, 2),
+    )
+
+
+# --- AC: recipe editor renders existing ingredients as editable rows --------
+
+
+def test_recipe_editor_renders_existing_ingredients_as_editable_rows(
+    tmp_path: Path,
+) -> None:
+    """Opening the latte's editor shows its recipe as editable rows — an
+    ingredient picker plus a quantity input per row — with the rows in the
+    recipe's stored order (beans first, then milk).
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.get("/skus/latte")
+
+    assert response.status_code == 200
+    html = response.text
+    # Each ingredient row is a picker + a quantity input, posting to the
+    # recipe-save route.
+    assert 'action="/skus/latte/recipe"' in html
+    assert 'name="ingredient_sku_id"' in html
+    assert 'name="quantity"' in html
+    assert 'value="18"' in html
+    assert 'value="200"' in html
+    # Rows come back in stored position order: beans before milk.
+    beans_row = html.index('value="beans" selected')
+    milk_row = html.index('value="milk" selected')
+    assert beans_row < milk_row
+
+
+# --- AC: picker offers only existing SKUs (no orphan references possible) ---
+
+
+def test_ingredient_picker_offers_only_existing_skus(tmp_path: Path) -> None:
+    """The picker is a dropdown over the SKUs the DB actually knows —
+    including flour, costed but not yet used by any recipe — and never a
+    free-text field, so the partner cannot type a ``sku_id`` that points
+    at nothing.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    html = client.get("/skus/latte").text
+
+    picker = html.split('name="ingredient_sku_id"')[1].split("</select>")[0]
+    # Every existing SKU is offered, even ones no recipe uses yet.
+    for sku_id in ("beans", "milk", "flour", "latte"):
+        assert f'value="{sku_id}"' in picker
+    # The ingredient reference is a dropdown, not free text: no text input
+    # carries the ingredient_sku_id name.
+    assert '<input type="text" name="ingredient_sku_id"' not in html
+    # Only real SKUs appear as options (plus the inline-create affordance,
+    # which deliberately carries a non-SKU sentinel value).
+    option_values = [
+        part.split('"')[0]
+        for part in picker.split('value="')[1:]
+    ]
+    known = {"beans", "milk", "flour", "latte", "__create__"}
+    assert set(option_values) <= known
+
+
+# --- AC: saving a recipe updates DB; tomorrow's 9am review reflects it ------
+
+
+def test_saving_a_recipe_updates_db_and_the_next_review(tmp_path: Path) -> None:
+    """Given the partner bumps the latte's beans from 18 g to 20 g, the
+    saved recipe costs 20 × 0.65 + 200 × 0.02 = 17.00 — so yesterday's
+    120 THB latte shows a margin of 103.00 on the next review, without
+    touching YAML.
+    """
+    app = _recipe_app(tmp_path, today=date(2026, 7, 2))
+    _seed_sale(app.state.db_path, item_id="i-latte", day=date(2026, 7, 1), price="120")
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["20", "200"]},
+        follow_redirects=False,
+    )
+
+    # Saving lands back on the editor, which now shows the new quantity.
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/latte"
+    editor_html = client.get("/skus/latte").text
+    assert 'value="20"' in editor_html
+
+    # The next review reflects the edited recipe: 120 − 17.00 = 103.00.
+    review_html = client.get("/").text
+    assert "103.00" in review_html
+
+
+# --- AC: quantity shorthand converts to the ingredient's canonical unit -----
+# --- AC: conversion uses the ingredient's unit field (ml for milk, g for flour)
+
+
+def test_quantity_shorthand_converts_via_the_ingredients_unit(
+    tmp_path: Path,
+) -> None:
+    """``1 tbsp`` of milk (an ml SKU) is stored as 15, and ``1 tbsp`` of
+    flour (a g SKU) is also stored as 15 — the shorthand names a spoon,
+    the ingredient's unit decides what the 15 means. The stored numbers
+    are canonical: the editor shows 15, not the shorthand.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["milk", "flour"],
+            "quantity": ["1 tbsp", "1 tbsp"],
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/latte").text
+    # Both rows stored canonically as 15 (ml for milk, g for flour); the
+    # shorthand itself never reaches the stored value.
+    assert editor_html.count('value="15"') == 2
+    assert 'value="1 tbsp"' not in editor_html
+
+
+# --- AC: shorthand vocabulary (tbsp, tsp, pinch, knob, pepper grind) --------
+
+
+def test_shorthand_vocabulary_covers_the_thai_spoon_measures(
+    tmp_path: Path,
+) -> None:
+    """Every measure the partner actually thinks in converts: 1 tsp → 5,
+    2 knobs → 20, 1 pinch → 2, 1 pepper grind → 0.2. (A recipe may use the
+    same ingredient in several stages, so four milk rows is legal.)
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["milk", "milk", "milk", "milk"],
+            "quantity": ["1 tsp", "2 knobs", "1 pinch", "1 pepper grind"],
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/latte").text
+    for stored in ('value="5"', 'value="20"', 'value="2"', 'value="0.2"'):
+        assert stored in editor_html
+
+
+def test_shorthand_for_a_countable_ingredient_is_rejected_clearly(
+    tmp_path: Path,
+) -> None:
+    """A spoon of latte (a SKU with no confirmed g/ml unit) has no meaning;
+    the save is rejected with an error naming the problem rather than
+    guessing a conversion — a wrong guess is silent margin corruption.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["latte"], "quantity": ["1 tbsp"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "tbsp" in response.text
+    # Nothing landed: the stored recipe still holds beans 18 / milk 200.
+    editor_html = client.get("/skus/latte").text
+    assert 'value="18"' in editor_html
+    assert 'value="200"' in editor_html
+
+
+def test_negative_or_zero_quantities_are_rejected(tmp_path: Path) -> None:
+    """A negative or zero quantity is never a real recipe row, only a typo —
+    and a negative row would silently *subtract* from COGS. The save is
+    rejected and the stored recipe is untouched.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    for bad_qty in ("-5", "0"):
+        response = client.post(
+            "/skus/latte/recipe",
+            data={"ingredient_sku_id": ["beans"], "quantity": [bad_qty]},
+            follow_redirects=False,
+        )
+        assert response.status_code == 400
+        assert "positive" in response.text
+
+    editor_html = client.get("/skus/latte").text
+    assert 'value="18"' in editor_html
+    assert 'value="200"' in editor_html
+
+
+def test_saving_an_empty_recipe_is_rejected(tmp_path: Path) -> None:
+    """A recipe with no ingredient rows would be costed as zero COGS — the
+    margin engine can't tell "no ingredients" from "free" — so the save is
+    rejected and the stored recipe is untouched.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={"target_gross_margin_pct": "80"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "at least one ingredient" in response.text
+    editor_html = client.get("/skus/latte").text
+    assert 'value="18"' in editor_html
+    assert 'value="200"' in editor_html
+
+
+# --- AC: editable rows support add/remove/reorder ----------------------------
+
+
+def test_saving_rows_in_a_new_order_persists_that_order(tmp_path: Path) -> None:
+    """The rows are saved in the order they were posted — milk moved above
+    beans stays above beans on the next load (and a removed row is simply
+    absent from the post, so remove falls out of the same behaviour).
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["milk", "beans"], "quantity": ["200", "18"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/latte").text
+    assert editor_html.index('value="milk" selected') < editor_html.index(
+        'value="beans" selected'
+    )
+    # The editor offers add / remove / reorder controls on the rows.
+    assert "recipe-row__add" in editor_html
+    assert "recipe-row__remove" in editor_html
+    assert "recipe-row__up" in editor_html
+
+
+# --- AC: live cost preview shows per-row and total recipe cost ---------------
+
+
+def test_recipe_preview_shows_per_row_and_total_cost(tmp_path: Path) -> None:
+    """As the partner edits, the preview spells out each row's arithmetic —
+    ``0.65/g × 18 g = 11.70 THB`` — and the recipe total (15.70), so a
+    typo'd quantity is a visibly wrong number before save, not after.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.get(
+        "/skus/latte/recipe-preview",
+        params=[
+            ("ingredient_sku_id", "beans"),
+            ("quantity", "18"),
+            ("ingredient_sku_id", "milk"),
+            ("quantity", "200"),
+        ],
+    )
+
+    assert response.status_code == 200
+    html = response.text
+    # Per-row derivation: unit price × quantity = row cost.
+    assert "0.65" in html
+    assert "11.70" in html
+    # Milk's row: 200 × 0.02 = 4.00.
+    assert "4.00" in html
+    # The total below the rows: 11.70 + 4.00 = 15.70.
+    assert "15.70" in html
+    # The editor page wires its rows to this preview endpoint.
+    editor_html = client.get("/skus/latte").text
+    assert "/skus/latte/recipe-preview" in editor_html
+
+
+def test_recipe_preview_converts_shorthand_too(tmp_path: Path) -> None:
+    """The preview applies the same shorthand conversion as the save —
+    ``1 tbsp`` of milk previews as 15 ml → 0.30 THB — so what the partner
+    sees while typing is exactly what saving would store.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.get(
+        "/skus/latte/recipe-preview",
+        params=[("ingredient_sku_id", "milk"), ("quantity", "1 tbsp")],
+    )
+
+    assert response.status_code == 200
+    assert "15" in response.text  # the converted quantity
+    assert "0.30" in response.text  # 15 × 0.02
+
+
+# --- AC: target gross margin % settable per recipe ---------------------------
+
+
+def test_target_gross_margin_is_settable_and_flags_the_review(
+    tmp_path: Path,
+) -> None:
+    """Setting the latte's target margin to 90% persists with the recipe —
+    and since yesterday's 120 THB latte actually ran 86.92%, the next
+    review flags it below target (the engine already knew how; this
+    surfaces the input).
+    """
+    app = _recipe_app(tmp_path, today=date(2026, 7, 2))
+    _seed_sale(app.state.db_path, item_id="i-latte", day=date(2026, 7, 1), price="120")
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["beans", "milk"],
+            "quantity": ["18", "200"],
+            "target_gross_margin_pct": "90",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    # The editor round-trips the saved target.
+    editor_html = client.get("/skus/latte").text
+    assert 'name="target_gross_margin_pct"' in editor_html
+    assert 'value="90"' in editor_html
+    # The review flags the latte: actual 86.92% < target 90%.
+    review_html = client.get("/").text
+    assert "Below target margin" in review_html
+    assert "86.92" in review_html
+
+
+# --- AC: creating a new SKU opens the same editor with empty rows -----------
+
+
+def test_creating_a_sku_lands_in_the_editor_with_empty_rows(
+    tmp_path: Path,
+) -> None:
+    """``POST /skus`` with (sku_id, name, unit, price) creates the SKU —
+    priced per-unit net, ready to use as an ingredient — and redirects to
+    the same recipe editor every SKU gets, with no ingredient rows yet.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus",
+        data={"sku_id": "oat-milk", "name": "Oat Milk", "unit": "ml", "price": "0.09"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/oat-milk"
+    editor_html = client.get("/skus/oat-milk").text
+    # The same editor, empty: the recipe form is offered with no stored rows.
+    assert 'action="/skus/oat-milk/recipe"' in editor_html
+    assert "selected" not in editor_html.split('id="recipe-rows"')[1].split("</ol>")[0]
+    # The given price is stored as the per-unit net cost.
+    assert "0.09" in editor_html
+    # The new SKU joins the catalog: visible in the SKU view and usable as
+    # an ingredient in any picker.
+    assert "oat-milk" in client.get("/skus").text
+    latte_html = client.get("/skus/latte").text
+    assert 'value="oat-milk"' in latte_html
+
+
+# --- AC: "Create new SKU…" inline sub-form creates and auto-selects ---------
+
+
+def test_inline_create_sku_returns_a_picker_with_the_new_sku_selected(
+    tmp_path: Path,
+) -> None:
+    """The picker offers a "Create new SKU…" option that reveals a tiny
+    inline sub-form (sku_id, name, unit, price). Submitting it over HTMX
+    creates the ingredient and swaps back a picker with the new SKU
+    already selected — the partner finishes the recipe without leaving
+    the page.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    # The editor offers the inline-create affordance in each row.
+    editor_html = client.get("/skus/latte").text
+    assert 'value="__create__"' in editor_html
+    assert "Create new SKU" in editor_html
+    assert 'hx-post="/skus"' in editor_html
+
+    # Submitting the sub-form over HTMX returns a replacement picker with
+    # the new ingredient selected, not a page redirect.
+    response = client.post(
+        "/skus",
+        data={"sku_id": "oat-milk", "name": "Oat Milk", "unit": "ml", "price": "0.09"},
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 200
+    fragment = response.text
+    assert 'name="ingredient_sku_id"' in fragment
+    assert 'value="oat-milk" selected' in fragment
+    # The SKU really exists now — it is priced and usable everywhere.
+    assert 'value="oat-milk"' in client.get("/skus/latte").text
+
+
+# --- AC: "New SKU" button and item coverage's inline option, same editor ----
+
+
+def test_new_sku_button_and_item_coverage_option_open_the_same_editor(
+    tmp_path: Path,
+) -> None:
+    """The SKU view's "New SKU" button and an unmapped item's
+    "create new SKU…" option both lead to the same create form — and the
+    item-coverage path carries the item along, so the created SKU is
+    mapped to it in the same stroke.
+    """
+    app = _recipe_app(tmp_path)
+    _seed_menu(
+        app.state.db_path,
+        [
+            _menu_item("i-latte", "Cafe Latte", "120"),
+            _menu_item("i-mystery", "Mystery Soda", "60"),
+        ],
+    )
+    client = _authed_client(app)
+
+    # Entry point 1: the SKU view's New SKU button.
+    assert 'href="/skus/new"' in client.get("/skus").text
+    # Entry point 2: the unmapped item's inline option, carrying the item.
+    items_html = client.get("/items").text
+    assert 'href="/skus/new?item_id=i-mystery"' in items_html
+
+    # Both land on the same create form, posting to POST /skus.
+    form_html = client.get("/skus/new", params={"item_id": "i-mystery"}).text
+    assert 'action="/skus"' in form_html
+    for field in ("sku_id", "name", "unit", "price"):
+        assert f'name="{field}"' in form_html
+
+    # Creating from the item path maps the item and opens the new editor.
+    response = client.post(
+        "/skus",
+        data={
+            "sku_id": "soda",
+            "name": "House Soda",
+            "unit": "ml",
+            "price": "0.03",
+            "item_id": "i-mystery",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/soda"
+    mapped_html = client.get("/items", params={"item": "i-mystery"}).text
+    assert "item-row--unmapped" not in mapped_html
+    assert "soda" in mapped_html
+
+
+# --- AC: all edits gated behind existing auth middleware ---------------------
+
+
+def test_recipe_edit_routes_require_auth(tmp_path: Path) -> None:
+    """Every new write surface — saving a recipe, creating a SKU, the
+    create form — redirects an unauthenticated request to ``/login``,
+    exactly like the rest of the app. Nothing lands.
+    """
+    app = _recipe_app(tmp_path)
+    client = TestClient(app)
+
+    for method, url in (
+        ("post", "/skus/latte/recipe"),
+        ("post", "/skus"),
+        ("get", "/skus/new"),
+        ("get", "/skus/latte/recipe-preview"),
+    ):
+        response = getattr(client, method)(url, follow_redirects=False)
+        assert response.status_code == 302, f"{method} {url}"
+        assert response.headers["location"] == "/login", f"{method} {url}"
+
+
 def _seed_sale(db_path: str, *, item_id: str, day: date, price: str) -> None:
     """Record one sold unit into ``db_path``, exactly as a sync would."""
     from tangerine.loyverse.store import SaleRecord

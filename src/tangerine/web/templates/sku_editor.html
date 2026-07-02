@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ sku.name }} — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+  <!-- HTMX powers the live recipe-cost and derived-price previews plus the
+       inline SKU create. Same tamper-checked CDN asset the daily review
+       loads (ADR-0002: FastAPI + Jinja2 + HTMX). -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"
+    integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
+    crossorigin="anonymous"
+    defer
+  ></script>
+</head>
+<body>
+  <main class="review cost-editor">
+    <h1>{{ sku.name }}</h1>
+    <p class="day">
+      <span class="sku-row__id">{{ sku.sku_id }}</span>
+      {% if sku.unit %} · priced per <strong>{{ sku.unit }}</strong>{% endif %}
+      — <a href="/skus">&larr; SKU view</a>
+    </p>
+
+    <section class="cost-current">
+      <h2>Current cost</h2>
+      {% if current_cost %}
+      <p>
+        <strong class="cost-current__net">{{ current_cost.price | money }}</strong>
+        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net,
+        updated {{ current_cost.updated_at.isoformat() }}
+      </p>
+      {% else %}
+      <p class="empty-note"><em>No cost recorded yet.</em></p>
+      {% endif %}
+    </section>
+
+    {% from "_ingredient_picker.html" import ingredient_picker %}
+
+    {% macro recipe_row(ing_sku_id, quantity) -%}
+    <li class="recipe-row">
+      {{ ingredient_picker(sku.sku_id, all_skus, ing_sku_id) }}
+      <input type="text" name="quantity" value="{{ quantity }}"
+             placeholder="e.g. 18 or 1 tbsp"
+             hx-get="/skus/{{ sku.sku_id }}/recipe-preview"
+             hx-trigger="input changed delay:200ms"
+             hx-target="#recipe-preview"
+             hx-include="closest form">
+      <button type="button" class="recipe-row__up" title="Move up"
+              onclick="var li = this.closest('.recipe-row'); if (li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);">&uarr;</button>
+      <button type="button" class="recipe-row__down" title="Move down"
+              onclick="var li = this.closest('.recipe-row'); if (li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);">&darr;</button>
+      <button type="button" class="recipe-row__remove" title="Remove ingredient"
+              onclick="this.closest('.recipe-row').remove();">&times;</button>
+    </li>
+    {%- endmacro %}
+
+    <section class="recipe-editor">
+      <h2>Recipe</h2>
+      <p class="cost-form__hint">
+        One row per ingredient. Quantities are in the ingredient's own unit
+        (g / ml / unit) — or type a measure like <em>1 tbsp</em>, <em>1 tsp</em>,
+        <em>1 pinch</em>, <em>1 knob</em>, <em>1 pepper grind</em> and it is
+        converted for you.
+      </p>
+      <form method="post" action="/skus/{{ sku.sku_id }}/recipe">
+        <ol class="recipe-rows" id="recipe-rows">
+          {% for ing in (recipe.ingredients if recipe else []) %}
+          {{ recipe_row(ing.sku_id, ing.quantity) }}
+          {% endfor %}
+        </ol>
+        <label>
+          Target gross margin (%)
+          <input type="number" name="target_gross_margin_pct" step="any" min="0"
+                 value="{{ recipe.target_gross_margin_pct if recipe and recipe.target_gross_margin_pct is not none else '' }}">
+        </label>
+        <div id="recipe-preview" class="recipe-preview"></div>
+        <template id="recipe-row-template">{{ recipe_row(none, "") }}</template>
+        <button type="button" class="recipe-row__add"
+                onclick="var rows = document.getElementById('recipe-rows'); rows.appendChild(document.getElementById('recipe-row-template').content.cloneNode(true)); if (window.htmx) htmx.process(rows);">
+          + Add ingredient
+        </button>
+        <button type="submit">Save recipe</button>
+      </form>
+    </section>
+
+    <section class="cost-form">
+      <h2>Enter a new cost</h2>
+      <p class="cost-form__hint">
+        Type what the receipt says — the pack price as charged, the pack
+        quantity{% if sku.unit %} in {{ sku.unit }}{% endif %}, and whether
+        the price included VAT. The net per-unit price is derived for you.
+      </p>
+      <form method="post" action="/skus/{{ sku.sku_id }}/cost">
+        <label>
+          Pack price (THB)
+          <input type="number" name="pack_price" step="any" min="0" required
+                 hx-get="/skus/{{ sku.sku_id }}/cost-preview"
+                 hx-trigger="input changed delay:200ms"
+                 hx-target="#cost-preview"
+                 hx-include="closest form">
+        </label>
+        <label>
+          Pack quantity{% if sku.unit %} ({{ sku.unit }}){% endif %}
+          <input type="number" name="pack_quantity" step="any" min="0" required
+                 hx-get="/skus/{{ sku.sku_id }}/cost-preview"
+                 hx-trigger="input changed delay:200ms"
+                 hx-target="#cost-preview"
+                 hx-include="closest form">
+        </label>
+        <label>
+          <input type="checkbox" name="vat_inclusive" value="1" checked
+                 hx-get="/skus/{{ sku.sku_id }}/cost-preview"
+                 hx-trigger="change"
+                 hx-target="#cost-preview"
+                 hx-include="closest form">
+          Price includes VAT (7%)
+        </label>
+        <div id="cost-preview" class="cost-preview"></div>
+        <button type="submit">Save cost</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
