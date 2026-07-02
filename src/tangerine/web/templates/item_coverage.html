@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Item coverage — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review coverage">
+    <h1>Item coverage</h1>
+    <p class="day">
+      Every Loyverse item: mapping status and its SKU's chain health.
+      <a href="/skus">SKU view &rarr;</a>
+    </p>
+
+    {% if filtered_item_id %}
+    <p class="coverage-filter">
+      Showing only <strong>{{ filtered_item_id }}</strong> —
+      <a href="/items">clear filter</a>
+    </p>
+    {% endif %}
+
+    {% if not rows %}
+    <p class="empty-note"><em>No items to show.</em></p>
+    {% else %}
+    <section class="coverage-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Sell price</th>
+            <th>Mapped to</th>
+            <th>Health</th>
+            <th>Cost/unit</th>
+            <th>Margin</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+          <tr class="item-row {% if row.mapped_sku_id %}item-row--{{ row.sku_health.value }}{% else %}item-row--unmapped{% endif %}">
+            <td class="item-row__name">{{ row.name }}<span class="item-row__id">{{ row.item_id }}</span></td>
+            <td>{{ row.sell_price | money }} THB</td>
+            <td>
+              {% if row.mapped_sku_id %}
+                <a href="/skus">{{ row.mapped_sku_id }}</a>
+              {% else %}
+                <span class="item-row__unmapped-label">unmapped</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.sku_health %}
+                <span class="health-dot health-dot--{{ row.sku_health.value }}" title="{{ row.sku_health.value }}"></span>
+                {{ row.sku_health.value }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>{{ (row.cost_per_unit | money) if row.cost_per_unit is not none else "—" }}</td>
+            <td>{{ (row.gross_margin | money) if row.gross_margin is not none else "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

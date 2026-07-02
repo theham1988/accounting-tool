@@ -1268,3 +1268,115 @@ class ChecklistSet:
 
     daily: ChecklistOccurrence
     weekly: ChecklistOccurrence
+# --- SKU + item coverage views (Wave 1.5, Slice 2) ---------------------------
+#
+# ADR-0003 / issue 24: the partner cannot see which of the Loyverse items are
+# mapped, which SKUs are fully priced, or which recipes are complete, without
+# scanning YAML by eye. Two read-only surfaces make the whole menu's mapping
+# health visible: the SKU view (one row per SKU) and the item coverage view
+# (one row per Loyverse item the sync has seen). Both are built by the pure
+# ``coverage`` engine over the same recipes/costs/mappings shapes the margin
+# engine already consumes, plus the current Loyverse menu.
+
+
+@dataclass(frozen=True)
+class SkuRecord:
+    """One raw row from the ``skus`` table: identity, not costing state.
+
+    The coverage engine's input shape for the SKU view — every SKU that has
+    ever been seeded or edited, whether or not it has a recipe. ``segment``
+    is ``None`` for ingredient-only SKUs (they may feed both cafe and bar
+    recipes); ``unit`` is ``None`` until ADR-0003 decision 3's migration (or
+    a future editor) can confirm it.
+    """
+
+    sku_id: str
+    name: str
+    segment: Segment | None
+    unit: str | None
+
+
+class SkuClassification(StrEnum):
+    """How a SKU relates to the menu, for the SKU view's grouping.
+
+    - ``ACTIVE``        at least one Loyverse item is mapped to this SKU (it
+                        is sold directly). Wins over ``PREP_INTERNAL`` when a
+                        SKU is both sold and consumed by another recipe.
+    - ``PREP_INTERNAL`` no item is mapped to it, but another recipe consumes
+                        it as an ingredient (the existing ``prep-*``
+                        sub-recipes, and ordinary raw-material leaf SKUs).
+    - ``DANGLING``       neither sold nor used anywhere — likely a mistake.
+    """
+
+    ACTIVE = "active"
+    PREP_INTERNAL = "prep_internal"
+    DANGLING = "dangling"
+
+
+class SkuHealth(StrEnum):
+    """At-a-glance costing health for a SKU or a mapped item's SKU chain.
+
+    - ``GREEN``   fully mapped + recipe + priced (or, for a leaf SKU with no
+                  recipe of its own, simply priced).
+    - ``YELLOW``  partial — a recipe exists but not every ingredient is
+                  priced (including none of them).
+    - ``RED``     broken — dangling, or a SKU that should have a recipe (it
+                  is sold or consumed) but has none, or has an empty recipe,
+                  or (for a leaf SKU) has no price at all.
+    """
+
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+
+
+@dataclass(frozen=True)
+class SkuCoverageRow:
+    """One SKU view row: identity, classification, and costing health.
+
+    - ``mapped_item_count``       how many Loyverse items map to this SKU
+                                   (the "mapping status" column)
+    - ``has_recipe``               whether the SKU has its own recipe row
+    - ``ingredient_count`` /
+      ``priced_ingredient_count``  recipe completeness + ingredient pricing,
+                                   both 0 for a leaf SKU with no recipe
+    - ``cost_per_unit``            the derived per-unit cost, or ``None``
+                                   when it cannot be honestly derived (no
+                                   recipe and no direct price, or a recipe
+                                   with an unpriced ingredient)
+    """
+
+    sku_id: str
+    name: str
+    segment: Segment | None
+    unit: str | None
+    classification: SkuClassification
+    health: SkuHealth
+    mapped_item_count: int
+    has_recipe: bool
+    ingredient_count: int
+    priced_ingredient_count: int
+    cost_per_unit: Money | None
+
+
+@dataclass(frozen=True)
+class ItemCoverageRow:
+    """One item coverage view row: a Loyverse item and its SKU chain health.
+
+    ``mapped_sku_id`` is the SKU the item resolves to through
+    ``RecipeCatalog.for_item`` (the same resolution the margin engine uses,
+    including its item-id-equals-sku-id fallback) — ``None`` when the item
+    is genuinely unmapped. ``sku_health`` / ``cost_per_unit`` are ``None``
+    for an unmapped item; ``gross_margin`` / ``gross_margin_pct`` are
+    ``None`` whenever ``cost_per_unit`` is ``None`` (the cost is not known
+    well enough to derive a margin).
+    """
+
+    item_id: str
+    name: str
+    sell_price: Money
+    mapped_sku_id: str | None
+    sku_health: SkuHealth | None
+    cost_per_unit: Money | None
+    gross_margin: Money | None
+    gross_margin_pct: Decimal | None

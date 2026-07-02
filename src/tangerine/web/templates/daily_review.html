@@ -238,6 +238,7 @@
           {% if im.unmapped %}<span class="needs-attention__reason">unmapped</span> (no recipe mapping){% endif %}
           {% if im.unknown_price %}<span class="needs-attention__reason">unknown price</span> (an ingredient has no cost entry){% endif %}
           — {{ im.revenue | money }} THB
+          — <a class="needs-attention__link" href="/items?item={{ im.item_id }}">Fix in item coverage &rarr;</a>
         </li>
         {% endfor %}
       </ul>

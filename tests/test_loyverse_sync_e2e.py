@@ -418,6 +418,10 @@ def test_refunds_excluded_from_sales() -> None:
 
 
 def test_parse_items_snapshot_captures_current_menu() -> None:
+    """Menu rows are keyed by variant SKU — the same identity receipt lines
+    carry and recipe mappings key on — not the Loyverse item UUID, so a menu
+    row can be joined to a sale or a mapping downstream.
+    """
     payload = {
         "items": [
             _item_json(item_id="i-1", name="Chang Draft 500ml", sku="chang-draft-500", price=120),
@@ -428,9 +432,61 @@ def test_parse_items_snapshot_captures_current_menu() -> None:
     snapshot = parse_items_snapshot(payload)
 
     by_id = {mi.item_id: mi for mi in snapshot.items}
-    assert set(by_id) == {"i-1", "i-2"}
-    assert by_id["i-1"].name == "Chang Draft 500ml"
-    assert by_id["i-1"].sell_price == D("120")
+    assert set(by_id) == {"chang-draft-500", "espresso-latte"}
+    assert by_id["chang-draft-500"].name == "Chang Draft 500ml"
+    assert by_id["chang-draft-500"].sell_price == D("120")
+
+
+def test_parse_items_snapshot_yields_one_row_per_variant() -> None:
+    """A multi-variant item (e.g. two sizes with their own SKUs and prices)
+    yields one menu row per variant, each under its own SKU with its own
+    price — mirroring how Loyverse sells and how receipts record each size.
+    """
+    payload = {
+        "items": [
+            {
+                "id": "i-peach",
+                "item_name": "Peach Tea",
+                "category_id": "cat-cafe",
+                "variants": [
+                    {"variant_id": "v-l", "option1_value": "Large", "sku": "10024", "default_price": 100},
+                    {"variant_id": "v-s", "option1_value": "Small", "sku": "10019", "default_price": 90},
+                ],
+            }
+        ]
+    }
+
+    snapshot = parse_items_snapshot(payload)
+
+    by_id = {mi.item_id: mi for mi in snapshot.items}
+    assert set(by_id) == {"10024", "10019"}
+    assert by_id["10024"].sell_price == D("100")
+    assert by_id["10019"].sell_price == D("90")
+    assert by_id["10019"].name == "Peach Tea"
+
+
+def test_parse_items_snapshot_falls_back_to_item_id_when_variant_has_no_sku() -> None:
+    """A variant with no SKU keys its row by the Loyverse item id — the same
+    fallback ``parse_receipts_to_sales`` uses for a line with no ``sku``, so
+    the two identities still agree.
+    """
+    payload = {
+        "items": [
+            {
+                "id": "i-nosku",
+                "item_name": "Mystery Special",
+                "category_id": "cat-bar",
+                "variants": [
+                    {"variant_id": "v-1", "option1_value": "Mystery", "sku": None, "default_price": 50}
+                ],
+            }
+        ]
+    }
+
+    snapshot = parse_items_snapshot(payload)
+
+    assert [mi.item_id for mi in snapshot.items] == ["i-nosku"]
+    assert snapshot.items[0].sell_price == D("50")
 
 
 def test_parse_items_snapshot_reads_per_store_price_when_default_price_is_none() -> None:
@@ -489,12 +545,13 @@ def test_menu_change_history_preserved_with_timestamps() -> None:
 
     history = store.menu_change_history()
 
-    # Two change records: the reprice of i-1 and the addition of i-2.
+    # Two change records: the Chang reprice and the Latte addition, keyed by
+    # variant SKU (the menu row identity).
     by_item = {h.item_id: h for h in history}
-    assert by_item["i-1"].change_kind == "price_change"
-    assert by_item["i-1"].at == datetime(2026, 6, 24, tzinfo=timezone.utc)
-    assert by_item["i-2"].change_kind == "added"
-    assert by_item["i-2"].at == datetime(2026, 6, 24, tzinfo=timezone.utc)
+    assert by_item["chang-draft-500"].change_kind == "price_change"
+    assert by_item["chang-draft-500"].at == datetime(2026, 6, 24, tzinfo=timezone.utc)
+    assert by_item["espresso-latte"].change_kind == "added"
+    assert by_item["espresso-latte"].at == datetime(2026, 6, 24, tzinfo=timezone.utc)
 
 
 # --- 6. polling cadence configurable; default daily after close -------------
@@ -622,8 +679,9 @@ def test_end_to_end_sync_stores_sales_and_menu() -> None:
     assert sales[0].item_id == "chang-draft-500"
     assert sales[0].timestamp == date(2026, 6, 24)
     assert sales[0].sell_price == D("120")
-    # Menu snapshot + at least one change record (the initial add).
-    assert store.current_menu().get("i-1") is not None
+    # Menu snapshot keyed by variant SKU (joinable to the sale above) + at
+    # least one change record (the initial add).
+    assert store.current_menu().get("chang-draft-500") is not None
     assert any(h.change_kind == "added" for h in store.menu_change_history())
 
 
@@ -660,7 +718,7 @@ def test_end_to_end_sync_resolves_per_store_menu_price() -> None:
 
     SyncOrchestrator(client=client, store=store).sync_sales_and_menu()
 
-    assert store.current_menu()["i-1"].sell_price == D("120")
+    assert store.current_menu()["chang-draft-500"].sell_price == D("120")
 
 
 def test_sync_is_idempotent() -> None:
@@ -732,9 +790,9 @@ def test_discontinued_item_recorded_in_change_history() -> None:
     history = store.menu_change_history()
     disc = [h for h in history if h.change_kind.value == "discontinued"]
     assert len(disc) == 1
-    assert disc[0].item_id == "i-1"
+    assert disc[0].item_id == "c"
     assert disc[0].at == datetime(2026, 6, 24, tzinfo=timezone.utc)
     assert disc[0].from_value == "Chang Draft"
     assert disc[0].to_value is None
     # And it is no longer in the current menu.
-    assert "i-1" not in store.current_menu()
+    assert "c" not in store.current_menu()

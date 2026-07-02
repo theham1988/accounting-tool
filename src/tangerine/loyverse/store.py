@@ -24,10 +24,13 @@ from ..types import Money, Sale, Segment
 
 @dataclass(frozen=True)
 class MenuItem:
-    """One Loyverse item as of the most recent menu snapshot.
+    """One sellable Loyverse variant as of the most recent menu snapshot.
 
-    ``sell_price`` is the variant price at sync time (Loyverse stores price on
-    the variant, not the item; we read the first variant). ``segment`` is
+    ``item_id`` is the variant's SKU (falling back to the Loyverse item id
+    when a variant has none) — the same identity a receipt line carries and
+    recipe mappings key on, so menu rows join to sales and mappings. A
+    multi-variant Loyverse item yields one ``MenuItem`` per variant.
+    ``sell_price`` is that variant's price at sync time. ``segment`` is
     resolved by the parser from the item's category (cafe category -> cafe,
     else bar); slice 07 generalises segment tagging.
     """

@@ -37,6 +37,7 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
 from ..config.loader import load_assignees
+from ..coverage import build_item_coverage, build_sku_coverage
 from ..daily_review import DailyReview, build_daily_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
@@ -277,6 +278,7 @@ def create_app(
 
     app.state.store = store
     app.state.source = source
+    app.state.config_store = config_store
     app.state.db_path = db
     app.state.templates = templates
     app.state.today = today_date
@@ -465,6 +467,47 @@ def create_app(
             # rendering a misleading review for an unintended day.
             return HTMLResponse("Invalid day (expected YYYY-MM-DD).", status_code=400)
         return _render_review(request, app, review_date)
+
+    @app.get("/skus", response_class=HTMLResponse)
+    def skus_view(request: Request) -> HTMLResponse:
+        """The SKU view (Wave 1.5, Slice 2): one row per SKU, mapping/recipe/
+        pricing health at a glance. Read-only — no editing yet.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        rows = build_sku_coverage(
+            skus=cfg.skus(), recipes=cfg.recipes(), mappings=cfg.mappings(), cost=cfg.cost_book()
+        )
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="sku_coverage.html",
+            context={"request": request, "rows": rows},
+        )
+
+    @app.get("/items", response_class=HTMLResponse)
+    def items_view(request: Request, item: str | None = None) -> HTMLResponse:
+        """The item coverage view (Wave 1.5, Slice 2): one row per Loyverse
+        item, unmapped/broken items bubbled to the top. ``?item=<id>`` (used
+        by the daily review's needs-attention deep link) filters the table
+        down to that single item.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        store: SqliteLoyverseStore = app.state.store
+        rows = build_item_coverage(
+            menu=store.current_menu(),
+            skus=cfg.skus(),
+            recipes=cfg.recipes(),
+            mappings=cfg.mappings(),
+            cost=cfg.cost_book(),
+        )
+        if item:
+            rows = [r for r in rows if r.item_id == item]
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="item_coverage.html",
+            context={"request": request, "rows": rows, "filtered_item_id": item},
+        )
 
     @app.post("/sync", response_class=HTMLResponse)
     def sync(request: Request) -> HTMLResponse:

@@ -29,7 +29,7 @@ import yaml
 from ..config.loader import load_costs, load_recipes
 from ..cost import CostBook
 from ..recipes import RecipeCatalog
-from ..types import Recipe, RecipeIngredient, Segment, SkuMapping
+from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
 from .schema import apply_migrations
 
 _MIGRATION_ACTOR = "migration"
@@ -120,6 +120,28 @@ class SqliteConfigStore:
                 "SELECT item_id, sku_id FROM mappings ORDER BY item_id"
             ).fetchall()
         return [SkuMapping(item_id=item_id, sku_id=sku_id) for item_id, sku_id in rows]
+
+    def skus(self) -> list[SkuRecord]:
+        """Every row in the ``skus`` table, in ``sku_id`` order.
+
+        The SKU + item coverage views' (Wave 1.5, Slice 2) whole-table read:
+        unlike ``recipes()``, this includes cost-only leaf SKUs that never
+        produce a recipe of their own (e.g. ``almond-ground``), so the SKU
+        view can show every SKU that has ever been seeded or edited.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT sku_id, name, segment, unit FROM skus ORDER BY sku_id"
+            ).fetchall()
+        return [
+            SkuRecord(
+                sku_id=sku_id,
+                name=name,
+                segment=Segment(segment) if segment else None,
+                unit=unit,
+            )
+            for sku_id, name, segment, unit in rows
+        ]
 
 
 def seed_config(
@@ -441,3 +463,4 @@ def _utc_now_iso() -> str:
 
 
 __all__ = ["SqliteConfigStore", "seed_config"]
+

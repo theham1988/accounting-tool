@@ -6,6 +6,8 @@
 
 :root {
   --flag-red: #c0392b;
+  --flag-yellow: #e0a93f;
+  --flag-green: #2e7d32;
   --text: #1a1a1a;
   --muted: #555;
   --rule: #ddd;
@@ -404,6 +406,112 @@ body {
   cursor: pointer;
 }
 
+/* --- Slice 2: SKU view + item coverage view (ADR-0003 / issue 24) ----------- */
+
+/* Both coverage pages share the ``.review.coverage`` shell + a horizontally
+   scrollable table — mobile-first: the phone layout scrolls the wide table
+   sideways rather than truncating columns. */
+.coverage-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.coverage-table table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.coverage-table th,
+.coverage-table td {
+  text-align: left;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.coverage-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.coverage-table td.sku-row__name,
+.coverage-table td.item-row__name {
+  white-space: normal;
+}
+
+.sku-row__id,
+.item-row__id {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* Health dot: a small colour swatch so classification/health reads at a
+   glance without relying on colour of the whole row (accessible via the
+   ``title`` attribute too). */
+.health-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+
+.health-dot--green {
+  background: var(--flag-green);
+}
+
+.health-dot--yellow {
+  background: var(--flag-yellow);
+}
+
+.health-dot--red {
+  background: var(--flag-red);
+}
+
+/* A left border on each row reinforces the health colour without requiring
+   the dot to be legible at a glance on a small phone screen. */
+.sku-row--green,
+.item-row--green {
+  border-left: 3px solid var(--flag-green);
+}
+
+.sku-row--yellow,
+.item-row--yellow {
+  border-left: 3px solid var(--flag-yellow);
+}
+
+.sku-row--red,
+.item-row--red,
+.item-row--unmapped {
+  border-left: 3px solid var(--flag-red);
+}
+
+.item-row__unmapped-label {
+  color: var(--flag-red);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.coverage-filter {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-alt);
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+/* Needs-attention deep link (issue 24): a clear tap target back to the item
+   coverage view, on its own visual weight distinct from the reason label. */
+.needs-attention__link {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* --- Progressive enhancement for wider viewports (tablet / desktop) ---------- */
 @media (min-width: 700px) {
   .review {
@@ -422,5 +530,11 @@ body {
   .login {
     max-width: 420px;
     padding: 2.5rem 2rem;
+  }
+
+  /* The coverage tables have more columns than the review page's content —
+     give them more room on wider viewports rather than the review's 720px. */
+  .review.coverage {
+    max-width: 960px;
   }
 }

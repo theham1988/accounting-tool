@@ -157,51 +157,57 @@ def variant_price(variant: LoyverseVariant, *, store_id: str | None = None) -> D
     return None
 
 
-def _first_variant_price(item: LoyverseItem, store_id: str | None) -> Decimal:
-    variants = item.get("variants") or []
-    if not variants:
-        return Decimal("0")
-    price = variant_price(variants[0], store_id=store_id)
-    return price if price is not None else Decimal("0")
-
-
-def _item_name(item: LoyverseItem) -> str:
-    name = item.get("item_name")
-    if name:
-        return name
-    variants = item.get("variants") or []
-    if variants:
-        return variants[0].get("option1_value", "")
-    return ""
-
-
 def parse_items_snapshot(
     payload: dict[str, Any], *, store_id: str | None = None
 ) -> MenuSnapshot:
     """Turn an ``/items`` response into a ``MenuSnapshot`` (current menu).
 
-    One ``MenuItem`` per Loyverse item, keyed by Loyverse item id. Segment is
-    cafe when the item's category is the cafe category, else bar. ``store_id``
-    disambiguates a variant's per-store price (see :func:`variant_price`);
-    the sync orchestrator passes the configured credentials' store id.
+    One ``MenuItem`` per item *variant*, keyed by the same identity a receipt
+    line carries: the variant's ``sku``, falling back to the Loyverse item id
+    (mirroring :func:`_line_item_id`). Loyverse sells variants, not items —
+    recipe mappings key on variant SKUs and sales are stored under them — so
+    menu rows must share that identity or nothing downstream (item coverage,
+    the daily review's deep links) can join a menu row to a mapping or a
+    sale. A multi-variant item (e.g. two sizes with their own SKUs and
+    prices) yields one row per variant; an item with no variants still
+    yields one row, keyed by the item id and priced at zero.
+
+    Segment is cafe when the item's category is the cafe category, else bar.
+    ``store_id`` disambiguates a variant's per-store price (see
+    :func:`variant_price`); the sync orchestrator passes the configured
+    credentials' store id.
     """
     raw_items = payload.get("items", [])
     menu_items: list[MenuItem] = []
     for raw in raw_items:
         item_id = raw.get("id", "")
+        name = raw.get("item_name", "")
         segment = (
             Segment.CAFE
             if raw.get("category_id") == CAFE_CATEGORY_ID
             else Segment.BAR
         )
-        menu_items.append(
-            MenuItem(
-                item_id=item_id,
-                name=_item_name(raw),
-                sell_price=_first_variant_price(raw, store_id),
-                segment=segment,
+        variants = raw.get("variants") or []
+        if not variants:
+            menu_items.append(
+                MenuItem(
+                    item_id=item_id,
+                    name=name,
+                    sell_price=Decimal("0"),
+                    segment=segment,
+                )
             )
-        )
+            continue
+        for variant in variants:
+            price = variant_price(variant, store_id=store_id)
+            menu_items.append(
+                MenuItem(
+                    item_id=variant.get("sku") or item_id,
+                    name=name or variant.get("option1_value", ""),
+                    sell_price=price if price is not None else Decimal("0"),
+                    segment=segment,
+                )
+            )
     menu_items.sort(key=lambda mi: mi.item_id)
     return MenuSnapshot(items=tuple(menu_items))
 

@@ -634,6 +634,62 @@ def test_get_root_surfaces_unmapped_and_unknown_price_rows(
         )
 
 
+# --- AC: needs-attention rows deep-link to the item coverage view (issue 24) --
+
+
+def test_needs_attention_rows_deep_link_to_item_coverage_view(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Each needs-attention row links to ``/items?item=<id>`` — a single tap
+    from the morning review straight to the "fix this one" item coverage row
+    (issue 24: the SKU view + item coverage view slice).
+    """
+    from tangerine.web.app import create_app
+
+    db_path = str(tmp_path / "tangerine.db")
+    recipes_path, costs_path, assignees_path = _write_custom_recipes(
+        tmp_path, _recipes_yaml_with_unpriced_ingredient()
+    )
+
+    store = SqliteLoyverseStore.connect(db_path)
+    store.record_sales(
+        [
+            _sale_record(
+                receipt_number="2-1",
+                item_id="iced-latte",
+                day=yesterday,
+                price="130",
+            ),
+            _sale_record(
+                receipt_number="2-2",
+                item_id="mystery-mocktail",
+                day=yesterday,
+                price="200",
+                segment=None,
+            ),
+        ]
+    )
+    store.close()
+
+    app = create_app(
+        db_path=db_path,
+        recipes_path=recipes_path,
+        costs_path=costs_path,
+        assignees_path=assignees_path,
+        today=today,
+        passphrase=_TEST_PASSPHRASE,
+        signing_secret=_TEST_SIGNING_SECRET,
+    )
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    needs = _section(response.text, "needs-attention")
+    assert 'href="/items?item=iced-latte"' in needs
+    assert 'href="/items?item=mystery-mocktail"' in needs
+
+
 # --- AC: create_app wires a recipes.yaml mapping through end-to-end ------------
 
 

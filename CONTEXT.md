@@ -70,9 +70,17 @@ hurry" for the running system, only for the seed data a new deployment
 would start from. `config/assignees.yaml` is unaffected — it stays
 file-based and is still read at every startup (ADR-0003 consequence).
 
+**Wave 1.5 Step 2 has landed**: two read-only visibility surfaces, `/skus`
+(one row per SKU, classified active / prep-internal / dangling, with a
+green/yellow/red health indicator) and `/items` (one row per Loyverse item,
+unmapped-or-broken items sorted to the top, each mapped row showing its
+SKU's chain health and derived margin). The daily review's `needs_attention`
+list deep-links each flagged item straight to its `/items?item=<id>` row.
+Both are still purely visibility — no editing.
+
 The replacement safety net — an in-UI editor plus an audit log with
 per-change and per-session revert — is **not yet built** (Wave 1.5 Steps
-2–5). Until it ships there is no in-browser way to change a recipe, cost,
+3–5). Until it ships there is no in-browser way to change a recipe, cost,
 or mapping at all; the only path is editing the YAML seed and reseeding a
 fresh database. This entry will be rewritten again once the editor and
 audit-and-revert safety net land.

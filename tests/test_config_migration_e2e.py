@@ -27,7 +27,7 @@ from tangerine.loyverse.store import InMemoryLoyverseStore, SaleRecord
 from tangerine.margin import compute_daily_margin
 from tangerine.storage.config_store import SqliteConfigStore, seed_config
 from tangerine.storage.sqlite_store import SqliteLoyverseStore
-from tangerine.types import Recipe, RecipeIngredient, Sale, Segment, SkuMapping
+from tangerine.types import Recipe, RecipeIngredient, Sale, Segment, SkuMapping, SkuRecord
 from tangerine.web.app import create_app
 from tangerine.web.auth import SESSION_COOKIE
 
@@ -406,6 +406,51 @@ mappings:
     mappings = SqliteConfigStore(conn).mappings()
 
     assert mappings == [SkuMapping(item_id="i-1", sku_id="chang-draft-500")]
+
+
+# --- AC: every skus row is readable back (Wave 1.5, Slice 2 — coverage views)
+
+
+def test_skus_round_trips_every_seeded_row(tmp_path: Path) -> None:
+    """``SqliteConfigStore.skus()`` returns one ``SkuRecord`` per ``skus`` row.
+
+    Worked example. One recipe SKU (``espresso-latte``, seeded by
+    ``_seed_recipes`` with its segment) and one cost-only leaf SKU
+    (``almond-ground``, seeded by ``_seed_costs`` with a derived unit) both
+    round-trip — this is the SKU view's (issue 24) whole-table read.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: espresso-latte
+    name: Espresso Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "20" }
+""",
+    )
+    costs_yaml = tmp_path / "costs.yaml"
+    _write(
+        costs_yaml,
+        """
+costs:
+  almond-ground: { price: "0.458", updated_at: "2026-06-30" }  # ARO Almond Powder 500 g
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
+
+    skus = {s.sku_id: s for s in SqliteConfigStore(conn).skus()}
+
+    assert skus["espresso-latte"] == SkuRecord(
+        sku_id="espresso-latte", name="Espresso Latte", segment=Segment.CAFE, unit=None
+    )
+    assert skus["almond-ground"] == SkuRecord(
+        sku_id="almond-ground", name="almond-ground", segment=None, unit="g"
+    )
 
 
 # --- AC: StoreSource delegates to the SQLite config store --------------------

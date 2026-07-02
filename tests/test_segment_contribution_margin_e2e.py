@@ -137,9 +137,10 @@ def test_loyverse_item_segment_tagged_from_category() -> None:
         }
     )
 
+    # Menu rows are keyed by variant SKU; each carries its item's segment.
     by_id = {mi.item_id: mi for mi in snapshot.items}
-    assert by_id["i-bar"].segment == Segment.BAR
-    assert by_id["i-cafe"].segment == Segment.CAFE
+    assert by_id["c"].segment == Segment.BAR
+    assert by_id["l"].segment == Segment.CAFE
 
 
 # --- AC 2: shift-timestamp fallback ----------------------------------------
