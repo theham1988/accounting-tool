@@ -11,6 +11,8 @@ build it from the ``ApprovalBook`` via ``CostBook.from_book``.
 
 from __future__ import annotations
 
+from datetime import date
+
 from .cost import CostBook
 from .types import Recipe, Sale, SkuMapping
 
@@ -43,6 +45,10 @@ class SeededSource:
         return list(self._recipes)
 
     def cost_book(self) -> CostBook:
+        return self._cost
+
+    def cost_book_as_of(self, day: date) -> CostBook:
+        """The seeded book, whatever the day — a seeded source has no history."""
         return self._cost
 
     def mappings(self) -> list[SkuMapping]:

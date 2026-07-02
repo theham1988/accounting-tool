@@ -68,8 +68,14 @@ def _build_app(  # type: ignore[no-untyped-def]
     recipes_yaml: str,
     costs_yaml: str,
     today: date | None = None,
+    now_epoch: int | None = None,
 ):
-    """A ``create_app`` wired against real YAML seeded into a fresh SQLite DB."""
+    """A ``create_app`` wired against real YAML seeded into a fresh SQLite DB.
+
+    ``now_epoch`` pins the audit clock — needed by tests that assert
+    as-of-date pricing, where *when* an edit was made decides which days
+    it re-costs (Wave 2 slice 1).
+    """
     recipes_path = _write(tmp_path / "recipes.yaml", recipes_yaml)
     costs_path = _write(tmp_path / "costs.yaml", costs_yaml)
     assignees_path = _write_assignees(tmp_path)
@@ -81,6 +87,7 @@ def _build_app(  # type: ignore[no-untyped-def]
         passphrase=_TEST_PASSPHRASE,
         signing_secret=_TEST_SIGNING_SECRET,
         today=today,
+        now_epoch=now_epoch,
     )
 
 
@@ -181,15 +188,23 @@ def test_saving_a_cost_updates_db_and_the_next_review(tmp_path: Path) -> None:
     """Given a partner enters pack price 380 THB for a 2 kg block of butter
     with VAT inclusive, the stored cost becomes 380 / 2000 / 1.07 =
     0.177570 THB/g net — and the croissant (50 g butter, sold at 95 THB
-    yesterday) shows a margin of 95 − 50 × 0.177570 = 86.12 on the review,
-    without touching YAML.
+    today) shows a margin of 95 − 50 × 0.177570 = 86.12 on that day's
+    review, without touching YAML.
+
+    Under as-of-date pricing (Wave 2 slice 1) the edit takes effect on the
+    partner-facing day it was saved — the app's *today* — so it governs
+    today's sales onward (tomorrow's 9am review of today) and never
+    re-costs yesterday.
     """
     today = date(2026, 7, 2)
-    yesterday = date(2026, 7, 1)
     app = _build_app(
-        tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML, today=today
+        tmp_path,
+        recipes_yaml=_RECIPES_YAML,
+        costs_yaml=_COSTS_YAML,
+        today=today,
+        now_epoch=int(datetime(2026, 7, 2, 12, tzinfo=timezone.utc).timestamp()),
     )
-    _seed_sale(app.state.db_path, item_id="i-croissant", day=yesterday, price="95")
+    _seed_sale(app.state.db_path, item_id="i-croissant", day=today, price="95")
     client = _authed_client(app)
 
     response = client.post(
@@ -204,8 +219,8 @@ def test_saving_a_cost_updates_db_and_the_next_review(tmp_path: Path) -> None:
     editor_html = client.get("/skus/butter").text
     assert "0.18" in editor_html  # 0.177570 rendered at 2 dp
 
-    # Tomorrow's 9am review reflects the new cost: 95 − 8.88 = 86.12.
-    review_html = client.get("/").text
+    # The edit's own day reflects the new cost: 95 − 8.88 = 86.12.
+    review_html = client.get("/review", params={"day": today.isoformat()}).text
     assert "86.12" in review_html
 
 
@@ -364,11 +379,15 @@ cost,,,butter,Butter,g,380,2000,TRUE
 
 
 def _upload_app(tmp_path: Path):  # type: ignore[no-untyped-def]
+    # Under as-of-date pricing an uploaded cost takes effect on the app's
+    # *today* (the partner-facing save date), so tests that want the new
+    # cost to govern a sale put the sale on today.
     app = _build_app(
         tmp_path,
         recipes_yaml=_UPLOAD_RECIPES_YAML,
         costs_yaml=_UPLOAD_COSTS_YAML,
         today=date(2026, 7, 2),
+        now_epoch=int(datetime(2026, 7, 2, 12, tzinfo=timezone.utc).timestamp()),
     )
     _seed_menu(
         app.state.db_path,
@@ -416,7 +435,7 @@ def test_upload_confirm_applies_mappings_and_costs(tmp_path: Path) -> None:
     net cost flows into the croissant's margin on the next review.
     """
     app = _upload_app(tmp_path)
-    _seed_sale(app.state.db_path, item_id="i-croissant", day=date(2026, 7, 1), price="95")
+    _seed_sale(app.state.db_path, item_id="i-croissant", day=date(2026, 7, 2), price="95")
     client = _authed_client(app)
     preview_html = client.post(
         "/upload", files={"file": ("filled.csv", _FILLED_CSV, "text/csv")}
@@ -433,8 +452,8 @@ def test_upload_confirm_applies_mappings_and_costs(tmp_path: Path) -> None:
     items_html = client.get("/items", params={"item": "i-mystery"}).text
     assert "soda" in items_html
     assert 'item-row--unmapped' not in items_html
-    # The cost landed: 95 − 50 × 0.177570 = 86.12 on tomorrow's review.
-    review_html = client.get("/").text
+    # The cost landed: 95 − 50 × 0.177570 = 86.12 on the upload day's review.
+    review_html = client.get("/review", params={"day": "2026-07-02"}).text
     assert "86.12" in review_html
 
 

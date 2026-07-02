@@ -259,9 +259,12 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
 
     Recipes come from ``source.recipes()``, resolved via ``source.mappings()``
     (item -> SKU -> recipe, per ``RecipeCatalog``); their ingredient costs are
-    looked up from ``source.cost_book()``. Rows flagged ``unmapped`` or
-    ``unknown_price`` are excluded from the totals (their COGS is unknown);
-    their revenue is summed into ``flagged_revenue`` so it stays visible.
+    looked up from ``source.cost_book_as_of(day)`` — the prices in effect on
+    the day being costed, not at render time, so a cost edit does not
+    re-state history (Wave 2 slice 1, ADR-0004 decision 2). Rows flagged
+    ``unmapped`` or ``unknown_price`` are excluded from the totals (their
+    COGS is unknown); their revenue is summed into ``flagged_revenue`` so it
+    stays visible.
 
     Per-segment contribution margins (slice 07) are populated from the
     reliable rows only: flagged rows have unknown COGS, so booking their
@@ -269,7 +272,7 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     present; a segment with no reliable sales carries zeros.
     """
     recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
-    cost = source.cost_book()
+    cost = source.cost_book_as_of(day)
     rows = compute_item_margins(
         sales=source.sales(), recipes=recipes, cost=cost, day=day
     )
@@ -312,10 +315,12 @@ def compute_period_segment_margins(
     """Per-segment contribution margin over an inclusive ``[start, end]`` range.
 
     Issue 07 requires per-segment CM "for any period", not just one day. This
-    runs the per-item margin engine for each day in the range, rolls each day's
-    reliable rows into segment CMs via ``segment_margins_from_items`` (the
-    single honest path), and sums the per-day segment CMs into the period
-    total. Both segments are always returned.
+    runs the per-item margin engine for each day in the range — each day
+    costed at that day's prices (``cost_book_as_of``, ADR-0004 decision 2) —
+    rolls each day's reliable rows into segment CMs via
+    ``segment_margins_from_items`` (the single honest path), and sums the
+    per-day segment CMs into the period total. Both segments are always
+    returned.
     """
     if end < start:
         raise ValueError(
@@ -323,13 +328,15 @@ def compute_period_segment_margins(
         )
     sales = source.sales()
     recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
-    cost = source.cost_book()
 
     accumulated = _empty_segment_buckets()
     current = start
     while current <= end:
         rows = compute_item_margins(
-            sales=sales, recipes=recipes, cost=cost, day=current
+            sales=sales,
+            recipes=recipes,
+            cost=source.cost_book_as_of(current),
+            day=current,
         )
         counted = [im for im in rows if not im.excluded_from_totals]
         for sm in segment_margins_from_items(counted):

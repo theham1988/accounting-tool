@@ -18,6 +18,7 @@ store to wire in.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
 from ..cost import CostBook
@@ -73,6 +74,19 @@ class StoreSource:
     def cost_book(self) -> CostBook:
         if self._config is not None:
             return self._config.cost_book()
+        return self._cost
+
+    def cost_book_as_of(self, day: date) -> CostBook:
+        """The cost book as it stood on ``day`` (Wave 2 slice 1).
+
+        With a config store wired in, prices are reconstructed from the
+        audit log via :meth:`SqliteConfigStore.price_history`, so a cost
+        edit no longer re-states earlier days' margins (ADR-0004 decision
+        2). The in-memory path has no history: its fixed book stands for
+        every day, matching the pre-Wave-2 behavior those callers expect.
+        """
+        if self._config is not None:
+            return self._config.price_history().cost_book_as_of(day)
         return self._cost
 
     def mappings(self) -> list[SkuMapping]:

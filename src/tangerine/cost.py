@@ -76,6 +76,14 @@ class CostBook:
         """The current price entry for a SKU, or None if it has none yet."""
         return self._prices.get(sku_id)
 
+    def sku_ids(self) -> tuple[str, ...]:
+        """Every SKU the book holds a price for, sorted for determinism.
+
+        Added for the price-as-of-date lookup (Wave 2 slice 1), which
+        rebuilds a whole book frozen at a date and needs the SKU universe.
+        """
+        return tuple(sorted(self._prices))
+
 
 def cost_per_unit(book: CostBook, sku_id: str) -> Money:
     """Current cost per unit for ``sku_id``, or zero when unknown.

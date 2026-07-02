@@ -142,6 +142,84 @@ produces against a VAT-registered ingredient rose slightly (~7% of COGS) on
 cutover — the old numbers were silently gross, not net, and this is the
 fix, not a regression (ADR-0003 decision 4).
 
+## COGS recognition
+
+The cost the tool attributes to a sale. Two models live in the codebase:
+
+- **Recipe-cost COGS** — the cost of a sale is its recipe's ingredient
+  costs at the net price in effect on the sale's day, summed over the
+  units sold. This is the model the daily 9am review uses and, from Wave
+  2, the model every reporting surface (period, month, trend) uses. It is
+  *theoretical*: it costs what *should* have been consumed, at the
+  in-effect price, with no inventory measurement. It needs only sales
+  plus the recipe and cost books.
+- **Accrual COGS** — `beginning inventory + purchases − ending inventory`,
+  measured from keg weighs (bar) and cafe stock counts (cafe), priced at
+  the latest approved price. This is the model `monthly_pnl.py` was built
+  around (issue 08). It is *actual*: it costs what *was* consumed,
+  capturing waste and yield loss, and matches costs to the period of
+  consumption.
+
+Accrual COGS requires per-purchase transactions (the input the
+receipt/OCR flow, issue 03, was to feed) and physical inventory counts.
+Wave 2 drops OCR and the inventory capture flows, so accrual COGS is
+**dormant** — `monthly_pnl.py`'s accrual path, `keg_inventory.py`, and
+`cafe_stock.py` stay built and E2E-tested but drive no surface. The
+recipe-cost model is the tool's live COGS. The trade-off (losing the
+waste/yield-loss signal and period-matched costing) is recorded in
+ADR-0004.
+
+Unmapped items are handled as the daily view handles them — their revenue
+is excluded from headline totals (recipe-cost COGS is unknown for them)
+and surfaced in a needs-attention section. The accrual monthly view's
+reason for *including* unmapped revenue (consumption-derived COGS catches
+their cost regardless of the sale) no longer applies.
+
+## As-of-date pricing
+
+Recipe-cost COGS costs each sale at the **net price in effect on the
+sale's date**, not the price in the cost book at the moment the report is
+rendered. The price-as-of-a-date is reconstructed from the `audit_log`
+(each cost edit snapshots the row's old/new `price_per_unit_net` and
+`changed_at`); pre-cutover sales use the seed price. A day's margin is
+therefore stable whether the day is viewed on its own morning or inside a
+monthly view three weeks later — one truth, not two, the principle
+ADR-0003 applied to VAT. The daily review, the period view, and the
+monthly view share one as-of-date lookup, so they agree by construction.
+This also corrects a latent Wave 1 behaviour where the daily review costed
+at *current* price and so re-costed history after any price edit.
+
+## Fixed costs
+
+Entity-level costs (rent, utilities, shared staff, insurance) that are
+**never allocated to a segment** — segments carry contribution margin
+only; fixed costs sit above the segment line and reduce entity net
+profit. From Wave 2 a fixed cost is **recurring** (defined once, auto-
+applies each month) or **one-off** (entered for a specific period). A
+calendar-month P&L shows full net profit. A sub-month arbitrary period
+(e.g. the last 7 days) shows fixed costs **day-apportioned** —
+`(days in range / days in month) × monthly amount` — on a clearly-labelled
+"estimated fixed costs (apportioned)" line, with the resulting net profit
+labelled as an estimate. Apportionment is a documented estimate
+(utilities are not truly linear); the un-apportioned monthly number
+remains the honest one.
+
+## Reporting periods and modes
+
+The reporting surface is one page rendered in four **modes** — **Day,
+Period, Month, Trends** — sharing one report shape and switched by a
+single top control (an HTMX swap). The daily review stays the home at
+`/`, defaulting to yesterday (Wave 1 user story 19 preserved).
+**Drill-down is zooming the same report**: a period row → the days in the
+period (switches to Day mode for that date) → an item's performance over
+the period. Each zoom step is a deep-linkable URL with a breadcrumb
+(Review › Jul › 14 Jul › Cappuccino). A mapped item's row carries a
+separate "edit recipe" link to the Admin surface (the recipe/cost/mapping
+authoring from Wave 1.5). The Admin surface (`/skus`, `/items`,
+`/upload`, `/audit`) is the second top-level destination. Trends render
+as server-rendered SVG sparklines and clickable CSS bars — no client
+JavaScript, so ADR-0002's stack is unchanged.
+
 ## Recovery posture
 
 The operational story when the server or its data dies. For Wave 1:

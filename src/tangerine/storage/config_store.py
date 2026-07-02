@@ -32,6 +32,7 @@ import yaml
 
 from ..config.loader import load_costs, load_recipes
 from ..cost import CostBook
+from ..price_history import PriceChange, PriceHistory
 from ..recipes import RecipeCatalog
 from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
 from .schema import apply_migrations
@@ -176,6 +177,41 @@ class SqliteConfigStore:
         for sku_id, price_net, updated_at in rows:
             prices[sku_id] = (Decimal(price_net), date.fromisoformat(updated_at))
         return CostBook(prices)
+
+    def price_history(self) -> PriceHistory:
+        """The price-as-of-date lookup, reconstructed from the audit log.
+
+        Wave 2 slice 1 (ADR-0004 decision 2): every cost edit already
+        snapshots the row's old/new ``price_per_unit_net`` in ``audit_log``,
+        so a SKU's price on any past date falls out of walking those
+        entries — no new capture, no new table. SKUs with no cost-edit
+        history (everything pre-cutover) resolve to their current seed
+        price via the cost book.
+
+        A cost edit takes effect on the *day it was made*: the partner
+        repriced that morning, so that day's sales carry the new price and
+        every earlier day keeps the old one. "The day" is the partner-facing
+        calendar date the save recorded in the row's ``updated_at``
+        (see :func:`_change_effective_date`), not the UTC date of the audit
+        timestamp — the venue runs at UTC+7, so those disagree for
+        early-morning edits.
+        """
+        current = self.cost_book()
+        changes: list[PriceChange] = []
+        # audit_entries() is newest-first; the history wants chronological
+        # order so same-day edits resolve to the last one saved.
+        for entry in reversed(self.audit_entries()):
+            if entry.table_name != "costs":
+                continue
+            changes.append(
+                PriceChange(
+                    sku_id=entry.pk,
+                    changed_on=_change_effective_date(entry),
+                    old_price=_snapshot_price(entry.old_value),
+                    new_price=_snapshot_price(entry.new_value),
+                )
+            )
+        return PriceHistory(current=current, changes=changes)
 
     def cost_rows(self) -> list[CostRow]:
         """Every ``costs`` row with its receipt-shaped provenance, by sku_id.
@@ -1100,6 +1136,51 @@ def _decimal_or_none_to_str(value: Decimal | None) -> str | None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _snapshot_price(snapshot: dict[str, Any] | None) -> Decimal | None:
+    """The net per-unit price a whole-row audit snapshot records.
+
+    ``None`` when the row did not exist on that side of the edit (a
+    creation's before, a deletion's after) — the SKU had no price then.
+    """
+    if snapshot is None:
+        return None
+    return Decimal(str(snapshot["price_per_unit_net"]))
+
+
+def _change_effective_date(entry: AuditEntry) -> date:
+    """The calendar date a ``costs`` audit entry's price took effect.
+
+    A save stamps the partner-facing date into the row's ``updated_at``
+    (``save_cost``'s ``updated_on`` — the app's local *today*), while the
+    audit ``changed_at`` clock is UTC. At the venue's UTC+7 those disagree
+    between local midnight and ~07:00, and costing must follow the
+    partner's calendar — otherwise an early-morning repricing would land
+    on *yesterday* and silently re-state a day already reviewed.
+
+    A normal save moves ``updated_at`` forward (or sets it on creation),
+    so its new snapshot carries the effective date. A revert restores the
+    field *backward* and a deletion has no new snapshot — neither records
+    a local effective date, so both fall back to the UTC date of
+    ``changed_at``: an undo takes effect the day it was performed, not the
+    day of the change it undoes.
+    """
+    new_date = _snapshot_updated_at(entry.new_value)
+    old_date = _snapshot_updated_at(entry.old_value)
+    if new_date is not None and (old_date is None or new_date >= old_date):
+        return new_date
+    return datetime.fromisoformat(entry.changed_at).date()
+
+
+def _snapshot_updated_at(snapshot: dict[str, Any] | None) -> date | None:
+    """The ``updated_at`` date a whole-row cost snapshot records, if any."""
+    if snapshot is None:
+        return None
+    value = snapshot.get("updated_at")
+    if value is None:
+        return None
+    return date.fromisoformat(value)
 
 
 __all__ = [
