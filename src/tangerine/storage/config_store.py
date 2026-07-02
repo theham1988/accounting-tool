@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -33,6 +34,26 @@ from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
 from .schema import apply_migrations
 
 _MIGRATION_ACTOR = "migration"
+
+
+@dataclass(frozen=True)
+class CostRow:
+    """One full row of the ``costs`` table, as the editor and upload see it.
+
+    Unlike :class:`~tangerine.cost.CostBook` (the engine's net-price view),
+    this carries the receipt-shaped provenance: pack price/quantity are
+    ``None`` for rows migrated from YAML (the file recorded only the derived
+    per-unit price), and populated once a partner saves through the editor
+    or the upload path.
+    """
+
+    sku_id: str
+    pack_price: Decimal | None
+    pack_quantity: Decimal | None
+    vat_inclusive: bool
+    price_per_unit_net: Decimal
+    updated_at: date
+    updated_by: str
 
 
 class SqliteConfigStore:
@@ -113,6 +134,33 @@ class SqliteConfigStore:
             prices[sku_id] = (Decimal(price_net), date.fromisoformat(updated_at))
         return CostBook(prices)
 
+    def cost_rows(self) -> list[CostRow]:
+        """Every ``costs`` row with its receipt-shaped provenance, by sku_id.
+
+        The upload template and the cost editor need the pack inputs and the
+        VAT flag, not just the derived net price ``cost_book()`` exposes.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT sku_id, pack_price, pack_quantity, vat_inclusive,"
+                " price_per_unit_net, updated_at, updated_by"
+                " FROM costs ORDER BY sku_id"
+            ).fetchall()
+        return [
+            CostRow(
+                sku_id=sku_id,
+                pack_price=Decimal(pack_price) if pack_price is not None else None,
+                pack_quantity=(
+                    Decimal(pack_quantity) if pack_quantity is not None else None
+                ),
+                vat_inclusive=bool(vat_inclusive),
+                price_per_unit_net=Decimal(net),
+                updated_at=date.fromisoformat(updated_at),
+                updated_by=updated_by,
+            )
+            for sku_id, pack_price, pack_quantity, vat_inclusive, net, updated_at, updated_by in rows
+        ]
+
     def mappings(self) -> list[SkuMapping]:
         """All stored Loyverse-item -> SKU mappings."""
         with self._lock:
@@ -120,6 +168,74 @@ class SqliteConfigStore:
                 "SELECT item_id, sku_id FROM mappings ORDER BY item_id"
             ).fetchall()
         return [SkuMapping(item_id=item_id, sku_id=sku_id) for item_id, sku_id in rows]
+
+    def sku(self, sku_id: str) -> SkuRecord | None:
+        """One SKU by id, or ``None`` — the editor routes' existence check."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sku_id, name, segment, unit FROM skus WHERE sku_id = ?",
+                (sku_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        found_id, name, segment, unit = row
+        return SkuRecord(
+            sku_id=found_id,
+            name=name,
+            segment=Segment(segment) if segment else None,
+            unit=unit,
+        )
+
+    def save_cost(
+        self,
+        sku_id: str,
+        *,
+        pack_price: Decimal,
+        pack_quantity: Decimal,
+        vat_inclusive: bool,
+        updated_by: str,
+        updated_on: date,
+    ) -> Decimal:
+        """Record a new cost for ``sku_id`` from its receipt-shaped inputs.
+
+        Per ADR-0003 decision 4 (gross-input / net-stored): the partner types
+        what the receipt says — pack price as charged, pack quantity — and
+        the store derives and persists the net per-unit price, dividing by
+        1.07 only when the purchase was VAT-inclusive. One row per SKU
+        (latest wins); history lives in the audit log (Slice 5).
+
+        Returns the derived net per-unit price so callers can surface it.
+        """
+        net = net_price_per_unit(pack_price, pack_quantity, vat_inclusive)
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO costs"
+                " (sku_id, pack_price, pack_quantity, vat_inclusive,"
+                "  price_per_unit_net, updated_at, updated_by)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sku_id,
+                    str(pack_price),
+                    str(pack_quantity),
+                    1 if vat_inclusive else 0,
+                    str(net),
+                    updated_on.isoformat(),
+                    updated_by,
+                ),
+            )
+        return net
+
+    def save_mapping(
+        self, item_id: str, sku_id: str, *, updated_by: str
+    ) -> None:
+        """Assign a Loyverse item to a SKU (upsert — latest assignment wins)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO mappings"
+                " (item_id, sku_id, updated_at, updated_by)"
+                " VALUES (?, ?, ?, ?)",
+                (item_id, sku_id, _utc_now_iso(), updated_by),
+            )
 
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
@@ -379,6 +495,24 @@ def _derive_unit(comment: str | None) -> str | None:
     return next(iter(kinds))
 
 
+def net_price_per_unit(
+    pack_price: Decimal, pack_quantity: Decimal, vat_inclusive: bool
+) -> Decimal:
+    """Derive the stored net per-unit price from receipt-shaped inputs.
+
+    The single place the cost editor's arithmetic lives (ADR-0003 decision 4):
+    ``pack_price / pack_quantity``, then ``/ 1.07`` when the purchase was
+    VAT-inclusive. E.g. a 380 THB Makro receipt for a 2 kg block of butter →
+    ``380 / 2000 / 1.07 = 0.177570 THB/g`` net. Quantised to 6 decimal
+    places (matching the migrated rows' precision) so the same inputs always
+    derive the same stored value.
+    """
+    per_unit = pack_price / pack_quantity
+    if vat_inclusive:
+        per_unit = per_unit / Decimal("1.07")
+    return per_unit.quantize(Decimal("0.000001"))
+
+
 def _net_per_unit(gross: Decimal, vat_inclusive: bool) -> Decimal:
     """Gross-input / net-stored: divide by 1.07 when the purchase was VAT-inclusive.
 
@@ -462,5 +596,5 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-__all__ = ["SqliteConfigStore", "seed_config"]
+__all__ = ["CostRow", "SqliteConfigStore", "net_price_per_unit", "seed_config"]
 

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bulk upload — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review upload">
+    <h1>Bulk upload</h1>
+    <p class="day">
+      Mappings and costs by spreadsheet — download, fill in the blanks in
+      Excel, upload. <a href="/skus">&larr; SKU view</a>
+    </p>
+
+    <section class="upload-template">
+      <h2>1. Download the template</h2>
+      <p>
+        Pre-filled with every Loyverse item (mapping rows) and every known
+        SKU (cost rows). Fill in the blank <code>sku_id</code> cells to map
+        items; fill in <code>pack_price</code> / <code>pack_quantity</code>
+        to set costs. Leave a row untouched to leave it unchanged.
+      </p>
+      <p><a href="/upload/template" class="upload-template__link">Download template (CSV)</a></p>
+    </section>
+
+    <section class="upload-form">
+      <h2>2. Upload the filled spreadsheet</h2>
+      <p>Nothing is applied yet — you'll see a preview of every change first.</p>
+      <form method="post" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".csv,text/csv" required>
+        <button type="submit">Preview changes</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

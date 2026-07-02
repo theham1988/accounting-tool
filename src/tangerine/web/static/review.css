@@ -512,6 +512,75 @@ body {
   white-space: nowrap;
 }
 
+/* --- Slice 3: cost editor + bulk upload (ADR-0003 / issue 25) --------------- */
+
+/* The cost editor's receipt-shaped form: full-width tap targets on a phone,
+   same input/button treatment as the login form. */
+.cost-form form,
+.upload-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 420px;
+}
+
+.cost-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.cost-form input[type="number"],
+.upload-form input[type="file"] {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.cost-form label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cost-form button,
+.upload-form button,
+.upload-confirm button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.6rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--text);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* The live derived-price line: visually the answer to the form above it. */
+.cost-preview {
+  min-height: 1.4rem;
+  font-size: 1rem;
+}
+
+.cost-preview__net,
+.cost-current__net {
+  font-size: 1.1rem;
+}
+
+.cost-form__hint,
+.upload-template p,
+.upload-form p {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.upload-error__message {
+  white-space: normal;
+}
+
 /* --- Progressive enhancement for wider viewports (tablet / desktop) ---------- */
 @media (min-width: 700px) {
   .review {

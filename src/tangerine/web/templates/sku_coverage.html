@@ -12,6 +12,7 @@
     <p class="day">
       Every SKU: mapping, recipe, and pricing health at a glance.
       <a href="/items">Item coverage view &rarr;</a>
+      · <a href="/upload">Bulk upload &rarr;</a>
     </p>
 
     {% if not rows %}
@@ -35,7 +36,7 @@
           <tr class="sku-row sku-row--{{ row.health.value }}">
             <td class="sku-row__name">
               <span class="health-dot health-dot--{{ row.health.value }}" title="{{ row.health.value }}"></span>
-              {{ row.name }}
+              <a href="/skus/{{ row.sku_id }}">{{ row.name }}</a>
               <span class="sku-row__id">{{ row.sku_id }}</span>
             </td>
             <td>{{ row.segment.value | capitalize if row.segment else "—" }}</td>

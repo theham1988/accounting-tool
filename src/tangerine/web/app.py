@@ -26,10 +26,11 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -42,8 +43,9 @@ from ..daily_review import DailyReview, build_daily_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
-from ..storage.config_store import SqliteConfigStore, seed_config
+from ..storage.config_store import SqliteConfigStore, net_price_per_unit, seed_config
 from ..storage.sqlite_store import SqliteLoyverseStore
+from ..upload import generate_template_csv, parse_upload
 from ..types import Assignee, Segment, SegmentMargin
 from .auth import (
     AuthConfig,
@@ -484,6 +486,103 @@ def create_app(
             context={"request": request, "rows": rows},
         )
 
+    @app.get("/skus/{sku_id}", response_class=HTMLResponse)
+    def sku_detail(request: Request, sku_id: str) -> HTMLResponse:
+        """The cost editor for one SKU (Wave 1.5, Slice 3).
+
+        Captures what the partner actually sees on a receipt — pack price,
+        pack quantity, VAT-inclusive flag — and shows the current stored
+        (net) cost for context. The recipe editor joins this page in Slice 4.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        sku = cfg.sku(sku_id)
+        if sku is None:
+            return HTMLResponse("Unknown SKU.", status_code=404)
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="cost_editor.html",
+            context={
+                "request": request,
+                "sku": sku,
+                "current_cost": cfg.cost_book().price(sku_id),
+            },
+        )
+
+    @app.get("/skus/{sku_id}/cost-preview", response_class=HTMLResponse)
+    def cost_preview(
+        sku_id: str,
+        pack_price: str = "",
+        pack_quantity: str = "",
+        vat_inclusive: str | None = None,
+    ) -> HTMLResponse:
+        """The live derived-price fragment the editor's inputs swap in.
+
+        Spells out the arithmetic (``380 / 2000 / 1.07 = 0.177570 THB/g``)
+        so the partner sees the number the save will store, as they type.
+        Half-typed or malformed input renders an empty fragment rather than
+        an error — the partner is mid-keystroke, not wrong.
+        """
+        try:
+            price = Decimal(pack_price)
+            quantity = Decimal(pack_quantity)
+        except InvalidOperation:
+            return HTMLResponse("")
+        if price < 0 or quantity <= 0:
+            return HTMLResponse("")
+        with_vat = vat_inclusive is not None
+        net = net_price_per_unit(price, quantity, with_vat)
+        cfg: SqliteConfigStore = app.state.config_store
+        sku = cfg.sku(sku_id)
+        unit = sku.unit if sku is not None and sku.unit else "unit"
+        vat_step = " / 1.07" if with_vat else ""
+        return HTMLResponse(
+            f'<span class="cost-preview__derivation">'
+            f"{price} / {quantity}{vat_step} = "
+            f'<strong class="cost-preview__net">{net}</strong> THB/{unit} net'
+            f"</span>"
+        )
+
+    @app.post("/skus/{sku_id}/cost", response_model=None)
+    def save_cost(
+        request: Request,
+        sku_id: str,
+        pack_price: str = Form(""),
+        pack_quantity: str = Form(""),
+        vat_inclusive: str | None = Form(None),
+    ) -> HTMLResponse | RedirectResponse:
+        """Save a cost entry from the editor's receipt-shaped inputs.
+
+        The store derives and persists the net per-unit price; the redirect
+        lands back on the editor, which re-reads the DB — so the number the
+        partner sees after saving is the number tomorrow's review will use.
+        ``vat_inclusive`` arrives only when the checkbox is ticked (HTML
+        checkbox semantics).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        if cfg.sku(sku_id) is None:
+            return HTMLResponse("Unknown SKU.", status_code=404)
+        try:
+            price = Decimal(pack_price)
+            quantity = Decimal(pack_quantity)
+        except InvalidOperation:
+            return HTMLResponse(
+                "Pack price and pack quantity must be numbers.", status_code=400
+            )
+        if price < 0 or quantity <= 0:
+            return HTMLResponse(
+                "Pack price must be ≥ 0 and pack quantity > 0.", status_code=400
+            )
+        cfg.save_cost(
+            sku_id,
+            pack_price=price,
+            pack_quantity=quantity,
+            vat_inclusive=vat_inclusive is not None,
+            updated_by=request.state.assignee_id,
+            updated_on=app.state.today,
+        )
+        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+
     @app.get("/items", response_class=HTMLResponse)
     def items_view(request: Request, item: str | None = None) -> HTMLResponse:
         """The item coverage view (Wave 1.5, Slice 2): one row per Loyverse
@@ -507,6 +606,92 @@ def create_app(
             request=request,
             name="item_coverage.html",
             context={"request": request, "rows": rows, "filtered_item_id": item},
+        )
+
+    @app.get("/upload", response_class=HTMLResponse)
+    def upload_page(request: Request) -> HTMLResponse:
+        """The bulk-upload surface: template download + file-upload form."""
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request, name="upload.html", context={"request": request}
+        )
+
+    @app.get("/upload/template")
+    def upload_template() -> Response:
+        """The downloadable CSV template, pre-filled with current state."""
+        cfg: SqliteConfigStore = app.state.config_store
+        store: SqliteLoyverseStore = app.state.store
+        csv_text = generate_template_csv(
+            menu=store.current_menu(),
+            skus=cfg.skus(),
+            mappings=cfg.mappings(),
+            cost_rows=cfg.cost_rows(),
+        )
+        stamp = app.state.today.isoformat()
+        return Response(
+            content=csv_text,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="tangerine-config-{stamp}.csv"'
+                )
+            },
+        )
+
+    @app.post("/upload", response_class=HTMLResponse)
+    def upload_submit(
+        request: Request,
+        file: UploadFile | None = None,
+        csv_text: str = Form(""),
+        confirm: str | None = Form(None),
+    ) -> HTMLResponse:
+        """Parse an uploaded CSV and preview what will change.
+
+        Two-step, stateless: the first POST carries the file and renders a
+        preview with the CSV embedded in the confirm form; the confirm POST
+        re-submits that text with ``confirm=1`` and the changes are re-derived
+        and applied. Re-parsing on confirm means nothing needs to be held in
+        a server-side session between the two steps.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        if file is not None:
+            # ``utf-8-sig`` strips the BOM Excel prepends when saving CSV.
+            text = file.file.read().decode("utf-8-sig")
+        else:
+            text = csv_text
+        preview = parse_upload(
+            text, skus=cfg.skus(), mappings=cfg.mappings(), cost_rows=cfg.cost_rows()
+        )
+        t: Jinja2Templates = app.state.templates
+        if confirm is None or preview.errors or not preview.has_changes:
+            return t.TemplateResponse(
+                request=request,
+                name="upload_preview.html",
+                context={"request": request, "preview": preview, "csv_text": text},
+            )
+
+        actor: str = request.state.assignee_id
+        for mapping_change in preview.mapping_changes:
+            cfg.save_mapping(
+                mapping_change.item_id, mapping_change.new_sku_id, updated_by=actor
+            )
+        for cost_change in preview.cost_changes:
+            cfg.save_cost(
+                cost_change.sku_id,
+                pack_price=cost_change.pack_price,
+                pack_quantity=cost_change.pack_quantity,
+                vat_inclusive=cost_change.vat_inclusive,
+                updated_by=actor,
+                updated_on=app.state.today,
+            )
+        return t.TemplateResponse(
+            request=request,
+            name="upload_applied.html",
+            context={
+                "request": request,
+                "mapping_count": len(preview.mapping_changes),
+                "cost_count": len(preview.cost_changes),
+            },
         )
 
     @app.post("/sync", response_class=HTMLResponse)

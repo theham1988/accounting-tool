@@ -43,7 +43,9 @@ recipe `quantity` for that ingredient uses the same unit. The convention is
 still implicit *in practice* — Wave 1.5 Step 1 (ADR-0003 decision 3) added
 an explicit `unit` column to the `skus` table, but it is populated only
 where the migration could confidently derive it from a `costs.yaml`
-comment, and nothing yet enforces or displays it. Until Step 4's recipe
+comment. Step 3's cost editor displays it (the pack quantity is entered in
+the SKU's unit, and the derived price reads "THB/g" etc.), but nothing yet
+enforces it on recipes. Until Step 4's recipe
 editor ships, this glossary entry remains the durable reference: reasoning
 about a `quantity` value still means knowing per-g/per-ml/per-unit by
 convention, not by reading a column.
@@ -78,12 +80,20 @@ SKU's chain health and derived margin). The daily review's `needs_attention`
 list deep-links each flagged item straight to its `/items?item=<id>` row.
 Both are still purely visibility — no editing.
 
-The replacement safety net — an in-UI editor plus an audit log with
-per-change and per-session revert — is **not yet built** (Wave 1.5 Steps
-3–5). Until it ships there is no in-browser way to change a recipe, cost,
-or mapping at all; the only path is editing the YAML seed and reseeding a
-fresh database. This entry will be rewritten again once the editor and
-audit-and-revert safety net land.
+**Wave 1.5 Step 3 has landed**: the first in-browser *edits*. A cost
+editor per SKU (`/skus/<sku_id>`) captures pack price + pack quantity +
+a `vat_inclusive` checkbox and derives the net per-unit price live; a
+bulk path (`/upload`) serves a CSV template pre-filled with every
+Loyverse item and every known SKU, previews what an uploaded file would
+change, and applies on confirm (per-row errors block the whole apply).
+Costs and mappings are therefore now editable without YAML or git;
+recipes are not yet (Step 4).
+
+The audit log with per-change and per-session revert is **not yet built**
+(Wave 1.5 Step 5). Until it ships, cost and mapping edits land with only
+`updated_at` / `updated_by` provenance on the row itself — there is no
+paper trail of old values and no revert. This entry will be rewritten
+again once the recipe editor and audit-and-revert safety net land.
 
 ## VAT model
 

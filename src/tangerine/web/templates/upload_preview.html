@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload preview — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review upload-preview">
+    <h1>Upload preview</h1>
+    <p class="day">
+      Nothing has been applied yet. <a href="/upload">&larr; Start over</a>
+    </p>
+
+    {% if preview.errors %}
+    <section class="upload-errors coverage-table">
+      <h2>Fix these rows and re-upload</h2>
+      <p>
+        Errors block the whole upload — nothing is applied until every row
+        parses, so a typo cannot silently corrupt the cost book.
+      </p>
+      <table>
+        <thead><tr><th>Row</th><th>Problem</th></tr></thead>
+        <tbody>
+        {% for error in preview.errors %}
+          <tr class="upload-error">
+            <td class="upload-error__row">{{ error.row_number }}</td>
+            <td class="upload-error__message">{{ error.message }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    {% if preview.mapping_changes %}
+    <section class="upload-mappings coverage-table">
+      <h2>Mappings ({{ preview.mapping_changes | length }})</h2>
+      <table>
+        <thead><tr><th>Row</th><th>Item</th><th>Was</th><th>Becomes</th></tr></thead>
+        <tbody>
+        {% for change in preview.mapping_changes %}
+          <tr class="upload-mapping-change">
+            <td>{{ change.row_number }}</td>
+            <td>{{ change.item_id }}</td>
+            <td>{{ change.old_sku_id or "unmapped" }}</td>
+            <td><strong>{{ change.new_sku_id }}</strong></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    {% if preview.cost_changes %}
+    <section class="upload-costs coverage-table">
+      <h2>Costs ({{ preview.cost_changes | length }})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Row</th><th>SKU</th><th>Pack</th><th>VAT</th>
+            <th>Net/unit was</th><th>Becomes</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for change in preview.cost_changes %}
+          <tr class="upload-cost-change">
+            <td>{{ change.row_number }}</td>
+            <td>{{ change.sku_id }}</td>
+            <td>{{ change.pack_price }} THB / {{ change.pack_quantity }}</td>
+            <td>{{ "yes" if change.vat_inclusive else "no" }}</td>
+            <td>{{ (change.old_net | money) if change.old_net is not none else "—" }}</td>
+            <td><strong>{{ change.new_net }}</strong></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    {% if not preview.errors and not preview.has_changes %}
+    <p class="empty-note"><em>The file matches current state — nothing to apply.</em></p>
+    {% endif %}
+
+    {% if preview.has_changes and not preview.errors %}
+    <section class="upload-confirm">
+      <form method="post" action="/upload">
+        <input type="hidden" name="csv_text" value="{{ csv_text }}">
+        <button type="submit" name="confirm" value="1">
+          Apply {{ preview.mapping_changes | length + preview.cost_changes | length }} change(s)
+        </button>
+      </form>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>
