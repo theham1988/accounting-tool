@@ -14,6 +14,7 @@ resulting margin numbers — not on implementation details.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -81,6 +82,13 @@ def _build_app(  # type: ignore[no-untyped-def]
         signing_secret=_TEST_SIGNING_SECRET,
         today=today,
     )
+
+
+def _first_revert_entry_id(audit_html: str) -> str:
+    """The entry id of the newest entry's Revert form on the audit page."""
+    match = re.search(r'action="/audit/(\d+)/revert"', audit_html)
+    assert match is not None, "no per-entry revert form on the audit page"
+    return match.group(1)
 
 
 def _seed_menu(db_path: str, items: list[MenuItem]) -> None:
@@ -1020,6 +1028,484 @@ def test_recipe_edit_routes_require_auth(tmp_path: Path) -> None:
         ("post", "/skus"),
         ("get", "/skus/new"),
         ("get", "/skus/latte/recipe-preview"),
+    ):
+        response = getattr(client, method)(url, follow_redirects=False)
+        assert response.status_code == 302, f"{method} {url}"
+        assert response.headers["location"] == "/login", f"{method} {url}"
+
+
+# =============================================================================
+# Audit log + revert + daily review diff link (Wave 1.5, Slice 5 / issue 27)
+# =============================================================================
+
+# The safety net that replaces the code-review gate removed by ADR-0003: every
+# config edit writes an audit_log row; GET /audit renders the paper trail with
+# per-change and per-session revert; the 9am review links the diff.
+
+
+# --- AC: every config edit writes an audit_log row with who/when/old/new ----
+
+
+def test_saving_a_cost_is_recorded_in_the_audit_log(tmp_path: Path) -> None:
+    """Given Daniel enters pack price 380 THB for a 2 kg block of butter with
+    VAT inclusive, the audit log shows the edit: butter's cost, changed by
+    daniel, from the seeded 0.200000 THB/g net to the new 0.177570 — the
+    paper trail ADR-0003 promises in place of the removed code-review gate.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app, assignee_id="daniel")
+
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "380", "pack_quantity": "2000", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+
+    response = client.get("/audit")
+    assert response.status_code == 200
+    html = response.text
+    # The entry names the changed row, the actor, and both values.
+    assert "butter" in html
+    assert "daniel" in html
+    assert "0.200000" in html  # old: the seeded net price
+    assert "0.177570" in html  # new: 380 / 2000 / 1.07
+
+
+def test_saving_a_recipe_is_recorded_in_the_audit_log(tmp_path: Path) -> None:
+    """Given Noi trims the latte's milk from 200 ml to 150 ml, the audit log
+    shows the recipe edit — changed by noi, with the old and new ingredient
+    rows both visible so a wrong quantity is traceable to its edit.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app, assignee_id="noi")
+
+    client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["18", "150"]},
+        follow_redirects=False,
+    )
+
+    html = client.get("/audit").text
+    assert "latte" in html
+    assert "noi" in html
+    assert "150" in html  # the new milk quantity
+    assert "200" in html  # the old milk quantity
+
+
+def test_mapping_changes_are_recorded_in_the_audit_log(tmp_path: Path) -> None:
+    """A confirmed upload lands a mapping (mystery soda -> soda SKU) and a
+    cost — and both edits appear in the audit log, attributed to the partner
+    who confirmed, so a bulk load leaves the same paper trail as a one-row
+    edit.
+    """
+    app = _upload_app(tmp_path)
+    client = _authed_client(app, assignee_id="noi")
+
+    client.post("/upload", data={"csv_text": _FILLED_CSV, "confirm": "1"})
+
+    html = client.get("/audit").text
+    # The mapping edit: the item gained its SKU.
+    assert "i-mystery" in html
+    assert "soda" in html
+    # The cost edit, in the same trail, same actor.
+    assert "butter" in html
+    assert "0.177570" in html
+    assert "noi" in html
+
+
+def test_creating_a_sku_is_recorded_in_the_audit_log(tmp_path: Path) -> None:
+    """Creating a SKU from an unmapped item's "create new SKU…" path is
+    three edits in one stroke — the SKU, its price, the item's mapping —
+    and all three land in the audit log.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app, assignee_id="daniel")
+
+    client.post(
+        "/skus",
+        data={
+            "sku_id": "soda",
+            "name": "House Soda",
+            "unit": "ml",
+            "price": "0.03",
+            "item_id": "i-mystery",
+        },
+        follow_redirects=False,
+    )
+
+    html = client.get("/audit").text
+    # The SKU creation (no old value — it is a created row).
+    assert "House Soda" in html
+    # Its per-unit price.
+    assert "0.03" in html
+    # The mapping made in the same stroke.
+    assert "i-mystery" in html
+    assert "daniel" in html
+
+
+# --- AC: POST /audit/{entry_id}/revert undoes a single edit; logged ---------
+
+
+def test_reverting_an_audit_entry_undoes_that_change_and_is_logged(
+    tmp_path: Path,
+) -> None:
+    """Given Daniel fat-fingers butter's pack price (3800 instead of 380),
+    the audit page offers a Revert button on that entry; clicking it
+    restores the seeded 0.200000 THB/g — tomorrow's review shows the old
+    margin again — and the revert itself appears as a new log entry, so
+    even the undo has a paper trail.
+    """
+    today = date(2026, 7, 2)
+    app = _build_app(
+        tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML, today=today
+    )
+    _seed_sale(app.state.db_path, item_id="i-croissant", day=date(2026, 7, 1), price="95")
+    client = _authed_client(app, assignee_id="daniel")
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "3800", "pack_quantity": "2000", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+
+    # The audit page offers a per-entry revert control.
+    audit_html = client.get("/audit").text
+    assert "/revert" in audit_html
+    entry_id = _first_revert_entry_id(audit_html)
+    response = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/audit"
+    # The bad cost is gone: the editor shows the seeded net again...
+    editor_html = client.get("/skus/butter").text
+    assert "1.775701" not in editor_html  # 3800 / 2000 / 1.07
+    assert "0.20" in editor_html
+    # ...and the review margin is back: 95 − 50 × 0.20 = 85.00.
+    review_html = client.get("/").text
+    assert "85.00" in review_html
+    # The revert itself is logged: the trail now holds two entries.
+    reverted_html = client.get("/audit").text
+    assert reverted_html.count('<tr class="audit-row') == 2
+
+
+def test_reverting_a_sku_creation_removes_the_sku(tmp_path: Path) -> None:
+    """A created row has no before-state, so reverting the creation deletes
+    it: the accidentally-created SKU disappears from the catalog and its
+    editor 404s — and the removal is logged like any other change.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+    client.post(
+        "/skus",
+        data={"sku_id": "oops", "name": "Oops", "unit": "g", "price": ""},
+        follow_redirects=False,
+    )
+    assert client.get("/skus/oops").status_code == 200
+
+    audit_html = client.get("/audit").text
+    entry_id = _first_revert_entry_id(audit_html)
+    response = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert client.get("/skus/oops").status_code == 404
+    assert "oops" not in client.get("/skus").text
+    # The removal is logged: the trail shows the entry marked as removed.
+    reverted_html = client.get("/audit").text
+    assert "removed" in reverted_html
+
+
+def test_reverting_a_recipe_edit_restores_the_previous_rows(tmp_path: Path) -> None:
+    """Reverting a recipe edit restores the previous ingredient rows whole —
+    the latte goes back to beans 18 / milk 200 after a bad save changed
+    both quantities.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+    client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["25", "100"]},
+        follow_redirects=False,
+    )
+
+    audit_html = client.get("/audit").text
+    entry_id = _first_revert_entry_id(audit_html)
+    response = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/latte").text
+    assert 'value="18"' in editor_html
+    assert 'value="200"' in editor_html
+    assert 'value="25"' not in editor_html
+
+
+def test_reverting_an_older_entry_keeps_later_edits_to_other_fields(
+    tmp_path: Path,
+) -> None:
+    """"Exactly that one change": Noi bumps the latte's quantities (edit 1),
+    then separately sets a 90% target margin (edit 2). Reverting edit 1
+    restores the original quantities — but edit 2's target margin survives,
+    because the revert touches only the fields edit 1 changed.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app, assignee_id="noi")
+    client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["25", "100"]},
+        follow_redirects=False,
+    )
+    quantities_entry_id = _first_revert_entry_id(client.get("/audit").text)
+    client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["beans", "milk"],
+            "quantity": ["25", "100"],
+            "target_gross_margin_pct": "90",
+        },
+        follow_redirects=False,
+    )
+
+    response = client.post(
+        f"/audit/{quantities_entry_id}/revert", follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/latte").text
+    # The quantity change is undone...
+    assert 'value="18"' in editor_html
+    assert 'value="200"' in editor_html
+    assert 'value="25"' not in editor_html
+    # ...but the later, separate target-margin edit survives the revert.
+    assert 'value="90"' in editor_html
+
+
+def test_a_revert_carries_the_partners_reason_into_the_log(tmp_path: Path) -> None:
+    """The revert form offers an optional reason; whatever the partner types
+    lands on the revert's own audit entry — ADR-0003's record of intent:
+    who changed what, when, and why.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app, assignee_id="daniel")
+    client.post(
+        "/skus/beans/cost",
+        data={"pack_price": "800", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+
+    audit_html = client.get("/audit").text
+    assert 'name="reason"' in audit_html  # the form offers the reason input
+    entry_id = _first_revert_entry_id(audit_html)
+    client.post(
+        f"/audit/{entry_id}/revert",
+        data={"reason": "fat-fingered the pack price"},
+        follow_redirects=False,
+    )
+
+    assert "fat-fingered the pack price" in client.get("/audit").text
+
+
+# --- AC: "Revert this session" undoes all edits sharing a session_id --------
+
+
+def test_reverting_a_session_undoes_all_its_edits_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """The panic undo: Daniel broke something during his browser session but
+    doesn't know what. "Revert this session" undoes everything he saved in
+    it — a beans cost and a latte recipe edit — while Noi's flour cost,
+    saved from her own login, stays exactly as she left it.
+    """
+    app = _recipe_app(tmp_path)
+    noi = _authed_client(app, assignee_id="noi")
+    noi.post(
+        "/skus/flour/cost",
+        data={"pack_price": "100", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+    daniel = _authed_client(app, assignee_id="daniel")
+    daniel.post(
+        "/skus/beans/cost",
+        data={"pack_price": "800", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+    daniel.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["25", "100"]},
+        follow_redirects=False,
+    )
+
+    # The audit page offers a per-session revert; the newest entries are
+    # Daniel's, so the first session form on the page is his session.
+    audit_html = daniel.get("/audit").text
+    assert 'action="/audit/session/' in audit_html
+    session_id = audit_html.split('action="/audit/session/')[1].split("/revert")[0]
+    response = daniel.post(
+        f"/audit/session/{session_id}/revert", follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    # Both of Daniel's edits are undone...
+    assert "0.65" in daniel.get("/skus/beans").text  # seeded beans net
+    latte_html = daniel.get("/skus/latte").text
+    assert 'value="18"' in latte_html
+    assert 'value="200"' in latte_html
+    # ...while Noi's edit survives: 100 / 1000 = 0.10 THB/g.
+    assert "0.10" in daniel.get("/skus/flour").text
+
+
+# --- AC: review shows "N changes since last review" link; diff behind it ----
+
+
+def test_review_links_changes_since_the_partner_last_reviewed_them(
+    tmp_path: Path,
+) -> None:
+    """After Noi edits a cost, Daniel's 9am review shows "1 change since
+    last review" linking to the audit page, where the unreviewed entry is
+    highlighted. Pressing "Mark as reviewed" (an explicit POST — merely
+    loading the page never moves the mark) clears the nag from his next
+    load. Noi has not marked yet, so *her* review still shows it — each
+    partner sanity-checks the diff for themselves.
+    """
+    app = _recipe_app(tmp_path)
+    noi = _authed_client(app, assignee_id="noi")
+    noi.post(
+        "/skus/beans/cost",
+        data={"pack_price": "800", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+
+    daniel = _authed_client(app, assignee_id="daniel")
+    review_html = daniel.get("/").text
+    assert "1 change since last review" in review_html
+    assert 'href="/audit"' in review_html
+
+    # The audit page highlights the diff the link promised — the entry he
+    # has not reviewed — and offers the explicit Mark-as-reviewed control.
+    audit_html = daniel.get("/audit").text
+    assert "audit-row--unreviewed" in audit_html
+    assert 'action="/audit/reviewed"' in audit_html
+    # Viewing alone is not reviewing: the nag survives a mere page load.
+    assert "1 change since last review" in daniel.get("/").text
+
+    # Marking as reviewed clears the nag and the highlight.
+    daniel.post("/audit/reviewed", follow_redirects=False)
+    assert "since last review" not in daniel.get("/").text
+    assert "audit-row--unreviewed" not in daniel.get("/audit").text
+
+    # Noi hasn't marked the diff reviewed yet, so her review still nags.
+    assert "1 change since last review" in noi.get("/").text
+
+
+def test_the_diff_shows_changed_fields_only_with_old_and_new_values(
+    tmp_path: Path,
+) -> None:
+    """The diff is a diff, not a row dump. Butter re-costed at 428 THB per
+    2 kg VAT-inclusive derives the *same* net (0.200000) the seed already
+    stored — so the diff shows the newly-recorded pack fields
+    (— → 428, — → 2000) but neither the unchanged net price nor the
+    unchanged VAT flag.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "428", "pack_quantity": "2000", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+
+    html = client.get("/audit").text
+
+    # Changed fields are spelled out old → new ("—" is the empty side).
+    assert "pack_price" in html
+    assert "428" in html
+    assert "pack_quantity" in html
+    assert "2000" in html
+    # Unchanged fields stay out of the diff: same net, same VAT flag.
+    assert "price_per_unit_net" not in html
+    assert "vat_inclusive" not in html
+
+
+# --- AC: banner (not just link) when changes are in the last 24 hours -------
+
+
+def test_changes_in_the_last_24_hours_surface_as_a_banner(tmp_path: Path) -> None:
+    """An edit made moments ago can't be missed: the review shows it as a
+    banner (an alert, like the stale-data banner), not just a line of text
+    — the quiet-day case where a partner might otherwise skip the diff.
+    """
+    app = _recipe_app(tmp_path)
+    noi = _authed_client(app, assignee_id="noi")
+    noi.post(
+        "/skus/beans/cost",
+        data={"pack_price": "800", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+
+    review_html = _authed_client(app, assignee_id="daniel").get("/").text
+
+    assert "config-changes-banner" in review_html
+    banner = review_html.split("config-changes-banner")[1].split("</section>")[0]
+    assert 'role="alert"' in banner
+    assert "1 change since last review" in banner
+    assert 'href="/audit"' in banner
+
+
+def test_older_unreviewed_changes_show_the_link_but_not_the_banner(
+    tmp_path: Path,
+) -> None:
+    """An unreviewed change from three days ago still deserves its link —
+    the partner never looked — but not the can't-miss-it banner, which is
+    reserved for the last 24 hours. The edit happens under a clock pinned
+    at T (stamping the audit entry at T); the review is read under a
+    second app over the same database with the clock pinned at T + 3 days
+    — the store's audit timestamps and the banner's "now" ride the same
+    injectable clock, so the ageing is deterministic end to end.
+    """
+    edit_epoch = int(datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc).timestamp())
+    recipes_path = _write(tmp_path / "recipes.yaml", _RECIPE_EDITOR_RECIPES_YAML)
+    costs_path = _write(tmp_path / "costs.yaml", _RECIPE_EDITOR_COSTS_YAML)
+    assignees_path = _write_assignees(tmp_path)
+
+    def _app_at(now_epoch: int):  # type: ignore[no-untyped-def]
+        return create_app(
+            db_path=str(tmp_path / "tangerine.db"),
+            recipes_path=str(recipes_path),
+            costs_path=str(costs_path),
+            assignees_path=str(assignees_path),
+            passphrase=_TEST_PASSPHRASE,
+            signing_secret=_TEST_SIGNING_SECRET,
+            today=date(2026, 7, 5),
+            now_epoch=now_epoch,
+        )
+
+    noi = _authed_client(_app_at(edit_epoch), assignee_id="noi")
+    noi.post(
+        "/skus/beans/cost",
+        data={"pack_price": "800", "pack_quantity": "1000"},
+        follow_redirects=False,
+    )
+
+    three_days_later = _app_at(edit_epoch + 3 * 24 * 60 * 60)
+    review_html = _authed_client(three_days_later, assignee_id="daniel").get("/").text
+
+    assert "1 change since last review" in review_html
+    assert "config-changes-banner" not in review_html
+
+
+# --- AC: all audit routes gated behind existing auth middleware -------------
+
+
+def test_audit_routes_require_auth(tmp_path: Path) -> None:
+    """The audit log and both revert surfaces redirect an unauthenticated
+    request to ``/login``, exactly like the rest of the app — the paper
+    trail and the undo are partner-only.
+    """
+    app = _recipe_app(tmp_path)
+    client = TestClient(app)
+
+    for method, url in (
+        ("get", "/audit"),
+        ("post", "/audit/reviewed"),
+        ("post", "/audit/1/revert"),
+        ("post", "/audit/session/abc123/revert"),
     ):
         response = getattr(client, method)(url, follow_redirects=False)
         assert response.status_code == 302, f"{method} {url}"

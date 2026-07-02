@@ -40,13 +40,13 @@ Every ingredient SKU's per-unit cost is **THB per smallest weight/volume
 unit**: per **ml** for liquids (beer, milk, syrups), per **g** for solids
 (beans, sugar, flour), per **unit** for countables (eggs, napkins). The
 recipe `quantity` for that ingredient uses the same unit. The convention is
-still implicit *in practice* — Wave 1.5 Step 1 (ADR-0003 decision 3) added
+still implicit *in practice* — Wave 1.5 Slice 1 (ADR-0003 decision 3) added
 an explicit `unit` column to the `skus` table — populated by the migration
 where it could confidently derive one from a `costs.yaml` comment, and
 always set explicitly on SKUs created through the UI (the create form and
-the recipe editor's inline sub-form both require it). Step 3's cost editor
+the recipe editor's inline sub-form both require it). Slice 3's cost editor
 displays it (the pack quantity is entered in the SKU's unit, and the
-derived price reads "THB/g" etc.), and Step 4's recipe editor *uses* it:
+derived price reads "THB/g" etc.), and Slice 4's recipe editor *uses* it:
 quantity shorthand (`1 tbsp` → 15, `1 tsp` → 5, `1 pinch` → 2, `1 knob` →
 10, `1 pepper grind` → 0.2) converts into the ingredient's canonical unit
 before saving — `1 tbsp` of milk stores 15 (ml), `1 tbsp` of flour stores
@@ -68,7 +68,7 @@ or `config/assignees.yaml` is a PR against `main`; `main` is
 branch-protected; the **other** partner must approve before merge.
 Self-merge is not permitted on config changes.
 
-**Wave 1.5 Step 1 has landed** (ADR-0003 decision 1): `recipes.yaml` and
+**Wave 1.5 Slice 1 has landed** (ADR-0003 decision 1): `recipes.yaml` and
 `costs.yaml` are now seed-only. They are read once, into SQLite, the first
 time the app boots against an empty database — after that, editing them
 has no effect on the running tool until a fresh database is seeded. The
@@ -77,7 +77,7 @@ hurry" for the running system, only for the seed data a new deployment
 would start from. `config/assignees.yaml` is unaffected — it stays
 file-based and is still read at every startup (ADR-0003 consequence).
 
-**Wave 1.5 Step 2 has landed**: two read-only visibility surfaces, `/skus`
+**Wave 1.5 Slice 2 has landed**: two read-only visibility surfaces, `/skus`
 (one row per SKU, classified active / prep-internal / dangling, with a
 green/yellow/red health indicator) and `/items` (one row per Loyverse item,
 unmapped-or-broken items sorted to the top, each mapped row showing its
@@ -85,14 +85,14 @@ SKU's chain health and derived margin). The daily review's `needs_attention`
 list deep-links each flagged item straight to its `/items?item=<id>` row.
 Both are still purely visibility — no editing.
 
-**Wave 1.5 Step 3 has landed**: the first in-browser *edits*. A cost
+**Wave 1.5 Slice 3 has landed**: the first in-browser *edits*. A cost
 editor per SKU (`/skus/<sku_id>`) captures pack price + pack quantity +
 a `vat_inclusive` checkbox and derives the net per-unit price live; a
 bulk path (`/upload`) serves a CSV template pre-filled with every
 Loyverse item and every known SKU, previews what an uploaded file would
 change, and applies on confirm (per-row errors block the whole apply).
 
-**Wave 1.5 Step 4 has landed**: the recipe editor. The same
+**Wave 1.5 Slice 4 has landed**: the recipe editor. The same
 `/skus/<sku_id>` page edits the SKU's recipe as `(ingredient, quantity)`
 rows with add/remove/reorder, a live per-row and total cost preview, and
 a per-recipe target gross margin input. The ingredient picker offers only
@@ -104,24 +104,37 @@ option in item coverage (which maps the item in the same stroke).
 Recipes, costs, and mappings are therefore all editable without YAML or
 git.
 
-The audit log with per-change and per-session revert is **not yet built**
-(Wave 1.5 Step 5). Until it ships, edits land with at most
-`updated_at` / `updated_by` provenance on the row itself — there is no
-paper trail of old values and no revert. This entry will be rewritten
-again once the audit-and-revert safety net lands.
+**Wave 1.5 Slice 5 has landed**: the audit-and-revert safety net that
+replaces the code-review gate (ADR-0003 decision 2). Every config edit —
+recipe, cost, mapping, SKU creation, whether typed or bulk-uploaded —
+writes an `audit_log` row: who, when, a whole-row before/after snapshot,
+and a `session_id` grouping everything saved in one browser login. The
+`/audit` page renders the trail with a per-entry **Revert** (surgical:
+only the fields that entry changed go back, so later edits to other
+fields of the same row survive; a creation's revert deletes the row) and
+a **Revert this session** panic undo; reverts are themselves logged with
+an optional typed reason (ADR-0003: the log records intent), so even the
+undo has a paper trail. The 9am review shows an "N changes since last
+review" link per partner; the audit page highlights those entries and
+its **Mark as reviewed** button (an explicit POST — merely loading the
+page never moves the mark) is what counts as reviewing. The link is
+upgraded to a banner when any unreviewed change is under 24 hours old.
+The trade-off this accepts (wrong numbers ship instantly and are caught
+the next morning by the diff, not before shipping by a reviewer) is
+recorded in ADR-0003.
 
 ## VAT model
 
 Every cost is entered as what the purchase actually showed: a pack price
 that may or may not include VAT. The migration (and, once it ships, the
-Step 3 cost editor) records a per-entry `vat_inclusive` flag alongside the
+Slice 3 cost editor) records a per-entry `vat_inclusive` flag alongside the
 price and stores the SKU's cost **net** of VAT — dividing by 1.07 only when
 `vat_inclusive` is set. VAT-ness is a property of the *purchase*, not the
 supplier or the SKU: the same SKU bought from a VAT-registered supplier
 (Makro, ARO) on one occasion and a wet-market stall on another carries a
 different flag each time.
 
-The Wave 1.5 Step 1 migration set `vat_inclusive=true` only for
+The Wave 1.5 Slice 1 migration set `vat_inclusive=true` only for
 `costs.yaml` entries whose trailing comment clearly names Makro or ARO;
 every other entry defaults to `false` so the migration never makes a
 number *worse* by guessing wrong. This is why every margin the tool

@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
 
 CREATE TABLE IF NOT EXISTS costs (
     sku_id                  TEXT NOT NULL PRIMARY KEY,
-    pack_price              TEXT,                        -- Decimal as TEXT; NULL for migrated per-unit-only rows (Step 3 captures this)
-    pack_quantity           TEXT,                        -- Decimal as TEXT; NULL until Step 3
+    pack_price              TEXT,                        -- Decimal as TEXT; NULL for migrated per-unit-only rows (Slice 3 captures this)
+    pack_quantity           TEXT,                        -- Decimal as TEXT; NULL until Slice 3
     vat_inclusive           INTEGER NOT NULL DEFAULT 0,  -- 0/1 bool; ADR-0003 decision 4
     price_per_unit_net      TEXT NOT NULL,               -- Decimal as TEXT; derived on write (gross / 1.07 when vat_inclusive)
     updated_at              TEXT NOT NULL,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     entry_id        INTEGER PRIMARY KEY AUTOINCREMENT,
     table_name      TEXT NOT NULL,                       -- 'recipes' | 'costs' | 'mappings' | 'skus'
     pk              TEXT NOT NULL,                       -- the changed row's primary key
-    field           TEXT NOT NULL,                       -- the changed column (empty for whole-row insert/delete)
+    field           TEXT NOT NULL,                       -- dropped in 0004: Slice 5 records whole-row snapshots, never per-field rows
     old_value       TEXT,
     new_value       TEXT,
     changed_by      TEXT NOT NULL,                       -- the assignee_id from the auth session

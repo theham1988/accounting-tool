@@ -53,10 +53,16 @@ class Session:
     ``assignee_id`` is the role the partner selected at login; it is what
     future capture flows stamp on actions for attribution. ``last_activity``
     is the epoch seconds carried in the cookie, refreshed on each request.
+    ``session_id`` is minted once at login and rides along unchanged through
+    every sliding refresh — it is what groups a browser session's config
+    edits in the audit log, so "revert this session" (Wave 1.5, Slice 5) can
+    undo a batch. ``None`` for cookies signed before Slice 5; those sessions
+    simply have no batch to revert.
     """
 
     assignee_id: str
     last_activity: int
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,7 +110,11 @@ class SessionAuthenticator:
     def sign(self, session: Session) -> str:
         """Return the signed cookie value for ``session``."""
         return self._serializer.dumps(
-            {"a": session.assignee_id, "t": session.last_activity}
+            {
+                "a": session.assignee_id,
+                "t": session.last_activity,
+                "s": session.session_id,
+            }
         )
 
     def verify(
@@ -143,7 +153,9 @@ class SessionAuthenticator:
         if now_epoch - last_activity > max_age:
             return None
         return Session(
-            assignee_id=assignee_id, last_activity=last_activity
+            assignee_id=assignee_id,
+            last_activity=last_activity,
+            session_id=payload.get("s"),
         )
 
 
@@ -221,8 +233,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Expose the verified assignee to downstream routes. Future capture
         # flows read ``request.state.assignee_id``; the Wave 1 review routes
-        # simply ignore it.
+        # simply ignore it. ``session_id`` is what the config-write routes
+        # stamp on audit entries so a whole browser session is revertable
+        # as a batch.
         request.state.assignee_id = session.assignee_id
+        request.state.session_id = session.session_id
 
         response = cast(Response, await call_next(request))
 
@@ -241,7 +256,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # cookie is re-signed because the timestamp is part of the signed
         # payload.
         refreshed = Session(
-            assignee_id=session.assignee_id, last_activity=now
+            assignee_id=session.assignee_id,
+            last_activity=now,
+            session_id=session.session_id,
         )
         set_session_cookie(
             response,

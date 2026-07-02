@@ -7,7 +7,7 @@ the SQLite store, and builds the daily review against whatever sales are
 persisted. On a fresh database the review is empty (sales arrive via Slice 3's
 sync, not yet built); the CLI surfaces that gracefully rather than crashing.
 
-Wave 1.5 Step 1 (ADR-0003 decision 1): recipes/costs/mappings are seeded into
+Wave 1.5 Slice 1 (ADR-0003 decision 1): recipes/costs/mappings are seeded into
 SQLite (idempotent — a no-op once seeded) and read live from there via
 ``SqliteConfigStore``, the same config path ``create_app`` uses for the web
 review. This keeps the CLI and the 9am review agreeing on COGS and margins

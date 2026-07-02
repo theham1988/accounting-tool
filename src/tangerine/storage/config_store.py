@@ -1,4 +1,4 @@
-"""SQLite-backed config store + one-time YAML seeder (Wave 1.5, Step 1).
+"""SQLite-backed config store + one-time YAML seeder (Wave 1.5, Slice 1).
 
 Implements ADR-0003 decision 1: recipes, costs, and mappings move out of the
 shipped YAML files into SQLite. The YAML files become seed-only — read once
@@ -17,13 +17,16 @@ once by the migrator".
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -34,6 +37,36 @@ from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
 from .schema import apply_migrations
 
 _MIGRATION_ACTOR = "migration"
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """One row of the ``audit_log`` table — the paper trail (Slice 5).
+
+    ``old_value`` / ``new_value`` are whole-row snapshots (column -> stored
+    value) of the changed row, taken immediately before and after the write.
+    ``None`` means the row did not exist on that side: a creation has no
+    ``old_value``; a deletion (a reverted creation) has no ``new_value``.
+    Whole-row snapshots rather than per-field rows because "revert exactly
+    that one change" means undoing a *save action* — a cost save touches
+    pack price, quantity, and the VAT flag together, and they must be undone
+    together. Revert diffs the two snapshots and restores exactly the fields
+    the entry changed, so later edits to *other* fields of the same row
+    survive (see :meth:`SqliteConfigStore.revert_entry`).
+
+    ``reason`` is the optional why a partner typed when reverting (ADR-0003:
+    the log records intent); ``None`` for ordinary edits.
+    """
+
+    entry_id: int
+    table_name: str
+    pk: str
+    old_value: dict[str, Any] | None
+    new_value: dict[str, Any] | None
+    changed_by: str
+    changed_at: str
+    session_id: str | None
+    reason: str | None
 
 
 @dataclass(frozen=True)
@@ -69,7 +102,10 @@ class SqliteConfigStore:
     """
 
     def __init__(
-        self, conn: sqlite3.Connection, lock: threading.Lock | None = None
+        self,
+        conn: sqlite3.Connection,
+        lock: threading.Lock | None = None,
+        now: Callable[[], str] | None = None,
     ) -> None:
         """``lock`` lets a caller share one serialisation lock across every
         store wrapping the *same* connection — see
@@ -77,9 +113,16 @@ class SqliteConfigStore:
         two independent locks over one connection would be unsafe. Defaults
         to a private lock for standalone use (tests, the migration seam's
         own tests).
+
+        ``now`` is the clock (returning a UTC ISO-8601 string) stamped on
+        audit entries, mappings, SKU creations, and review marks. Injectable
+        — like ``auth.py``'s clock and ``create_app``'s ``now_epoch`` — so
+        the web app can drive the store and the "under 24 hours" banner from
+        the same pinned instant in tests. Defaults to the wall clock.
         """
         self._conn = conn
         self._lock = lock if lock is not None else threading.Lock()
+        self._now = now if now is not None else _utc_now_iso
 
     def recipes(self) -> list[Recipe]:
         """All stored recipes, in sku_id order, each with its ingredient rows.
@@ -195,6 +238,7 @@ class SqliteConfigStore:
         vat_inclusive: bool,
         updated_by: str,
         updated_on: date,
+        session_id: str | None = None,
     ) -> Decimal:
         """Record a new cost for ``sku_id`` from its receipt-shaped inputs.
 
@@ -202,12 +246,14 @@ class SqliteConfigStore:
         what the receipt says — pack price as charged, pack quantity — and
         the store derives and persists the net per-unit price, dividing by
         1.07 only when the purchase was VAT-inclusive. One row per SKU
-        (latest wins); history lives in the audit log (Slice 5).
+        (latest wins); history lives in the audit log (Slice 5), which every
+        save appends to inside the same transaction.
 
         Returns the derived net per-unit price so callers can surface it.
         """
         net = net_price_per_unit(pack_price, pack_quantity, vat_inclusive)
         with self._lock, self._conn:
+            old = self._row_snapshot("costs", "sku_id", sku_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO costs"
                 " (sku_id, pack_price, pack_quantity, vat_inclusive,"
@@ -223,18 +269,317 @@ class SqliteConfigStore:
                     updated_by,
                 ),
             )
+            new = self._row_snapshot("costs", "sku_id", sku_id)
+            self._record_audit(
+                "costs",
+                sku_id,
+                old=old,
+                new=new,
+                changed_by=updated_by,
+                session_id=session_id,
+            )
         return net
 
+    def audit_entries(self) -> list[AuditEntry]:
+        """Every audit-log row, newest first — what ``GET /audit`` renders."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT entry_id, table_name, pk, old_value, new_value,"
+                " changed_by, changed_at, session_id, reason"
+                " FROM audit_log ORDER BY entry_id DESC"
+            ).fetchall()
+        return [
+            AuditEntry(
+                entry_id=entry_id,
+                table_name=table_name,
+                pk=pk,
+                old_value=json.loads(old) if old is not None else None,
+                new_value=json.loads(new) if new is not None else None,
+                changed_by=changed_by,
+                changed_at=changed_at,
+                session_id=session_id,
+                reason=reason,
+            )
+            for entry_id, table_name, pk, old, new, changed_by, changed_at, session_id, reason in rows
+        ]
+
+    def unreviewed_changes(self, assignee_id: str) -> list[AuditEntry]:
+        """Audit entries ``assignee_id`` has not yet reviewed, newest first.
+
+        "Reviewed" means: recorded before the partner last pressed the
+        audit page's "Mark as reviewed" button (:meth:`mark_reviewed`). A
+        partner who has never marked sees everything. This is what drives
+        the 9am review's "N changes since last review" link — per partner,
+        because each partner sanity-checks the diff for themselves.
+        """
+        with self._lock:
+            mark_row = self._conn.execute(
+                "SELECT reviewed_at FROM review_marks WHERE assignee_id = ?",
+                (assignee_id,),
+            ).fetchone()
+        entries = self.audit_entries()
+        if mark_row is None:
+            return entries
+        mark = mark_row[0]
+        return [e for e in entries if e.changed_at > mark]
+
+    def mark_reviewed(self, assignee_id: str) -> None:
+        """Record that ``assignee_id`` has just reviewed the config changes."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO review_marks (assignee_id, reviewed_at)"
+                " VALUES (?, ?)",
+                (assignee_id, self._now()),
+            )
+
+    def revert_entry(
+        self,
+        entry_id: int,
+        *,
+        changed_by: str,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Undo exactly the change ``entry_id`` records.
+
+        Surgical: only the fields that entry actually changed are set back
+        to their before-values, so a later edit to a *different* field of
+        the same row survives the revert. Undoing a creation (no old value)
+        deletes the row. The revert is itself recorded as a new audit entry
+        (from the row's *current* state to the restored one, with the
+        optional ``reason`` the partner gave), so even the undo has a paper
+        trail, and a revert can in turn be reverted.
+
+        Returns ``False`` for an unknown ``entry_id``.
+        """
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT table_name, pk, old_value, new_value FROM audit_log"
+                " WHERE entry_id = ?",
+                (entry_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            table_name, pk, old_json, new_json = row
+            self._revert_one(
+                table_name,
+                pk,
+                old_json,
+                new_json,
+                changed_by=changed_by,
+                session_id=session_id,
+                reason=reason,
+            )
+        return True
+
+    def revert_session(
+        self,
+        session_id: str,
+        *,
+        changed_by: str,
+        reverter_session_id: str | None = None,
+        reason: str | None = None,
+    ) -> int:
+        """Undo every edit made in one browser session — the panic undo.
+
+        Applies the single-entry revert to each of the session's entries in
+        reverse chronological order, so multiple edits to the same row
+        unwind cleanly back to the pre-session state. Each individual revert
+        is logged (under the *reverter's* session, so the panic undo is
+        itself batch-revertable; ``reason`` rides along on each).
+
+        Returns the number of entries reverted (0 for an unknown session).
+        """
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT table_name, pk, old_value, new_value FROM audit_log"
+                " WHERE session_id = ? ORDER BY entry_id DESC",
+                (session_id,),
+            ).fetchall()
+            for table_name, pk, old_json, new_json in rows:
+                self._revert_one(
+                    table_name,
+                    pk,
+                    old_json,
+                    new_json,
+                    changed_by=changed_by,
+                    session_id=reverter_session_id,
+                    reason=reason,
+                )
+        return len(rows)
+
+    def _revert_one(
+        self,
+        table_name: str,
+        pk: str,
+        old_json: str | None,
+        new_json: str | None,
+        *,
+        changed_by: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None:
+        """Undo one entry's change against the row's *current* state, logged.
+
+        The shared core of both revert flavours. Callers hold the lock and
+        the transaction.
+        """
+        old = json.loads(old_json) if old_json is not None else None
+        new = json.loads(new_json) if new_json is not None else None
+        current = self._snapshot(table_name, pk)
+        target = _revert_target(old, new, current)
+        self._apply_snapshot(table_name, pk, target)
+        self._record_audit(
+            table_name,
+            pk,
+            old=current,
+            new=target,
+            changed_by=changed_by,
+            session_id=session_id,
+            reason=reason,
+        )
+
+    #: The primary-key column of each audited table — what an audit entry's
+    #: ``pk`` value keys into.
+    _PK_COLUMNS = {
+        "costs": "sku_id",
+        "mappings": "item_id",
+        "skus": "sku_id",
+        "recipes": "sku_id",
+    }
+
+    def _snapshot(self, table_name: str, pk: str) -> dict[str, Any] | None:
+        """The current whole-row snapshot of an audited table's row."""
+        if table_name == "recipes":
+            return self._recipe_snapshot(pk)
+        return self._row_snapshot(table_name, self._PK_COLUMNS[table_name], pk)
+
+    def _apply_snapshot(
+        self, table_name: str, pk: str, snapshot: dict[str, Any] | None
+    ) -> None:
+        """Make ``table_name``'s row for ``pk`` equal ``snapshot``.
+
+        ``None`` deletes the row (reverting a creation). The recipe shape
+        spans two tables, so its ingredient rows are replaced alongside the
+        header. Callers hold the lock and the transaction.
+        """
+        pk_column = self._PK_COLUMNS[table_name]
+        if table_name == "recipes":
+            self._conn.execute(
+                "DELETE FROM recipe_ingredients WHERE sku_id = ?", (pk,)
+            )
+            self._conn.execute("DELETE FROM recipes WHERE sku_id = ?", (pk,))
+            if snapshot is None:
+                return
+            header = {k: v for k, v in snapshot.items() if k != "ingredients"}
+            self._insert_row("recipes", header)
+            self._conn.executemany(
+                "INSERT INTO recipe_ingredients"
+                " (sku_id, ingredient_sku_id, quantity, position)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (pk, ingredient_sku_id, quantity, position)
+                    for position, (ingredient_sku_id, quantity) in enumerate(
+                        snapshot.get("ingredients", [])
+                    )
+                ],
+            )
+            return
+        self._conn.execute(
+            f"DELETE FROM {table_name} WHERE {pk_column} = ?", (pk,)  # noqa: S608
+        )
+        if snapshot is not None:
+            self._insert_row(table_name, snapshot)
+
+    def _insert_row(self, table: str, values: dict[str, Any]) -> None:
+        """INSERT one row from a column -> value snapshot dict."""
+        columns = list(values.keys())
+        placeholders = ", ".join("?" for _ in columns)
+        self._conn.execute(
+            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",  # noqa: S608
+            [values[column] for column in columns],
+        )
+
+    def _row_snapshot(
+        self, table: str, pk_column: str, pk: str
+    ) -> dict[str, Any] | None:
+        """The full current row of ``table`` keyed by ``pk``, or ``None``.
+
+        Column -> stored value, exactly as SQLite holds it — the shape the
+        audit log's ``old_value``/``new_value`` JSON carries, and the shape
+        revert writes back verbatim. Callers hold the lock.
+        """
+        cursor = self._conn.execute(
+            f"SELECT * FROM {table} WHERE {pk_column} = ?", (pk,)  # noqa: S608 — table/pk_column are internal literals
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        columns = [description[0] for description in cursor.description]
+        return dict(zip(columns, row))
+
+    def _record_audit(
+        self,
+        table_name: str,
+        pk: str,
+        *,
+        old: dict[str, Any] | None,
+        new: dict[str, Any] | None,
+        changed_by: str,
+        session_id: str | None,
+        reason: str | None = None,
+    ) -> None:
+        """Append one audit row for a write that just happened.
+
+        A no-op when nothing actually changed (``old == new``) — re-saving
+        identical values is not an event the partner needs to see in the
+        morning diff. Callers hold the lock and the transaction; the audit
+        row commits or rolls back with the write it records.
+        """
+        if old == new:
+            return
+        self._conn.execute(
+            "INSERT INTO audit_log"
+            " (table_name, pk, old_value, new_value,"
+            "  changed_by, changed_at, session_id, reason)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                table_name,
+                pk,
+                json.dumps(old) if old is not None else None,
+                json.dumps(new) if new is not None else None,
+                changed_by,
+                self._now(),
+                session_id,
+                reason,
+            ),
+        )
+
     def save_mapping(
-        self, item_id: str, sku_id: str, *, updated_by: str
+        self,
+        item_id: str,
+        sku_id: str,
+        *,
+        updated_by: str,
+        session_id: str | None = None,
     ) -> None:
         """Assign a Loyverse item to a SKU (upsert — latest assignment wins)."""
         with self._lock, self._conn:
+            old = self._row_snapshot("mappings", "item_id", item_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO mappings"
                 " (item_id, sku_id, updated_at, updated_by)"
                 " VALUES (?, ?, ?, ?)",
-                (item_id, sku_id, _utc_now_iso(), updated_by),
+                (item_id, sku_id, self._now(), updated_by),
+            )
+            new = self._row_snapshot("mappings", "item_id", item_id)
+            self._record_audit(
+                "mappings",
+                item_id,
+                old=old,
+                new=new,
+                changed_by=updated_by,
+                session_id=session_id,
             )
 
     def create_sku(
@@ -244,6 +589,7 @@ class SqliteConfigStore:
         name: str,
         unit: str,
         created_by: str,
+        session_id: str | None = None,
     ) -> None:
         """Create a new SKU with its unit confirmed from the start.
 
@@ -259,7 +605,15 @@ class SqliteConfigStore:
                 " (sku_id, name, segment, unit, yield_units,"
                 "  target_gross_margin_pct, created_at, created_by)"
                 " VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)",
-                (sku_id, name, unit, _utc_now_iso(), created_by),
+                (sku_id, name, unit, self._now(), created_by),
+            )
+            self._record_audit(
+                "skus",
+                sku_id,
+                old=None,
+                new=self._row_snapshot("skus", "sku_id", sku_id),
+                changed_by=created_by,
+                session_id=session_id,
             )
 
     def save_recipe(
@@ -268,6 +622,8 @@ class SqliteConfigStore:
         *,
         ingredients: list[tuple[str, Decimal]],
         target_gross_margin_pct: Decimal | None = None,
+        updated_by: str,
+        session_id: str | None = None,
     ) -> None:
         """Replace ``sku_id``'s ingredient rows with ``ingredients``, in order.
 
@@ -286,9 +642,14 @@ class SqliteConfigStore:
         an ingredient-only SKU gaining a recipe must produce *something*
         saleable, and the editor lets the partner change it later) — and
         its name/segment/yield are preserved as-is on subsequent saves.
+
+        The audit entry snapshots the *whole recipe* (header + ingredient
+        rows) as one logical row, because that is what the partner edits and
+        what a revert must restore in one stroke.
         """
         target_str = _decimal_or_none_to_str(target_gross_margin_pct)
         with self._lock, self._conn:
+            old = self._recipe_snapshot(sku_id)
             header = self._conn.execute(
                 "SELECT sku_id FROM recipes WHERE sku_id = ?", (sku_id,)
             ).fetchone()
@@ -323,6 +684,34 @@ class SqliteConfigStore:
                     )
                 ],
             )
+            new = self._recipe_snapshot(sku_id)
+            self._record_audit(
+                "recipes",
+                sku_id,
+                old=old,
+                new=new,
+                changed_by=updated_by,
+                session_id=session_id,
+            )
+
+    def _recipe_snapshot(self, sku_id: str) -> dict[str, Any] | None:
+        """One recipe — header plus ordered ingredient rows — as a single dict.
+
+        The recipe is the one config shape spanning two tables; the audit
+        log snapshots it as the logical row the partner edits, with the
+        ingredient rows inlined as ``[[ingredient_sku_id, quantity], ...]``
+        in position order. Callers hold the lock.
+        """
+        header = self._row_snapshot("recipes", "sku_id", sku_id)
+        if header is None:
+            return None
+        rows = self._conn.execute(
+            "SELECT ingredient_sku_id, quantity FROM recipe_ingredients"
+            " WHERE sku_id = ? ORDER BY position",
+            (sku_id,),
+        ).fetchall()
+        header["ingredients"] = [list(row) for row in rows]
+        return header
 
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
@@ -345,6 +734,36 @@ class SqliteConfigStore:
             )
             for sku_id, name, segment, unit in rows
         ]
+
+
+def _revert_target(
+    old: dict[str, Any] | None,
+    new: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """What the row should look like after undoing one entry's change.
+
+    "Exactly that one change" means: only the fields whose values the entry
+    moved go back to their before-values; everything else keeps its
+    *current* value, so a later edit to a different field of the same row
+    survives the revert. Three whole-row cases fall out first:
+
+    - The entry created the row (``old is None``): undo deletes it — later
+      edits to the row necessarily die with it.
+    - The entry deleted the row (``new is None``): undo restores the
+      before-state whole.
+    - The row is gone now (``current is None``): there is nothing to merge
+      into, so the before-state comes back whole.
+    """
+    if old is None:
+        return None
+    if new is None or current is None:
+        return dict(old)
+    target = dict(current)
+    for field in set(old) | set(new):
+        if old.get(field) != new.get(field):
+            target[field] = old.get(field)
+    return target
 
 
 def seed_config(
@@ -388,7 +807,7 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
     The SKU row carries name + segment; the unit column is left NULL here
     (ADR-0003 decision 3 — best-effort derivation happens in ``_seed_costs``
     where the pack-size comment lives; ambiguous cases stay NULL for the
-    Step 3 editor to confirm). yield_units and target margin live on both
+    Slice 3 editor to confirm). yield_units and target margin live on both
     the SKU (for the editor's eventual form) and the recipe (for the engine);
     the SKU's copy is left NULL where the recipe carries the default of 1.
     """
@@ -658,7 +1077,7 @@ def _looks_vat_inclusive(comment: str | None) -> bool:
     SKU. The migrator sets ``vat_inclusive`` only for costs whose comment
     clearly names Makro or ARO (case-insensitive). Everything else defaults
     to ``False`` so the migration never makes a number *worse* by guessing
-    wrong — wet-market and ambiguous rows surface in the Step 3 editor for
+    wrong — wet-market and ambiguous rows surface in the Slice 3 editor for
     partner confirmation.
     """
     if not comment:
@@ -683,5 +1102,11 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-__all__ = ["CostRow", "SqliteConfigStore", "net_price_per_unit", "seed_config"]
+__all__ = [
+    "AuditEntry",
+    "CostRow",
+    "SqliteConfigStore",
+    "net_price_per_unit",
+    "seed_config",
+]
 

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audit log — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review audit">
+    <h1>Audit log</h1>
+    <p class="day">
+      Every config edit: who, when, from what to what.
+      <a href="/">Back to the review &rarr;</a>
+    </p>
+
+    {% if unreviewed_ids %}
+    <!--section:unreviewed-->
+    <section class="audit-unreviewed">
+      <span class="audit-unreviewed__note">
+        {{ unreviewed_ids | length }} change{{ "" if unreviewed_ids | length == 1 else "s" }}
+        since your last review — highlighted below.
+      </span>
+      <form method="post" action="/audit/reviewed">
+        <button type="submit" class="audit-unreviewed__mark">Mark as reviewed</button>
+      </form>
+    </section>
+    <!--/section:unreviewed-->
+    {% endif %}
+
+    {% if not entries %}
+    <p class="empty-note"><em>No changes recorded yet.</em></p>
+    {% else %}
+    <section class="audit-table">
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Who</th>
+            <th>What</th>
+            <th>Change</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in entries %}
+          <tr class="audit-row{% if row.entry.entry_id in unreviewed_ids %} audit-row--unreviewed{% endif %}">
+            <td class="audit-row__when">{{ row.entry.changed_at }}</td>
+            <td class="audit-row__who">{{ row.entry.changed_by }}</td>
+            <td class="audit-row__what">
+              {{ row.entry.table_name }} · <strong>{{ row.entry.pk }}</strong>
+              {% if row.entry.old_value is none %}<span class="audit-row__kind">(created)</span>{% endif %}
+              {% if row.entry.new_value is none %}<span class="audit-row__kind">(removed)</span>{% endif %}
+            </td>
+            <td class="audit-row__changes">
+              <ul class="audit-changes">
+              {% for change in row.changes %}
+                <li>
+                  <span class="audit-changes__field">{{ change.field }}</span>:
+                  <span class="audit-changes__old">{{ change.old if change.old is not none else "—" }}</span>
+                  &rarr;
+                  <span class="audit-changes__new">{{ change.new if change.new is not none else "—" }}</span>
+                </li>
+              {% endfor %}
+              </ul>
+              {% if row.entry.reason %}
+              <p class="audit-row__reason">Reason: {{ row.entry.reason }}</p>
+              {% endif %}
+            </td>
+            <td class="audit-row__actions">
+              <form method="post" action="/audit/{{ row.entry.entry_id }}/revert">
+                <input type="text" name="reason" class="audit-row__reason-input"
+                       placeholder="Why? (optional)" aria-label="Revert reason">
+                <button type="submit" class="audit-row__revert">Revert</button>
+              </form>
+              {% if row.entry.session_id %}
+              <form method="post" action="/audit/session/{{ row.entry.session_id }}/revert">
+                <input type="text" name="reason" class="audit-row__reason-input"
+                       placeholder="Why? (optional)" aria-label="Session revert reason">
+                <button type="submit" class="audit-row__revert-session">Revert this session</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

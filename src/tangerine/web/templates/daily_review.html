@@ -30,6 +30,25 @@
     <!--/section:signed-in-as-->
     {% endif %}
 
+    {% if unreviewed_count %}
+    <!--section:config-changes-->
+    {% if unreviewed_recent %}
+    <section class="config-changes-banner" role="alert">
+      <a class="config-changes__link" href="/audit">
+        {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
+      </a>
+      — review the diff before trusting today's numbers.
+    </section>
+    {% else %}
+    <p class="config-changes">
+      <a class="config-changes__link" href="/audit">
+        {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
+      </a>
+    </p>
+    {% endif %}
+    <!--/section:config-changes-->
+    {% endif %}
+
     {% if stale %}
     <!--section:stale-banner-->
     <section class="stale-banner" role="alert">
@@ -227,8 +246,9 @@
       <p class="needs-attention__note">
         These items sold but their cost could not be computed, so their revenue
         is left out of the headline totals above.
-        To fix this, map them to a recipe in <code>config/recipes.yaml</code>
-        (or add the missing ingredient cost), then re-sync.
+        To fix this, map the item to a SKU in item coverage (or add the
+        missing ingredient cost in the SKU&rsquo;s editor) — the links below
+        take you there.
       </p>
       <ul class="needs-attention__list">
         {% for im in needs_attention %}

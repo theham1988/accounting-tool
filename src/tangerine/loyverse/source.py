@@ -7,7 +7,7 @@ Recipes come from slice 04; until then ``recipes()`` returns whatever the
 caller wires in (empty by default), so any sold item the recipes don't cover
 surfaces as unmapped (PRD user story 12).
 
-Wave 1.5 Step 1 (ADR-0003 decision 1) adds an optional ``config`` parameter:
+Wave 1.5 Slice 1 (ADR-0003 decision 1) adds an optional ``config`` parameter:
 when given a :class:`~tangerine.storage.config_store.SqliteConfigStore`,
 ``recipes()`` / ``cost_book()`` / ``mappings()`` read live from SQLite on
 every call instead of returning the fixed lists captured at construction.
@@ -45,7 +45,7 @@ class StoreSource:
 
     ``config``, when given, takes over ``recipes()`` / ``cost_book()`` /
     ``mappings()`` entirely — the ``recipes``/``cost``/``mappings`` arguments
-    are ignored in that case (Wave 1.5 Step 1, ADR-0003 decision 1).
+    are ignored in that case (Wave 1.5 Slice 1, ADR-0003 decision 1).
     """
 
     def __init__(

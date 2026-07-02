@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 from fastapi import FastAPI, Form, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -44,7 +45,12 @@ from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
 from ..quantity import QuantityError, parse_quantity
-from ..storage.config_store import SqliteConfigStore, net_price_per_unit, seed_config
+from ..storage.config_store import (
+    AuditEntry,
+    SqliteConfigStore,
+    net_price_per_unit,
+    seed_config,
+)
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..upload import generate_template_csv, parse_upload
 from ..types import Assignee, Segment, SegmentMargin
@@ -254,13 +260,23 @@ def create_app(
     # One shared lock serialises every touch of this connection across the
     # two stores that wrap it — two independent locks over one connection
     # would defeat the whole point of locking (see SqliteLoyverseStore's
-    # docstring). Wave 1.5 Step 1 (ADR-0003 decision 1): recipes/costs/
+    # docstring). Wave 1.5 Slice 1 (ADR-0003 decision 1): recipes/costs/
     # mappings are seeded into SQLite once, then read live on every request
     # instead of being loaded into memory at startup.
     conn_lock = threading.Lock()
     store = SqliteLoyverseStore(conn, lock=conn_lock)
     seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
-    config_store = SqliteConfigStore(conn, lock=conn_lock)
+
+    # The config store's clock is driven by the same injectable ``now_epoch``
+    # as the auth middleware and the stale-sync banner, so the "changes in
+    # the last 24 hours" comparison in ``_render_review`` reads audit
+    # timestamps and "now" from one clock — tests pin both sides together.
+    def _config_now_iso() -> str:
+        if now_epoch is not None:
+            return datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat()
+        return datetime.now(timezone.utc).isoformat()
+
+    config_store = SqliteConfigStore(conn, lock=conn_lock, now=_config_now_iso)
     source = StoreSource(store=store, config=config_store)
 
     @asynccontextmanager
@@ -388,7 +404,13 @@ def create_app(
             )
 
         now = app.state.now_epoch if app.state.now_epoch is not None else int(time.time())
-        session = Session(assignee_id=assignee_id, last_activity=now)
+        # A fresh session id per login groups this browser session's config
+        # edits in the audit log (Slice 5's "revert this session").
+        session = Session(
+            assignee_id=assignee_id,
+            last_activity=now,
+            session_id=uuid4().hex,
+        )
         cookie_value = app.state.authenticator.sign(session)
         response = RedirectResponse(url="/", status_code=303)
         set_session_cookie(
@@ -545,7 +567,10 @@ def create_app(
             if price_value < 0:
                 return HTMLResponse("Price must be ≥ 0.", status_code=400)
         actor: str = request.state.assignee_id
-        cfg.create_sku(sku_id, name=name, unit=unit, created_by=actor)
+        session_id: str | None = request.state.session_id
+        cfg.create_sku(
+            sku_id, name=name, unit=unit, created_by=actor, session_id=session_id
+        )
         if price_value is not None:
             cfg.save_cost(
                 sku_id,
@@ -554,11 +579,14 @@ def create_app(
                 vat_inclusive=False,
                 updated_by=actor,
                 updated_on=app.state.today,
+                session_id=session_id,
             )
         if item_id.strip():
             # The item-coverage entry point: the new SKU exists to cost this
             # unmapped item, so the mapping lands in the same stroke.
-            cfg.save_mapping(item_id.strip(), sku_id, updated_by=actor)
+            cfg.save_mapping(
+                item_id.strip(), sku_id, updated_by=actor, session_id=session_id
+            )
         if request.headers.get("hx-request"):
             t: Jinja2Templates = app.state.templates
             return cast(
@@ -675,6 +703,7 @@ def create_app(
             vat_inclusive=vat_inclusive is not None,
             updated_by=request.state.assignee_id,
             updated_on=app.state.today,
+            session_id=request.state.session_id,
         )
         return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
 
@@ -770,9 +799,104 @@ def create_app(
                     "Target gross margin must be a number.", status_code=400
                 )
         cfg.save_recipe(
-            sku_id, ingredients=ingredients, target_gross_margin_pct=target
+            sku_id,
+            ingredients=ingredients,
+            target_gross_margin_pct=target,
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
         )
         return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+
+    @app.get("/audit", response_class=HTMLResponse)
+    def audit_log(request: Request) -> HTMLResponse:
+        """The audit log (Wave 1.5, Slice 5): every config edit, newest first.
+
+        The safety net that replaces the removed code-review gate (ADR-0003
+        decision 2): who changed what, when, from what to what. Each entry's
+        field-level diff is derived from the whole-row snapshots at render
+        time. Entries the signed-in partner has not yet reviewed are
+        highlighted — that is the "diff of what changed" the 9am review's
+        link promises — and a "Mark as reviewed" button (an explicit POST,
+        so merely loading or prefetching this page never moves the mark)
+        clears the nag for them and only them.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        entries = [
+            {"entry": e, "changes": _audit_field_changes(e)}
+            for e in cfg.audit_entries()
+        ]
+        unreviewed_ids = {
+            e.entry_id for e in cfg.unreviewed_changes(request.state.assignee_id)
+        }
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="audit_log.html",
+            context={
+                "request": request,
+                "entries": entries,
+                "unreviewed_ids": unreviewed_ids,
+            },
+        )
+
+    @app.post("/audit/reviewed")
+    def mark_audit_reviewed(request: Request) -> RedirectResponse:
+        """Move the signed-in partner's review mark to now (Wave 1.5, Slice 5).
+
+        Pressing "Mark as reviewed" on the audit page is what counts as
+        reviewing: the 9am review's "N changes since last review" nag clears
+        for this partner (and only them) until the next edit. A POST rather
+        than a side effect of viewing, so a prefetch or an accidental page
+        load cannot silently swallow the nag.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        cfg.mark_reviewed(request.state.assignee_id)
+        return RedirectResponse(url="/audit", status_code=303)
+
+    @app.post("/audit/{entry_id}/revert", response_model=None)
+    def revert_audit_entry(
+        request: Request, entry_id: int, reason: str = Form("")
+    ) -> HTMLResponse | RedirectResponse:
+        """Undo exactly one logged change (Wave 1.5, Slice 5).
+
+        The surgical fix for "I know which change was wrong": sets back
+        only the fields that entry changed, so later edits to other fields
+        of the same row survive. The revert lands as its own audit entry,
+        attributed to whoever clicked, carrying the optional reason they
+        typed (ADR-0003: the log records intent).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        reverted = cfg.revert_entry(
+            entry_id,
+            changed_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+            reason=reason.strip() or None,
+        )
+        if not reverted:
+            return HTMLResponse("Unknown audit entry.", status_code=404)
+        return RedirectResponse(url="/audit", status_code=303)
+
+    @app.post("/audit/session/{session_id}/revert", response_model=None)
+    def revert_audit_session(
+        request: Request, session_id: str, reason: str = Form("")
+    ) -> HTMLResponse | RedirectResponse:
+        """Undo every edit sharing one ``session_id`` (Wave 1.5, Slice 5).
+
+        The panic undo for "I broke something this session but I don't know
+        what": unwinds the whole batch, newest first. Every individual
+        revert is logged (with the optional reason), so the panic undo
+        leaves the same paper trail as careful surgery.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        reverted_count = cfg.revert_session(
+            session_id,
+            changed_by=request.state.assignee_id,
+            reverter_session_id=request.state.session_id,
+            reason=reason.strip() or None,
+        )
+        if reverted_count == 0:
+            return HTMLResponse("Unknown session.", status_code=404)
+        return RedirectResponse(url="/audit", status_code=303)
 
     @app.get("/items", response_class=HTMLResponse)
     def items_view(request: Request, item: str | None = None) -> HTMLResponse:
@@ -862,9 +986,13 @@ def create_app(
             )
 
         actor: str = request.state.assignee_id
+        session_id: str | None = request.state.session_id
         for mapping_change in preview.mapping_changes:
             cfg.save_mapping(
-                mapping_change.item_id, mapping_change.new_sku_id, updated_by=actor
+                mapping_change.item_id,
+                mapping_change.new_sku_id,
+                updated_by=actor,
+                session_id=session_id,
             )
         for cost_change in preview.cost_changes:
             cfg.save_cost(
@@ -874,6 +1002,7 @@ def create_app(
                 vat_inclusive=cost_change.vat_inclusive,
                 updated_by=actor,
                 updated_on=app.state.today,
+                session_id=session_id,
             )
         return t.TemplateResponse(
             request=request,
@@ -931,6 +1060,24 @@ def create_app(
         return _render_sync_fragment(request, result, review)
 
     return app
+
+
+def _audit_field_changes(entry: AuditEntry) -> list[dict[str, Any]]:
+    """Field-level diff of an audit entry's whole-row snapshots.
+
+    Returns ``[{"field", "old", "new"}, ...]`` for every column whose value
+    differs between the before and after snapshots, in snapshot column order.
+    A creation (no old row) diffs every column against nothing; a deletion
+    the reverse.
+    """
+    old = entry.old_value or {}
+    new = entry.new_value or {}
+    fields = list(old.keys()) + [k for k in new.keys() if k not in old]
+    return [
+        {"field": field, "old": old.get(field), "new": new.get(field)}
+        for field in fields
+        if old.get(field) != new.get(field)
+    ]
 
 
 def _render_review(
@@ -1002,6 +1149,23 @@ def _render_review(
         (a.name for a in assignees if a.assignee_id == assignee_id), None
     )
 
+    # Config changes this partner has not yet reviewed (Slice 5): the diff
+    # link that replaces the removed code-review gate. Counted per partner —
+    # the audit page's "Mark as reviewed" button clears it for the presser
+    # only. Changes made in the last 24 hours upgrade the link to a banner,
+    # so a fresh edit can't be missed on a quiet day (same clock as the
+    # stale-sync banner *and* as the store's audit timestamps — see
+    # ``_config_now_iso`` in ``create_app``).
+    cfg: SqliteConfigStore = app.state.config_store
+    unreviewed = (
+        cfg.unreviewed_changes(assignee_id) if assignee_id is not None else []
+    )
+    unreviewed_recent = any(
+        (now_dt - datetime.fromisoformat(e.changed_at)).total_seconds()
+        <= STALE_AFTER_SECONDS
+        for e in unreviewed
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="daily_review.html",
@@ -1016,6 +1180,8 @@ def _render_review(
             "last_sync": last_sync,
             "needs_attention": needs_attention,
             "signed_in_name": signed_in_name,
+            "unreviewed_count": len(unreviewed),
+            "unreviewed_recent": unreviewed_recent,
         },
     )
 

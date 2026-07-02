@@ -706,6 +706,149 @@ body {
   font-size: 1rem;
 }
 
+/* --- Audit log + review diff link (Wave 1.5, Slice 5) ------------------------ */
+
+/* The can't-miss-it variant of the diff link: same visual language as the
+   stale-sync banner (amber = "look before trusting today's numbers"). */
+.config-changes-banner {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  background: #fff4e0;
+  border: 1px solid #e0a93f;
+  border-radius: 4px;
+}
+
+.config-changes {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.config-changes__link {
+  font-weight: 600;
+}
+
+/* The since-your-last-review header on the audit page: names the count the
+   9am review's link promised and offers the explicit Mark-as-reviewed POST.
+   Same amber as the review's banner so the two read as one thread. */
+.audit-unreviewed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  background: #fff4e0;
+  border: 1px solid #e0a93f;
+  border-radius: 4px;
+}
+
+.audit-unreviewed__note {
+  flex: 1 1 auto;
+}
+
+.audit-unreviewed__mark {
+  padding: 0.35rem 0.8rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* The audit table reuses the coverage tables' scroll-sideways pattern but
+   lets the change diffs wrap — old → new pairs are the payload here. */
+.audit-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.audit-table table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.audit-table th,
+.audit-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.5rem 0.5rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.85rem;
+}
+
+.audit-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.audit-row__when {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.audit-row__kind {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.audit-changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.audit-changes__field {
+  color: var(--muted);
+}
+
+.audit-changes__old {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.audit-changes__new {
+  font-weight: 600;
+}
+
+/* Entries newer than the viewer's review mark — the "diff of what changed"
+   the 9am review's link points at. Same amber family, lighter wash. */
+.audit-row--unreviewed td {
+  background: #fffaf0;
+}
+
+/* The optional why a partner typed when reverting (ADR-0003: the log
+   records intent). */
+.audit-row__reason {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.audit-row__actions form {
+  display: inline-block;
+  margin: 0 0.25rem 0.25rem 0;
+}
+
+.audit-row__reason-input {
+  width: 9rem;
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.audit-row__revert,
+.audit-row__revert-session {
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
 /* --- Progressive enhancement for wider viewports (tablet / desktop) ---------- */
 @media (min-width: 700px) {
   .review {
@@ -728,7 +871,8 @@ body {
 
   /* The coverage tables have more columns than the review page's content —
      give them more room on wider viewports rather than the review's 720px. */
-  .review.coverage {
+  .review.coverage,
+  .review.audit {
     max-width: 960px;
   }
 }

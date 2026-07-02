@@ -299,8 +299,8 @@ def test_needs_attention_wording_is_actionable(
     Slice 5 AC: items sold without a recipe mapping are "already surfaced as
     unmapped_items, but the section's wording should make clear it's
     actionable." An item with no recipe is revenue the tool cannot cost; the
-    fix is to map it to a recipe in config. The section names the item and tells
-    the partner to map it.
+    fix is to map it to a SKU (in item coverage, since ADR-0003 moved config
+    out of YAML). The section names the item and tells the partner to map it.
 
     Worked example. Yesterday a mapped chang and an unmapped "mystery-mocktail"
     were sold. The unmapped item surfaces in needs-attention, and the wording
@@ -329,10 +329,11 @@ def test_needs_attention_wording_is_actionable(
     needs = _section(response.text, "needs-attention").lower()
     assert "mystery-mocktail" in needs
     # Actionable: an explicit imperative telling the partner the corrective
-    # action (map them to a recipe in config) — not merely that the items are
+    # action (map the item to a SKU in item coverage — the live config surface
+    # since ADR-0003, not the seed-only YAML) — not merely that the items are
     # uncostable. The phrase is distinctive so the assertion cannot pass on the
     # incidental "unmapped" / "no recipe mapping" substrings already present.
-    assert "map them to a recipe" in needs
+    assert "map the item to a sku" in needs
 
 
 # --- AC: the last successful sync timestamp is visible -------------------------
