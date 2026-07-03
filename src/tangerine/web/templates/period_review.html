@@ -10,6 +10,8 @@
   <main class="review">
     <h1>{% if mode == 'month' %}Month review{% else %}Period review{% endif %}</h1>
 
+    {% include "_breadcrumb.html" %}
+
     {% include "_mode_switcher.html" %}
 
     <!--section:range-nav-->
@@ -57,6 +59,35 @@
     </section>
 
     {% include "_segment_cm.html" %}
+
+    <section class="period-days">
+      <h2>Day by day</h2>
+      <!--section:period-days-->
+      <table class="period-days__table">
+        <thead>
+          <tr>
+            <th scope="col">Day</th>
+            <th scope="col">Revenue</th>
+            <th scope="col">COGS</th>
+            <th scope="col">Gross margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in review.days %}
+          <tr class="period-days__row">
+            <td>
+              <a class="period-days__link"
+                 href="/review?mode=day&amp;day={{ row.day.isoformat() }}">{{ row.day.isoformat() }}</a>
+            </td>
+            <td>{{ row.revenue | money }}</td>
+            <td>{{ row.cogs | money }}</td>
+            <td>{{ row.gross_margin | money }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <!--/section:period-days-->
+    </section>
 
     {% if review.needs_attention %}
     <section class="needs-attention">

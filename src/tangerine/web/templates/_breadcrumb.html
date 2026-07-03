@@ -1,0 +1,20 @@
+{# The zoom path (issue #31, ADR-0004 decision 4): Review › Jul 2026 ›
+   15 Jul › Cappuccino. Every crumb but the current step is an ordinary
+   link to the deep-linkable URL one zoom level up, so the trail navigates
+   the same way the browser back button walks it. Expects ``breadcrumb`` —
+   a list of {label, href} with href None on the current step. #}
+<!--section:breadcrumb-->
+<nav class="breadcrumb" aria-label="You are here">
+  <ol class="breadcrumb__list">
+    {% for crumb in breadcrumb %}
+    <li class="breadcrumb__item">
+      {% if crumb.href %}
+      <a class="breadcrumb__link" href="{{ crumb.href }}">{{ crumb.label }}</a>
+      {% else %}
+      <span class="breadcrumb__current" aria-current="page">{{ crumb.label }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</nav>
+<!--/section:breadcrumb-->

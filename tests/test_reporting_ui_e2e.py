@@ -433,6 +433,338 @@ def test_period_mode_flags_a_segment_with_negative_cm_red(
     assert "RED" in html
 
 
+def test_period_day_rows_link_to_that_days_day_mode_review(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Issue #31 AC: day rows in Period/Month mode link to Day mode.
+
+    The period page lists every day in the range with its headline numbers;
+    each row is an ordinary link to ``/review?mode=day&day=<that date>`` —
+    "what drove this week" is one click to the day, deep-linkable, back
+    button returns to the period.
+    """
+    start = yesterday - timedelta(days=6)
+    sale_day = start + timedelta(days=2)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=sale_day,
+            price="120",
+        )
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    html = client.get(
+        f"/review?mode=period&start={start.isoformat()}&end={yesterday.isoformat()}"
+    ).text
+
+    days = html.split("<!--section:period-days-->")[1].split(
+        "<!--/section:period-days-->"
+    )[0]
+    # Every day in the range is a row linking into its Day-mode review.
+    for offset in range(7):
+        day = (start + timedelta(days=offset)).isoformat()
+        assert f'href="/review?mode=day&amp;day={day}"' in days
+    # The sale day's numbers ride on its row (120 revenue, 75 margin).
+    assert "120.00" in days
+    assert "75.00" in days
+
+    # Month mode renders the same drill (the same engine, same template).
+    month_html = client.get("/review?mode=month&month=2026-07").text
+    month_days = month_html.split("<!--section:period-days-->")[1].split(
+        "<!--/section:period-days-->"
+    )[0]
+    assert f'href="/review?mode=day&amp;day={sale_day.isoformat()}"' in month_days
+    assert 'href="/review?mode=day&amp;day=2026-07-01"' in month_days
+
+
+def test_item_mode_shows_the_items_period_performance_and_edit_recipe_link(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Issue #31 AC: the item-performance view, with its Admin escape hatch.
+
+    ``?mode=item&item=...&start=...&end=...`` shows the latte's week: 2 units,
+    240 revenue, 90 recipe-cost COGS, 150 margin (62.50%), one row per day it
+    sold — and a distinct "edit recipe" link to its SKU page in Admin, so the
+    config fix is one click away while the report itself stays read-only.
+    """
+    start = yesterday - timedelta(days=6)
+    day_one = start
+    day_two = start + timedelta(days=3)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=day_one,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="espresso-latte",
+            day=day_two,
+            price="120",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get(
+        f"/review?mode=item&item=espresso-latte"
+        f"&start={start.isoformat()}&end={yesterday.isoformat()}"
+    )
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Espresso Latte" in html
+
+    # The period totals: units, revenue, COGS, margin and %.
+    assert "240.00" in html  # revenue (2 x 120)
+    assert "90.00" in html   # COGS (2 x 45)
+    assert "150.00" in html  # gross margin
+    assert "62.50" in html   # margin %
+
+    # Day-by-day: one row per day it sold, each with that day's numbers.
+    days = html.split("<!--section:item-days-->")[1].split(
+        "<!--/section:item-days-->"
+    )[0]
+    assert day_one.isoformat() in days
+    assert day_two.isoformat() in days
+    assert "75.00" in days  # each day's margin (120 - 45)
+
+    # The distinct edit-recipe affordance, pointing at the SKU in Admin.
+    assert 'href="/skus/espresso-latte"' in html
+    assert "edit recipe" in html.lower()
+
+
+def test_item_mode_refuses_unmapped_items_and_malformed_params(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Unmapped items have no recipe-cost to show — no fabricated drill.
+
+    An unmapped item's performance URL answers 404 (its fix path stays the
+    needs-attention link); missing or malformed params are client errors.
+    """
+    start = yesterday - timedelta(days=6)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="i-special",
+            day=start,
+            price="150",
+        )
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    assert (
+        client.get(
+            f"/review?mode=item&item=i-special"
+            f"&start={start.isoformat()}&end={yesterday.isoformat()}"
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            f"/review?mode=item&start={start.isoformat()}"
+            f"&end={yesterday.isoformat()}"
+        ).status_code
+        == 400
+    )
+    assert (
+        client.get(
+            "/review?mode=item&item=espresso-latte&start=nope&end=2026-07-15"
+        ).status_code
+        == 400
+    )
+    assert (
+        client.get(
+            "/review?mode=item&item=espresso-latte"
+            "&start=2026-07-15&end=2026-07-01"
+        ).status_code
+        == 400
+    )
+
+
+def test_day_mode_links_mapped_items_to_their_performance_but_not_unmapped(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Issue #31 AC: mapped items in Day mode link to the performance drill.
+
+    The latte's rows in the day's rankings link to
+    ``?mode=item&item=...&start=<day>&end=<day>`` (the PRD's worked
+    interaction). The unmapped special offers no performance drill — there
+    is no recipe cost to show — and keeps its existing needs-attention fix
+    path into item coverage.
+    """
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=yesterday,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="i-special",
+            day=yesterday,
+            price="150",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    html = client.get(f"/review?mode=day&day={yesterday.isoformat()}").text
+
+    day = yesterday.isoformat()
+    item_url = (
+        f"/review?mode=item&amp;item=espresso-latte&amp;start={day}&amp;end={day}"
+    )
+    rankings = html.split("<!--section:top-by-margin-->")[1].split(
+        "<!--/section:bottom-by-volume-->"
+    )[0]
+    assert f'href="{item_url}"' in rankings
+
+    # The unmapped special: no performance drill anywhere on the page...
+    assert "mode=item&amp;item=i-special" not in html
+    # ...but its existing fix path survives.
+    attention = html.split("<!--section:needs-attention-->")[1].split(
+        "<!--/section:needs-attention-->"
+    )[0]
+    assert "/items?item=i-special" in attention
+
+
+def test_breadcrumb_reflects_the_zoom_path_and_each_crumb_navigates(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Issue #31 AC: a breadcrumb shows the path; each crumb navigates up.
+
+    The item page drilled from 15 Jul reads Review › Jul 2026 › 15 Jul ›
+    Espresso Latte — Review links home, the month crumb to Month mode, the
+    day crumb to that day's review; the current step is named but not a
+    link. Day and Month mode carry the same trail, one level shorter.
+    """
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=yesterday,
+            price="120",
+        )
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+    day = yesterday.isoformat()
+
+    item_html = client.get(
+        f"/review?mode=item&item=espresso-latte&start={day}&end={day}"
+    ).text
+    crumbs = item_html.split("<!--section:breadcrumb-->")[1].split(
+        "<!--/section:breadcrumb-->"
+    )[0]
+    assert 'href="/"' in crumbs  # Review, the home crumb
+    assert 'href="/review?mode=month&amp;month=2026-07"' in crumbs
+    assert f'href="/review?mode=day&amp;day={day}"' in crumbs
+    assert "Jul 2026" in crumbs
+    assert "15 Jul" in crumbs
+    assert "Espresso Latte" in crumbs  # the current step, named
+
+    day_html = client.get(f"/review?mode=day&day={day}").text
+    day_crumbs = day_html.split("<!--section:breadcrumb-->")[1].split(
+        "<!--/section:breadcrumb-->"
+    )[0]
+    assert 'href="/"' in day_crumbs
+    assert 'href="/review?mode=month&amp;month=2026-07"' in day_crumbs
+    assert "15 Jul" in day_crumbs
+
+    month_html = client.get("/review?mode=month&month=2026-07").text
+    month_crumbs = month_html.split("<!--section:breadcrumb-->")[1].split(
+        "<!--/section:breadcrumb-->"
+    )[0]
+    assert 'href="/"' in month_crumbs
+    assert "Jul 2026" in month_crumbs
+
+    # A multi-day item drill steps back to its period, not to a single day.
+    start = yesterday - timedelta(days=6)
+    range_html = client.get(
+        f"/review?mode=item&item=espresso-latte"
+        f"&start={start.isoformat()}&end={day}"
+    ).text
+    range_crumbs = range_html.split("<!--section:breadcrumb-->")[1].split(
+        "<!--/section:breadcrumb-->"
+    )[0]
+    assert (
+        f'href="/review?mode=period&amp;start={start.isoformat()}&amp;end={day}"'
+        in range_crumbs
+    )
+
+
+def test_partner_drills_month_to_day_to_item_via_the_pages_own_links(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #31's end-to-end walk: month → worst day → the item behind it.
+
+    Every step follows a link the previous page rendered (never a hand-built
+    URL), so the test proves the zoom is navigable: the July month view
+    links to 10 Jul's day review, whose bottom-by-margin list links to the
+    loss-making Chang draft's performance view — breadcrumb, period numbers,
+    and the edit-recipe link to its SKU in Admin.
+    """
+    bad_day = date(2026, 7, 10)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="chang-draft-500",
+            day=bad_day,
+            price="20",  # sold below its 35 THB pour cost all day
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="chang-draft-500",
+            day=bad_day,
+            price="20",
+            line_id="li-2",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    # Zoom 1: the month view carries a link to the bad day.
+    month_html = client.get("/review?mode=month&month=2026-07").text
+    day_url = f"/review?mode=day&day={bad_day.isoformat()}"
+    assert f'href="{day_url.replace("&", "&amp;")}"' in month_html
+
+    # Zoom 2: the day view's rankings link to the item's performance.
+    day_html = client.get(day_url).text
+    item_url = (
+        f"/review?mode=item&item=chang-draft-500"
+        f"&start={bad_day.isoformat()}&end={bad_day.isoformat()}"
+    )
+    assert f'href="{item_url.replace("&", "&amp;")}"' in day_html
+
+    # Zoom 3: the item view — breadcrumb, period numbers, edit-recipe link.
+    item_html = client.get(item_url).text
+    crumbs = item_html.split("<!--section:breadcrumb-->")[1].split(
+        "<!--/section:breadcrumb-->"
+    )[0]
+    assert 'href="/"' in crumbs
+    assert 'href="/review?mode=month&amp;month=2026-07"' in crumbs
+    assert f'href="{day_url.replace("&", "&amp;")}"' in crumbs
+    assert "Chang Draft 500ml" in crumbs
+
+    perf = item_html.split("<!--section:item-performance-->")[1].split(
+        "<!--/section:item-performance-->"
+    )[0]
+    assert "40.00" in perf   # revenue: 2 x 20
+    assert "70.00" in perf   # COGS: 2 x 35
+    assert "-30.00" in perf  # gross margin: underwater
+    assert "-75.00" in perf  # margin %
+
+    assert 'href="/skus/chang-draft-500"' in item_html
+    assert "edit recipe" in item_html.lower()
+
+
 def test_period_mode_rejects_a_malformed_or_backwards_range(
     tmp_path: Path, today: date
 ) -> None:

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal
 
 from .ingestion import Source
-from .margin import compute_item_margins, segment_margins_from_items
+from .margin import compute_item_margins, gross_margin_pct, segment_margins_from_items
 from .recipes import RecipeCatalog
 from .types import (
     DAILY_PROFIT_TARGET_THB,
@@ -182,6 +183,114 @@ def build_period_review(*, source: Source, start: date, end: date) -> PeriodRevi
     )
 
 
+@dataclass(frozen=True)
+class ItemDay:
+    """One day an item sold inside its performance view (issue #31).
+
+    Days with no sales of the item are omitted — the day-by-day answers
+    "when did it sell and at what margin", not "render a calendar".
+    """
+
+    day: date
+    units_sold: int
+    revenue: Money
+    cogs: Money
+    gross_margin: Money
+
+
+@dataclass(frozen=True)
+class ItemPerformance:
+    """One mapped item's performance over ``[start, end]`` (issue #31).
+
+    The drill-down's last zoom step: units, revenue, recipe-cost COGS (each
+    day costed at its own day's prices), gross margin and %, day-by-day rows,
+    and the target-margin flag over the whole period. ``sku_id`` is the SKU
+    the item maps to — the "edit recipe" link's target in Admin.
+    """
+
+    item_id: str
+    name: str
+    sku_id: str
+    start: date
+    end: date
+    units_sold: int
+    revenue: Money
+    cogs: Money
+    gross_margin: Money
+    gross_margin_pct: Decimal | None
+    target_gross_margin_pct: Decimal | None
+    below_target: bool
+    days: tuple[ItemDay, ...]
+
+
+def build_item_performance(
+    *, source: Source, item_id: str, start: date, end: date
+) -> ItemPerformance | None:
+    """Build one item's performance view, or None when it cannot be costed.
+
+    Runs the same per-day margin engine as ``build_period_review`` — shared
+    as-of-date pricing, so the item's period numbers agree with the period
+    and day views by construction — and keeps only ``item_id``'s reliable
+    rows. Returns None for an unmapped item (no recipe, so no recipe-cost to
+    show; its fix path is the needs-attention link, per issue #31).
+    """
+    if end < start:
+        raise ValueError(
+            f"period end {end} precedes start {start}; range must be inclusive"
+        )
+
+    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
+    recipe = recipes.for_item(item_id)
+    if recipe is None:
+        return None
+
+    sales = source.sales()
+    day_rows: list[ItemDay] = []
+    below_target = False
+    current = start
+    while current <= end:
+        rows = compute_item_margins(
+            sales=sales,
+            recipes=recipes,
+            cost=source.cost_book_as_of(current),
+            day=current,
+        )
+        row = next((im for im in rows if im.item_id == item_id), None)
+        if row is None or row.excluded_from_totals:
+            current += timedelta(days=1)
+            continue
+        below_target = below_target or row.below_target
+        day_rows.append(
+            ItemDay(
+                day=current,
+                units_sold=row.units_sold,
+                revenue=row.revenue,
+                cogs=row.cogs,
+                gross_margin=row.gross_margin,
+            )
+        )
+        current += timedelta(days=1)
+
+    revenue = sum((d.revenue for d in day_rows), Money("0"))
+    cogs = sum((d.cogs for d in day_rows), Money("0"))
+    gross_margin = revenue - cogs
+    return ItemPerformance(
+        item_id=item_id,
+        name=recipe.name,
+        sku_id=recipes.sku_for_item(item_id) or recipe.sku_id,
+        start=start,
+        end=end,
+        units_sold=sum(d.units_sold for d in day_rows),
+        revenue=revenue,
+        cogs=cogs,
+        gross_margin=gross_margin,
+        gross_margin_pct=gross_margin_pct(gross_margin, revenue),
+        target_gross_margin_pct=recipe.target_gross_margin_pct,
+        below_target=below_target,
+        days=tuple(day_rows),
+    )
+
+
 def _aggregate_flagged(rows: list[ItemMargin]) -> tuple[FlaggedPeriodItem, ...]:
     """Roll per-day flagged rows into one needs-attention row per item.
 
@@ -208,8 +317,11 @@ def _aggregate_flagged(rows: list[ItemMargin]) -> tuple[FlaggedPeriodItem, ...]:
 
 __all__ = [
     "FlaggedPeriodItem",
+    "ItemDay",
+    "ItemPerformance",
     "PeriodDay",
     "PeriodGoal",
     "PeriodReview",
+    "build_item_performance",
     "build_period_review",
 ]

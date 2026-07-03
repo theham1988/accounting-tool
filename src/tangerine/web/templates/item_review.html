@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ perf.name }} — item performance — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review">
+    <h1>{{ perf.name }}</h1>
+
+    {% include "_breadcrumb.html" %}
+
+    {% include "_mode_switcher.html" %}
+
+    <div id="review-body">
+    <p class="day">For {{ perf.start.isoformat() }} to {{ perf.end.isoformat() }}</p>
+
+    <section class="headline">
+      <h2>Period performance</h2>
+      <!--section:item-performance-->
+      <dl>
+        <dt>Units sold</dt><dd>{{ perf.units_sold }}</dd>
+        <dt>Revenue</dt><dd>{{ perf.revenue | money }} THB</dd>
+        <dt>COGS (recipe cost)</dt><dd>{{ perf.cogs | money }} THB</dd>
+        <dt>Gross margin</dt><dd>{{ perf.gross_margin | money }} THB</dd>
+        <dt>Gross margin %</dt>
+        <dd>{% if perf.gross_margin_pct is not none %}{{ perf.gross_margin_pct }}%{% else %}—{% endif %}</dd>
+        {% if perf.target_gross_margin_pct is not none %}
+        <dt>Target margin</dt>
+        <dd>
+          {{ perf.target_gross_margin_pct }}%
+          {% if perf.below_target %}
+          <strong class="item-performance__below-target">BELOW TARGET</strong>
+          {% else %}
+          <span class="item-performance__on-target">on target</span>
+          {% endif %}
+        </dd>
+        {% endif %}
+      </dl>
+      <!--/section:item-performance-->
+    </section>
+
+    <section class="item-days">
+      <h2>Day by day</h2>
+      <!--section:item-days-->
+      {% if perf.days %}
+      <table class="item-days__table">
+        <thead>
+          <tr>
+            <th scope="col">Day</th>
+            <th scope="col">Units</th>
+            <th scope="col">Revenue</th>
+            <th scope="col">COGS</th>
+            <th scope="col">Gross margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in perf.days %}
+          <tr class="item-days__row">
+            <td>
+              <a class="item-days__link"
+                 href="/review?mode=day&amp;day={{ row.day.isoformat() }}">{{ row.day.isoformat() }}</a>
+            </td>
+            <td>{{ row.units_sold }}</td>
+            <td>{{ row.revenue | money }}</td>
+            <td>{{ row.cogs | money }}</td>
+            <td>{{ row.gross_margin | money }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="item-days__empty"><em>No sales of this item in the period.</em></p>
+      {% endif %}
+      <!--/section:item-days-->
+    </section>
+
+    <!--section:edit-recipe-->
+    <p class="edit-recipe">
+      <a class="edit-recipe__link" href="/skus/{{ perf.sku_id }}">Edit recipe in Admin &rarr;</a>
+    </p>
+    <!--/section:edit-recipe-->
+    </div><!-- /#review-body -->
+  </main>
+</body>
+</html>
