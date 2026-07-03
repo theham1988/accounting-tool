@@ -955,3 +955,107 @@ body {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+
+/* --- Wave 2 slice 5: Trends mode (server-rendered SVG + CSS bars) ------------ */
+
+/* Metric / span pickers: same tab-like link rows as the mode switcher, but
+   visually secondary (they select within Trends, not between modes). */
+.trend-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.trend-picker__link {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.trend-picker__link:hover {
+  background: var(--surface-alt);
+}
+
+.trend-picker__link--active {
+  background: var(--surface-alt);
+  color: var(--text);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* The sparkline: the trend's shape at a glance. The SVG carries only
+   geometry; the stroke lives here so the chart obeys the page's palette. */
+.trend-sparkline {
+  display: block;
+  width: 100%;
+  height: 120px;
+  margin-bottom: 0.5rem;
+  stroke: var(--text);
+  stroke-width: 2;
+  background: var(--surface-alt);
+  border-radius: 4px;
+}
+
+/* The clickable bar row: one bar per bucket, each an ordinary link into
+   that bucket's Period/Month view. Bar height arrives as a CSS custom
+   property computed server-side. */
+.trend-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.trend-bar {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  text-align: center;
+}
+
+a.trend-bar:hover .trend-bar__fill {
+  background: var(--text);
+}
+
+.trend-bar__fill {
+  display: block;
+  height: calc(var(--bar-height, 0%) * 0.6 + 3px);
+  background: var(--muted);
+  border-radius: 2px 2px 0 0;
+}
+
+.trend-bar__value {
+  order: -1;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-bar__label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The weekday breakdown has only seven bars — give them room to breathe. */
+.trend-bars--weekday {
+  gap: 0.5rem;
+}
+
+.trend-chart__note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
