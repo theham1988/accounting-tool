@@ -1,0 +1,15 @@
+{# The report page's mode control (Wave 2 slice 2, ADR-0004 decision 4).
+   Ordinary links to deep-linkable URLs — mode + date/range as query params —
+   so switching modes works without JavaScript, the back button behaves, and
+   any state can be shared. Expects ``mode`` (the active mode) and
+   ``switcher`` (the three target URLs) in context. #}
+<!--section:mode-switcher-->
+<nav id="mode-switcher" class="mode-switcher" aria-label="Report mode">
+  <a class="mode-switcher__link{% if mode == 'day' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.day }}">Day</a>
+  <a class="mode-switcher__link{% if mode == 'period' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.period }}">Period</a>
+  <a class="mode-switcher__link{% if mode == 'month' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.month }}">Month</a>
+</nav>
+<!--/section:mode-switcher-->

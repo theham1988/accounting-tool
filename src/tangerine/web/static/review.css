@@ -876,3 +876,82 @@ body {
     max-width: 960px;
   }
 }
+
+
+/* --- Wave 2 slice 2: mode switcher + period/month range controls ------------ */
+
+/* The report page's mode control: three tab-like links (Day / Period / Month).
+   Plain anchors to deep-linkable URLs, so no JS is needed to switch modes. */
+.mode-switcher {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-switcher__link {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.mode-switcher__link:hover {
+  background: var(--surface-alt);
+}
+
+.mode-switcher__link--active {
+  background: var(--surface-alt);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Range picker (period start/end, or the month input) — mirrors .day-nav. */
+.range-nav {
+  margin-bottom: 1rem;
+}
+
+.range-nav__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.range-nav__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.range-nav__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.range-nav__input {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.range-nav__apply {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.range-nav__apply:hover {
+  background: var(--surface-alt);
+}
+
+/* The honest-basis note under the period/month goal comparison: the number is
+   gross-margin-based until fixed costs land (Wave 2 slice 3). */
+.goal__basis-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}

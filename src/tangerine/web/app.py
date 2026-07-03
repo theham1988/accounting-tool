@@ -18,6 +18,7 @@ same testability pattern the CLI's ``main()`` uses. ``today`` is injectable so
 
 from __future__ import annotations
 
+import calendar
 import os
 import sqlite3
 import tempfile
@@ -41,6 +42,7 @@ from starlette.background import BackgroundTask
 from ..config.loader import load_assignees
 from ..coverage import build_item_coverage, build_sku_coverage
 from ..daily_review import DailyReview, build_daily_review
+from ..period_review import build_period_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
@@ -472,26 +474,87 @@ def create_app(
             background=BackgroundTask(os.remove, tmp),
         )
 
-    @app.get("/", response_class=HTMLResponse)
-    def root(request: Request) -> HTMLResponse:
-        """Yesterday's review — the default 9am landing surface."""
+    @app.get("/")
+    def root(request: Request) -> RedirectResponse:
+        """Redirect to yesterday's Day-mode review (ADR-0004 decision 4).
+
+        The daily review stays the 9am landing surface (Wave 1 user story 19),
+        but the landing state is now the same deep-linkable URL as every
+        other mode, so the back button and shared links behave consistently.
+        """
         yesterday = app.state.today - timedelta(days=1)
-        return _render_review(request, app, yesterday)
+        return RedirectResponse(
+            f"/review?mode=day&day={yesterday.isoformat()}", status_code=302
+        )
 
     @app.get("/review", response_class=HTMLResponse)
-    def review(request: Request, day: str) -> HTMLResponse:
-        """The review for a specific day (``?day=YYYY-MM-DD``).
+    def review(
+        request: Request,
+        mode: str = "day",
+        day: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        month: str | None = None,
+    ) -> HTMLResponse:
+        """The one report page, rendered in a mode (Wave 2 slice 2).
 
-        Day-navigation control arrives in Slice 5; the route is here now so a
-        partner can already reach a previous day by URL.
+        ``?mode=day&day=YYYY-MM-DD`` is the existing daily review; a bare
+        ``?day=...`` (the Wave 1 URL shape) still works and means Day mode,
+        so pre-Wave-2 deep links keep resolving.
+        ``?mode=period&start=...&end=...`` is the period engine over an
+        arbitrary inclusive range; ``?mode=month&month=YYYY-MM`` is the same
+        engine over the calendar month. Malformed or backwards params are
+        client errors (400) rather than misleading zero-filled reports.
         """
-        try:
-            review_date = date.fromisoformat(day)
-        except ValueError:
-            # A malformed date is a client error; surface it as 400 rather than
-            # rendering a misleading review for an unintended day.
-            return HTMLResponse("Invalid day (expected YYYY-MM-DD).", status_code=400)
-        return _render_review(request, app, review_date)
+        if mode == "day":
+            if day is None:
+                day = (app.state.today - timedelta(days=1)).isoformat()
+            try:
+                review_date = date.fromisoformat(day)
+            except ValueError:
+                # A malformed date is a client error; surface it as 400 rather
+                # than rendering a misleading review for an unintended day.
+                return HTMLResponse(
+                    "Invalid day (expected YYYY-MM-DD).", status_code=400
+                )
+            return _render_review(request, app, review_date)
+        if mode == "period":
+            if start is None or end is None:
+                return HTMLResponse(
+                    "Period mode needs start and end (YYYY-MM-DD).",
+                    status_code=400,
+                )
+            try:
+                start_date = date.fromisoformat(start)
+                end_date = date.fromisoformat(end)
+            except ValueError:
+                return HTMLResponse(
+                    "Invalid start/end (expected YYYY-MM-DD).", status_code=400
+                )
+            if end_date < start_date:
+                return HTMLResponse(
+                    "Period end precedes start.", status_code=400
+                )
+            return _render_period_review(request, app, start_date, end_date)
+        if mode == "month":
+            if month is None:
+                return HTMLResponse(
+                    "Month mode needs month (YYYY-MM).", status_code=400
+                )
+            try:
+                first_day = date.fromisoformat(f"{month}-01")
+            except ValueError:
+                return HTMLResponse(
+                    "Invalid month (expected YYYY-MM).", status_code=400
+                )
+            days_in_month = calendar.monthrange(first_day.year, first_day.month)[1]
+            last_day = first_day.replace(day=days_in_month)
+            return _render_period_review(
+                request, app, first_day, last_day, mode="month"
+            )
+        return HTMLResponse(
+            "Unknown mode (expected day, period, or month).", status_code=400
+        )
 
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request) -> HTMLResponse:
@@ -1080,6 +1143,59 @@ def _audit_field_changes(entry: AuditEntry) -> list[dict[str, Any]]:
     ]
 
 
+def _mode_switcher_urls(anchor: date) -> dict[str, str]:
+    """The mode control's three deep-linkable targets, anchored on a date.
+
+    From any view whose anchor day is ``anchor``: Day is that day, Period is
+    the 7 days ending on it, Month is its calendar month. Every target is an
+    ordinary URL (mode + date/range as query params), so switching modes
+    works without JavaScript and every state is shareable (ADR-0004
+    decision 4).
+    """
+    week_start = anchor - timedelta(days=6)
+    return {
+        "day": f"/review?mode=day&day={anchor.isoformat()}",
+        "period": (
+            f"/review?mode=period&start={week_start.isoformat()}"
+            f"&end={anchor.isoformat()}"
+        ),
+        "month": f"/review?mode=month&month={anchor.strftime('%Y-%m')}",
+    }
+
+
+def _render_period_review(
+    request: Request,
+    app: FastAPI,
+    start: date,
+    end: date,
+    *,
+    mode: str = "period",
+) -> HTMLResponse:
+    """Build the period review for ``[start, end]`` and render it.
+
+    Month mode is the same engine over the calendar month (``mode`` only
+    changes the page's framing — title, active switcher tab, month picker),
+    so Period and Month cannot disagree.
+    """
+    templates: Jinja2Templates = app.state.templates
+    source: StoreSource = app.state.source
+
+    review = build_period_review(source=source, start=start, end=end)
+    return templates.TemplateResponse(
+        request=request,
+        name="period_review.html",
+        context={
+            "request": request,
+            "mode": mode,
+            "review": review,
+            # Already in canonical cafe-then-bar order (the engine builds
+            # them so); named for the shared _segment_cm.html partial.
+            "segment_margins": review.segment_margins,
+            "switcher": _mode_switcher_urls(end),
+        },
+    )
+
+
 def _render_review(
     request: Request, app: FastAPI, review_date: date
 ) -> HTMLResponse:
@@ -1171,6 +1287,8 @@ def _render_review(
         name="daily_review.html",
         context={
             "request": request,
+            "mode": "day",
+            "switcher": _mode_switcher_urls(review_date),
             "review": review,
             "segment_margins": segment_margins,
             "has_sales": has_sales,

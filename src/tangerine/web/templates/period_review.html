@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if mode == 'month' %}Month{% else %}Period{% endif %} review — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review">
+    <h1>{% if mode == 'month' %}Month review{% else %}Period review{% endif %}</h1>
+
+    {% include "_mode_switcher.html" %}
+
+    <!--section:range-nav-->
+    <section class="range-nav">
+      {% if mode == 'month' %}
+      <form class="range-nav__form" method="get" action="/review">
+        <input type="hidden" name="mode" value="month">
+        <label class="range-nav__label">
+          <span>Month</span>
+          <input class="range-nav__input" type="month" name="month"
+                 value="{{ review.start.strftime('%Y-%m') }}">
+        </label>
+        <button type="submit" class="range-nav__apply">Show</button>
+      </form>
+      {% else %}
+      <form class="range-nav__form" method="get" action="/review">
+        <input type="hidden" name="mode" value="period">
+        <label class="range-nav__label">
+          <span>From</span>
+          <input class="range-nav__input" type="date" name="start"
+                 value="{{ review.start.isoformat() }}">
+        </label>
+        <label class="range-nav__label">
+          <span>To</span>
+          <input class="range-nav__input" type="date" name="end"
+                 value="{{ review.end.isoformat() }}">
+        </label>
+        <button type="submit" class="range-nav__apply">Show</button>
+      </form>
+      {% endif %}
+    </section>
+    <!--/section:range-nav-->
+
+    <div id="review-body">
+    <p class="day">For {{ review.start.isoformat() }} to {{ review.end.isoformat() }}
+      ({{ review.goal.days_in_range }} day{{ "" if review.goal.days_in_range == 1 else "s" }})</p>
+
+    <section class="headline">
+      <h2>Headline</h2>
+      <dl>
+        <dt>Revenue</dt><dd>{{ review.revenue | money }} THB</dd>
+        <dt>COGS (recipe cost)</dt><dd>{{ review.cogs | money }} THB</dd>
+        <dt>Gross margin</dt><dd>{{ review.gross_margin | money }} THB</dd>
+      </dl>
+    </section>
+
+    {% include "_segment_cm.html" %}
+
+    {% if review.needs_attention %}
+    <section class="needs-attention">
+      <h2>Needs attention</h2>
+      <!--section:needs-attention-->
+      <p class="needs-attention__note">
+        These items sold in the period but their cost could not be computed, so
+        their revenue is left out of the headline totals above.
+      </p>
+      <ul class="needs-attention__list">
+        {% for row in review.needs_attention %}
+        <li>
+          <span class="needs-attention__name">{{ row.name }}</span>
+          —
+          {% if row.unmapped %}<span class="needs-attention__reason">unmapped</span> (no recipe mapping){% endif %}
+          {% if row.unknown_price %}<span class="needs-attention__reason">unknown price</span> (an ingredient has no cost entry){% endif %}
+          — {{ row.units_sold }} unit{{ "" if row.units_sold == 1 else "s" }}
+          — {{ row.revenue | money }} THB
+          — <a class="needs-attention__link" href="/items?item={{ row.item_id }}">Fix in item coverage &rarr;</a>
+        </li>
+        {% endfor %}
+      </ul>
+      <!--/section:needs-attention-->
+    </section>
+    {% endif %}
+
+    <section class="goal">
+      <h2>Goal progress</h2>
+      <!--section:goal-->
+      <dl class="goal__stats">
+        <dt>Target (10,000 THB/day &times; {{ review.goal.days_in_range }} days)</dt>
+        <dd>{{ review.goal.target | money }} THB</dd>
+        <dt>Actual (gross margin)</dt>
+        <dd>{{ review.goal.actual | money }} THB</dd>
+        <dt>Status</dt>
+        <dd>{% if review.goal.met %}Met{% else %}Missing{% endif %}</dd>
+      </dl>
+      <p class="goal__basis-note">
+        Compared on <strong>gross margin</strong> — fixed costs are not yet
+        entered, so this is not a net-profit number.
+      </p>
+      <!--/section:goal-->
+    </section>
+    </div><!-- /#review-body -->
+  </main>
+</body>
+</html>

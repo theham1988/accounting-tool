@@ -68,6 +68,8 @@
     <!--/section:stale-banner-->
     {% endif %}
 
+    {% include "_mode_switcher.html" %}
+
     <!--section:day-nav-->
     <section class="day-nav">
       <label class="day-nav__label">
@@ -80,6 +82,10 @@
           hx-get="/review"
           hx-target="#review-body"
           hx-select="#review-body"
+          {# Re-anchor the Day/Period/Month links to the newly picked date;
+             without this the switcher (outside #review-body) keeps pointing
+             at the previous day's week and month. #}
+          hx-select-oob="#mode-switcher"
           hx-swap="outerHTML"
           hx-trigger="change"
           aria-label="Pick a review date"
@@ -154,27 +160,7 @@
       </dl>
     </section>
 
-    <section class="segment-cm">
-      <h2>Segment contribution margin</h2>
-      <table>
-        <thead>
-          <tr><th>Segment</th><th>Revenue</th><th>Variable costs</th><th>Contribution margin</th></tr>
-        </thead>
-        <tbody>
-        {% for sm in segment_margins %}
-          <tr class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}">
-            <td class="segment-cm__name">
-              {{ sm.segment.value | capitalize }}
-              {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
-            </td>
-            <td class="segment-cm__revenue">{{ sm.revenue | money }} THB</td>
-            <td class="segment-cm__costs">{{ sm.variable_costs | money }} THB</td>
-            <td class="segment-cm__cm">{{ sm.contribution_margin | money }} THB</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </section>
+    {% include "_segment_cm.html" %}
 
     <section class="rankings">
       <h2>Top &amp; bottom items</h2>

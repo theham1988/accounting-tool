@@ -272,8 +272,10 @@ def test_correct_login_sets_signed_cookie_and_lands_on_root(
     assert response.headers["location"] == "/"
     assert SESSION_COOKIE in response.cookies
 
-    # The cookie authorises the next request — no second redirect to /login.
-    authed = client.get("/", follow_redirects=False)
+    # The cookie authorises the next request — no redirect back to /login.
+    # (``/`` itself 302s to the day-mode review URL since Wave 2 slice 2;
+    # following redirects lands on the review page, not the login form.)
+    authed = client.get("/")
     assert authed.status_code == 200
     assert "Daily 9am review" in authed.text
 
@@ -443,9 +445,10 @@ def test_request_within_window_refreshes_activity_timestamp(
 
     client = TestClient(app)
     client.cookies.set(SESSION_COOKIE, old_cookie)
-    response = client.get("/", follow_redirects=False)
+    response = client.get("/")
 
-    # Authenticated (within window) — the request succeeded.
+    # Authenticated (within window) — the request landed on the review page
+    # (via the Wave 2 ``/`` -> day-mode redirect), not back on /login.
     assert response.status_code == 200
     # A refreshed cookie was set on the response.
     refreshed_raw = response.cookies.get(SESSION_COOKIE)
@@ -485,7 +488,7 @@ def test_repeated_requests_within_window_keep_extending_session(
 
     client = TestClient(app1)
     client.cookies.set(SESSION_COOKIE, cookie_after_t0)
-    r1 = client.get("/", follow_redirects=False)
+    r1 = client.get("/")
     assert r1.status_code == 200
     cookie_after_t1 = r1.cookies.get(SESSION_COOKIE)
     assert cookie_after_t1 is not None
@@ -496,7 +499,7 @@ def test_repeated_requests_within_window_keep_extending_session(
     )
     client2 = TestClient(app2)
     client2.cookies.set(SESSION_COOKIE, cookie_after_t1)
-    r2 = client2.get("/", follow_redirects=False)
+    r2 = client2.get("/")
     assert r2.status_code == 200, "refreshed cookie was not accepted at t2"
 
 
@@ -564,7 +567,7 @@ def test_review_page_shows_signed_in_assignee(tmp_path: Path) -> None:
         follow_redirects=False,
     )
 
-    response = client.get("/", follow_redirects=False)
+    response = client.get("/")
 
     assert response.status_code == 200
     # A "signed in as" row carrying the assignee's name (not their id — the
@@ -592,7 +595,7 @@ def test_review_page_shows_daniel_when_signed_in_as_daniel(
         follow_redirects=False,
     )
 
-    response = client.get("/", follow_redirects=False)
+    response = client.get("/")
     signed = _section(response.text, "signed-in-as")
     assert "Daniel" in signed
 
