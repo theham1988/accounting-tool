@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fixed costs — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review fixed-costs">
+    <h1>Fixed costs</h1>
+    <p class="fixed-costs__note">
+      Entity-level costs (rent, utilities, shared staff, insurance) — never
+      allocated to a segment. A <strong>recurring</strong> cost is defined
+      once and applies every month until ended; a <strong>one-off</strong>
+      applies to a single month. <a href="/admin">&larr; Admin</a>
+    </p>
+
+    <!--section:fixed-cost-form-->
+    <section class="fixed-cost-form">
+      <h2>Add a fixed cost</h2>
+      <form method="post" action="/admin/fixed-costs">
+        <label class="fixed-cost-form__label">
+          <span>Label</span>
+          <input type="text" name="label" required placeholder="Rent">
+        </label>
+        <label class="fixed-cost-form__label">
+          <span>Category</span>
+          <select name="category">
+            <option value="rent">Rent</option>
+            <option value="utilities">Utilities</option>
+            <option value="staff_salaries">Staff salaries</option>
+            <option value="insurance">Insurance</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label class="fixed-cost-form__label">
+          <span>Monthly amount (THB)</span>
+          <input type="number" name="amount" min="0" step="0.01" required>
+        </label>
+        <label class="fixed-cost-form__label">
+          <span>Kind</span>
+          <select name="kind">
+            <option value="recurring">Recurring (every month until ended)</option>
+            <option value="oneoff">One-off (a single month)</option>
+          </select>
+        </label>
+        <label class="fixed-cost-form__label">
+          <span>Month (first month for recurring; the month for a one-off)</span>
+          <input type="month" name="period" required>
+        </label>
+        <button type="submit" class="fixed-cost-form__save">Save</button>
+      </form>
+    </section>
+    <!--/section:fixed-cost-form-->
+
+    <section class="fixed-cost-list-section">
+      <h2>Current fixed costs</h2>
+      <!--section:fixed-cost-list-->
+      {% if entries %}
+      <table class="fixed-cost-list">
+        <thead>
+          <tr>
+            <th>Label</th><th>Category</th><th>Monthly amount</th>
+            <th>Kind</th><th>From</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in entries %}
+          <tr class="fixed-cost-list__row">
+            <td class="fixed-cost-list__label">{{ entry.label }}</td>
+            <td>{{ entry.category }}</td>
+            <td>{{ entry.amount | money }} THB</td>
+            <td class="fixed-cost-list__kind">{{ entry.kind }}</td>
+            <td>{{ "%04d-%02d" | format(entry.period[0], entry.period[1]) }}</td>
+            <td class="fixed-cost-list__status">
+              {% if entry.kind == 'oneoff' %}
+                one month only
+              {% elif entry.ended_at %}
+                ended {{ entry.ended_at.isoformat() }}
+              {% else %}
+                active
+              {% endif %}
+            </td>
+            <td class="fixed-cost-list__actions">
+              {% if entry.kind == 'recurring' and not entry.ended_at %}
+              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/end" style="display:inline">
+                <button type="submit" class="fixed-cost-list__end"
+                        title="Stops applying after this month; past months keep it">End</button>
+              </form>
+              {% endif %}
+              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/delete" style="display:inline">
+                <button type="submit" class="fixed-cost-list__delete"
+                        title="Removes it from every month (for typos/duplicates)">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="fixed-cost-list fixed-cost-list--empty">
+        No fixed costs entered yet. Until they are, the Month view's net
+        profit equals its gross margin.
+      </p>
+      {% endif %}
+      <!--/section:fixed-cost-list-->
+    </section>
+  </main>
+</body>
+</html>

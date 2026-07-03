@@ -15,6 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from .fixed_costs import (
+    FixedCostEntry,
+    FixedCostsForPeriod,
+    fixed_costs_for_period,
+)
 from .ingestion import Source
 from .margin import compute_item_margins, segment_margins_from_items
 from .recipes import RecipeCatalog
@@ -44,18 +49,21 @@ class PeriodDay:
 
 @dataclass(frozen=True)
 class PeriodGoal:
-    """The period's gross margin vs 10K THB/day x days in the range.
+    """The period's net profit vs 10K THB/day x days in the range.
 
-    ``basis`` names what ``actual`` is measured on. Until fixed costs land
-    (Wave 2 slice 3) the only honest basis is ``"gross_margin"`` — the label
-    is carried on the result so no surface can silently present it as net
-    profit (issue #29: "honestly labelled — no net-profit line yet").
+    ``basis`` names what ``actual`` is measured on. From Wave 2 slice 3 the
+    Period/Month basis is ``"net_profit"`` (segment CM minus entity fixed
+    costs — exact for a calendar month, a labelled apportioned estimate for
+    a sub-month range); the daily view stays gross-margin-based (fixed costs
+    are not daily). The label is carried on the result so the two bases stay
+    visibly different, not silently interchangeable (PRD: "Goal comparison
+    basis").
     """
 
     target: Money
     actual: Money
     days_in_range: int
-    basis: str = "gross_margin"
+    basis: str = "net_profit"
 
     @property
     def met(self) -> bool:
@@ -105,6 +113,12 @@ class PeriodReview:
     plus one aggregated ``needs_attention`` row per flagged item, so it is
     visible, not silently dropped (the daily view's rule, per the COGS
     recognition entry in ``CONTEXT.md``).
+
+    ``fixed_costs`` is the entity-level fixed-cost block for the range
+    (never allocated to a segment — the segment rows above stay pure
+    contribution margin) and ``net_profit`` is ``gross_margin`` minus its
+    total. When ``fixed_costs.estimated`` is set the net profit is a
+    labelled estimate (sub-month apportionment, ADR-0004 decision 3).
     """
 
     start: date
@@ -116,15 +130,26 @@ class PeriodReview:
     flagged_revenue: Money
     needs_attention: tuple[FlaggedPeriodItem, ...]
     days: tuple[PeriodDay, ...]
+    fixed_costs: FixedCostsForPeriod
+    net_profit: Money
     goal: PeriodGoal
 
 
-def build_period_review(*, source: Source, start: date, end: date) -> PeriodReview:
+def build_period_review(
+    *,
+    source: Source,
+    start: date,
+    end: date,
+    fixed_costs: list[FixedCostEntry] | None = None,
+) -> PeriodReview:
     """Build the period review for the inclusive ``[start, end]`` range.
 
     Runs the per-item margin engine one day at a time, each day costed at
     that day's prices (``cost_book_as_of``, ADR-0004 decision 2), and sums
-    the reliable rows into the period headline.
+    the reliable rows into the period headline. ``fixed_costs`` are the
+    stored entity-level entries (Wave 2 slice 3); the ones applying to the
+    range turn the gross margin into ``net_profit``, which is what the goal
+    compares against 10K THB/day × days.
     """
     if end < start:
         raise ValueError(
@@ -164,6 +189,10 @@ def build_period_review(*, source: Source, start: date, end: date) -> PeriodRevi
     cogs = sum((im.cogs for im in counted_rows), Money("0"))
     gross_margin = revenue - cogs
     days_in_range = (end - start).days + 1
+    period_fixed = fixed_costs_for_period(
+        start=start, end=end, entries=list(fixed_costs or [])
+    )
+    net_profit = gross_margin - period_fixed.total
     return PeriodReview(
         start=start,
         end=end,
@@ -174,9 +203,11 @@ def build_period_review(*, source: Source, start: date, end: date) -> PeriodRevi
         flagged_revenue=sum((im.revenue for im in flagged_rows), Money("0")),
         needs_attention=_aggregate_flagged(flagged_rows),
         days=tuple(days),
+        fixed_costs=period_fixed,
+        net_profit=net_profit,
         goal=PeriodGoal(
             target=DAILY_PROFIT_TARGET_THB * days_in_range,
-            actual=gross_margin,
+            actual=net_profit,
             days_in_range=days_in_range,
         ),
     )

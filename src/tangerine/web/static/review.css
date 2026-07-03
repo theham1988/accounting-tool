@@ -949,9 +949,137 @@ body {
   background: var(--surface-alt);
 }
 
-/* The honest-basis note under the period/month goal comparison: the number is
-   gross-margin-based until fixed costs land (Wave 2 slice 3). */
+/* The honest-basis note under the period/month goal comparison: net-profit-
+   based from Wave 2 slice 3 (an explicit estimate for sub-month ranges). */
 .goal__basis-note {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+
+/* --- Wave 2 slice 3: Admin destination + fixed costs ------------------------ */
+
+/* The Admin link sits at the switcher's far end: same tab shape, visually
+   separated — it leaves the report for the app's other destination. */
+.mode-switcher__admin {
+  margin-left: auto;
+  padding: 0.4rem 0.9rem;
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.mode-switcher__admin:hover {
+  background: var(--surface-alt);
+}
+
+.admin-links__list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-links__link {
+  font-weight: 600;
+}
+
+.fixed-cost-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 420px;
+}
+
+.fixed-cost-form__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fixed-cost-form__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.fixed-cost-form input,
+.fixed-cost-form select {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.fixed-cost-form__save {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.fixed-cost-form__save:hover {
+  background: var(--surface-alt);
+}
+
+.fixed-cost-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.fixed-cost-list th,
+.fixed-cost-list td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.fixed-cost-list__end,
+.fixed-cost-list__delete {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.fixed-cost-list__delete:hover {
+  background: #fbe9e7;
+}
+
+.fixed-cost-list__end:hover {
+  background: var(--surface-alt);
+}
+
+/* The report's fixed-cost block: entity-level lines under the segment CM.
+   The apportioned marker and estimate note carry the "not exact" signal. */
+.fixed-costs-block__lines {
+  list-style: none;
+  padding: 0;
+}
+
+.fixed-costs-block__line {
+  padding: 0.25rem 0;
+}
+
+.fixed-costs-block__apportioned {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.fixed-costs-block__estimate-note,
+.fixed-costs-block__entity-note,
+.fixed-costs-block__empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.headline__net-profit {
+  font-weight: 700;
 }

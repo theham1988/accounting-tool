@@ -32,6 +32,7 @@ import yaml
 
 from ..config.loader import load_costs, load_recipes
 from ..cost import CostBook
+from ..fixed_costs import FixedCostEntry
 from ..price_history import PriceChange, PriceHistory
 from ..recipes import RecipeCatalog
 from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
@@ -482,6 +483,7 @@ class SqliteConfigStore:
         "mappings": "item_id",
         "skus": "sku_id",
         "recipes": "sku_id",
+        "fixed_costs": "id",
     }
 
     def _snapshot(self, table_name: str, pk: str) -> dict[str, Any] | None:
@@ -748,6 +750,133 @@ class SqliteConfigStore:
         ).fetchall()
         header["ingredients"] = [list(row) for row in rows]
         return header
+
+    def fixed_costs(self) -> list[FixedCostEntry]:
+        """Every stored fixed cost, oldest first (Wave 2 slice 3).
+
+        Returned in the engine's own shape so the period review can consume
+        the list directly (``build_period_review(..., fixed_costs=...)``).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, label, category, amount, kind, period, ended_at"
+                " FROM fixed_costs ORDER BY id"
+            ).fetchall()
+        return [
+            FixedCostEntry(
+                entry_id=entry_id,
+                label=label,
+                category=category,
+                amount=Decimal(amount),
+                kind=kind,
+                period=_parse_year_month(period),
+                ended_at=date.fromisoformat(ended_at) if ended_at else None,
+            )
+            for entry_id, label, category, amount, kind, period, ended_at in rows
+        ]
+
+    def create_fixed_cost(
+        self,
+        *,
+        label: str,
+        category: str,
+        amount: Decimal,
+        kind: str,
+        period: tuple[int, int],
+        created_by: str,
+        session_id: str | None = None,
+    ) -> int:
+        """Store a new fixed cost (recurring or one-off), audit-logged.
+
+        ``period`` is the ``(year, month)`` a one-off applies to, or the
+        first month a recurring row applies from. Returns the new row's id.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO fixed_costs"
+                " (label, category, amount, kind, period, created_at, created_by)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    label,
+                    category,
+                    str(amount),
+                    kind,
+                    _format_year_month(period),
+                    self._now(),
+                    created_by,
+                ),
+            )
+            entry_id = int(cursor.lastrowid or 0)
+            self._record_audit(
+                "fixed_costs",
+                str(entry_id),
+                old=None,
+                new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
+                changed_by=created_by,
+                session_id=session_id,
+            )
+        return entry_id
+
+    def end_fixed_cost(
+        self,
+        entry_id: int,
+        *,
+        ended_on: date,
+        updated_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Stop a recurring fixed cost applying after ``ended_on``'s month.
+
+        The month it is ended in still charges in full (ending rent
+        mid-month does not un-charge a month already paid); later months
+        charge nothing. Audit-logged like every config edit. Returns
+        ``False`` for an unknown id.
+        """
+        with self._lock, self._conn:
+            old = self._row_snapshot("fixed_costs", "id", str(entry_id))
+            if old is None:
+                return False
+            self._conn.execute(
+                "UPDATE fixed_costs SET ended_at = ? WHERE id = ?",
+                (ended_on.isoformat(), entry_id),
+            )
+            self._record_audit(
+                "fixed_costs",
+                str(entry_id),
+                old=old,
+                new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
+                changed_by=updated_by,
+                session_id=session_id,
+            )
+        return True
+
+    def delete_fixed_cost(
+        self,
+        entry_id: int,
+        *,
+        deleted_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Remove a fixed cost entirely, audit-logged (revert restores it).
+
+        Deletion is for rows that should never have applied (a typo, a
+        duplicate); a cost that genuinely stopped is *ended*, which keeps
+        its history in past months. Returns ``False`` for an unknown id.
+        """
+        with self._lock, self._conn:
+            old = self._row_snapshot("fixed_costs", "id", str(entry_id))
+            if old is None:
+                return False
+            self._conn.execute("DELETE FROM fixed_costs WHERE id = ?", (entry_id,))
+            self._record_audit(
+                "fixed_costs",
+                str(entry_id),
+                old=old,
+                new=None,
+                changed_by=deleted_by,
+                session_id=session_id,
+            )
+        return True
 
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
@@ -1136,6 +1265,18 @@ def _decimal_or_none_to_str(value: Decimal | None) -> str | None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_year_month(value: str) -> tuple[int, int]:
+    """``'2026-07'`` -> ``(2026, 7)`` (the stored ``period`` format)."""
+    year_text, month_text = value.split("-", 1)
+    return (int(year_text), int(month_text))
+
+
+def _format_year_month(period: tuple[int, int]) -> str:
+    """``(2026, 7)`` -> ``'2026-07'`` (the stored ``period`` format)."""
+    year, month = period
+    return f"{year:04d}-{month:02d}"
 
 
 def _snapshot_price(snapshot: dict[str, Any] | None) -> Decimal | None:
