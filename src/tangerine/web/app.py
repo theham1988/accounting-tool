@@ -42,7 +42,7 @@ from starlette.background import BackgroundTask
 from ..config.loader import load_assignees
 from ..coverage import build_item_coverage, build_sku_coverage
 from ..daily_review import DailyReview, build_daily_review
-from ..period_review import build_period_review
+from ..period_review import build_item_performance, build_period_review
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
@@ -495,6 +495,7 @@ def create_app(
         start: str | None = None,
         end: str | None = None,
         month: str | None = None,
+        item: str | None = None,
     ) -> HTMLResponse:
         """The one report page, rendered in a mode (Wave 2 slice 2).
 
@@ -552,8 +553,26 @@ def create_app(
             return _render_period_review(
                 request, app, first_day, last_day, mode="month"
             )
+        if mode == "item":
+            if item is None or start is None or end is None:
+                return HTMLResponse(
+                    "Item mode needs item, start, and end.", status_code=400
+                )
+            try:
+                start_date = date.fromisoformat(start)
+                end_date = date.fromisoformat(end)
+            except ValueError:
+                return HTMLResponse(
+                    "Invalid start/end (expected YYYY-MM-DD).", status_code=400
+                )
+            if end_date < start_date:
+                return HTMLResponse(
+                    "Period end precedes start.", status_code=400
+                )
+            return _render_item_review(request, app, item, start_date, end_date)
         return HTMLResponse(
-            "Unknown mode (expected day, period, or month).", status_code=400
+            "Unknown mode (expected day, period, month, or item).",
+            status_code=400,
         )
 
     @app.get("/admin", response_class=HTMLResponse)
@@ -1258,6 +1277,61 @@ def _audit_field_changes(entry: AuditEntry) -> list[dict[str, Any]]:
     ]
 
 
+def _month_label(day: date) -> str:
+    """The breadcrumb's month wording, e.g. ``Jul 2026``."""
+    return day.strftime("%b %Y")
+
+
+def _day_label(day: date) -> str:
+    """The breadcrumb's day wording, e.g. ``15 Jul`` (no zero padding)."""
+    return f"{day.day} {day.strftime('%b')}"
+
+
+def _day_crumbs(day: date) -> list[dict[str, str | None]]:
+    """The zoom trail down to one day: Review › Jul 2026 › 15 Jul.
+
+    Home links to ``/``, the month crumb to that month's Month mode; the
+    day itself is the current step (its ``href`` is filled in only when a
+    deeper view — the item drill — appends another level).
+    """
+    return [
+        {"label": "Review", "href": "/"},
+        {
+            "label": _month_label(day),
+            "href": f"/review?mode=month&month={day.strftime('%Y-%m')}",
+        },
+        {"label": _day_label(day), "href": None},
+    ]
+
+
+def _period_crumbs(start: date, end: date, mode: str) -> list[dict[str, str | None]]:
+    """The zoom trail for a range: Review › Jul 2026 (or › 9 Jul – 15 Jul)."""
+    label = (
+        _month_label(start)
+        if mode == "month"
+        else f"{_day_label(start)} – {_day_label(end)}"
+    )
+    return [{"label": "Review", "href": "/"}, {"label": label, "href": None}]
+
+
+def _item_crumbs(name: str, start: date, end: date) -> list[dict[str, str | None]]:
+    """The item drill's trail: one level deeper than the range it came from.
+
+    A one-day drill (the Day-mode click) walks Review › month › day › item;
+    a multi-day drill steps back to its Period view instead of a single day.
+    """
+    if start == end:
+        crumbs = _day_crumbs(start)
+        crumbs[-1]["href"] = f"/review?mode=day&day={start.isoformat()}"
+    else:
+        crumbs = _period_crumbs(start, end, "period")
+        crumbs[-1]["href"] = (
+            f"/review?mode=period&start={start.isoformat()}&end={end.isoformat()}"
+        )
+    crumbs.append({"label": name, "href": None})
+    return crumbs
+
+
 def _mode_switcher_urls(anchor: date) -> dict[str, str]:
     """The mode control's three deep-linkable targets, anchored on a date.
 
@@ -1313,6 +1387,44 @@ def _render_period_review(
             # them so); named for the shared _segment_cm.html partial.
             "segment_margins": review.segment_margins,
             "switcher": _mode_switcher_urls(end),
+            "breadcrumb": _period_crumbs(start, end, mode),
+        },
+    )
+
+
+def _render_item_review(
+    request: Request,
+    app: FastAPI,
+    item_id: str,
+    start: date,
+    end: date,
+) -> HTMLResponse:
+    """Build one item's performance view and render it (issue #31).
+
+    The drill-down's last zoom step. An unmapped item has no recipe-cost to
+    show, so its URL is a 404 — the drill is never fabricated; the item's fix
+    path stays the needs-attention link into item coverage.
+    """
+    templates: Jinja2Templates = app.state.templates
+    source: StoreSource = app.state.source
+
+    perf = build_item_performance(
+        source=source, item_id=item_id, start=start, end=end
+    )
+    if perf is None:
+        return HTMLResponse(
+            "Unknown or unmapped item — no recipe cost to show.",
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="item_review.html",
+        context={
+            "request": request,
+            "mode": "item",
+            "perf": perf,
+            "switcher": _mode_switcher_urls(end),
+            "breadcrumb": _item_crumbs(perf.name, start, end),
         },
     )
 
@@ -1410,6 +1522,7 @@ def _render_review(
             "request": request,
             "mode": "day",
             "switcher": _mode_switcher_urls(review_date),
+            "breadcrumb": _day_crumbs(review_date),
             "review": review,
             "segment_margins": segment_margins,
             "has_sales": has_sales,

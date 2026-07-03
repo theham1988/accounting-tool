@@ -22,7 +22,7 @@ from tangerine.daily_review import build_daily_review
 from tangerine.fixed_costs import FixedCostEntry, fixed_costs_for_period
 from tangerine.loyverse.source import StoreSource
 from tangerine.loyverse.store import InMemoryLoyverseStore, SaleRecord
-from tangerine.period_review import build_period_review
+from tangerine.period_review import build_item_performance, build_period_review
 from tangerine.storage.config_store import SqliteConfigStore, seed_config
 from tangerine.types import Sale, Segment
 
@@ -565,3 +565,201 @@ def test_per_day_rows_carry_each_days_headline(tmp_path: Path) -> None:
     assert first.revenue == D("80") and first.gross_margin == D("75")
     assert quiet.revenue == D("0") and quiet.cogs == D("0")
     assert third.gross_margin == D("75")
+
+
+# --- item performance (the drill-down's last zoom step, issue #31) --------------
+
+
+def test_item_performance_aggregates_one_item_at_as_of_date_prices(
+    tmp_path: Path,
+) -> None:
+    """Issue #31: a mapped item's performance over a period.
+
+    The croissant sells on 3, 15, and 16 Jul at 80 THB; butter is repriced
+    0.50 -> 1.00 THB/g on 15 Jul. Its item-performance view over 1–16 Jul
+    shows:
+
+        units    = 3
+        revenue  = 3 x 80              = 240
+        cogs     = 5 + 10 + 10         = 25   (each day at its own price)
+        gm       = 240 - 25            = 215
+        gm %     = 215 / 240           = 89.58
+
+    plus one row per day it sold (quiet days omitted — the day-by-day answers
+    "when did it sell", not "render a calendar"), and the SKU behind it (the
+    "edit recipe" link's target).
+    """
+    recipes_yaml, costs_yaml = _CROISSANT_CONFIG
+    sales = [
+        _sale("i-croissant", date(2026, 7, 3), "80", "l-1"),
+        _sale("i-croissant", date(2026, 7, 15), "80", "l-2"),
+        _sale("i-croissant", date(2026, 7, 16), "80", "l-3"),
+    ]
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    source, config_store = _seeded_source(
+        tmp_path,
+        recipes_yaml=recipes_yaml,
+        costs_yaml=costs_yaml,
+        sales=sales,
+        clock=clock,
+    )
+    config_store.save_cost(
+        "butter",
+        pack_price=D("1000"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 15),
+    )
+
+    perf = build_item_performance(
+        source=source,
+        item_id="i-croissant",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 16),
+    )
+
+    assert perf is not None
+    assert perf.item_id == "i-croissant"
+    assert perf.name == "Butter Croissant"
+    assert perf.sku_id == "croissant"
+    assert perf.units_sold == 3
+    assert perf.revenue == D("240")
+    assert perf.cogs == D("25")
+    assert perf.gross_margin == D("215")
+    assert perf.gross_margin_pct == D("89.58")
+
+    assert [(d.day, d.units_sold, d.cogs) for d in perf.days] == [
+        (date(2026, 7, 3), 1, D("5")),
+        (date(2026, 7, 15), 1, D("10")),
+        (date(2026, 7, 16), 1, D("10")),
+    ]
+
+
+def test_item_performance_is_none_for_an_unmapped_item(tmp_path: Path) -> None:
+    """Issue #31 AC: unmapped items do not offer the performance drill.
+
+    A seasonal special with no recipe mapping has no recipe-cost to show —
+    its numbers would be fabricated. The engine answers None; the item's fix
+    path stays the needs-attention link into item coverage.
+    """
+    recipes_yaml, costs_yaml = _CROISSANT_CONFIG
+    sales = [_sale("i-special", date(2026, 7, 2), "150", "l-1")]
+    source, _ = _seeded_source(
+        tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales
+    )
+
+    perf = build_item_performance(
+        source=source,
+        item_id="i-special",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 7),
+    )
+
+    assert perf is None
+
+
+def test_item_performance_carries_the_target_margin_flag(tmp_path: Path) -> None:
+    """Issue #31 AC: the item view shows its target-margin flag over the period.
+
+    A croissant with a 95% target margin sells at 80 THB against 5 THB COGS
+    (93.75% actual): the period view carries the target and the below-target
+    flag, so "was it underwater all week" is answered on the drill itself.
+    """
+    recipes_yaml = """
+recipes:
+  - sku_id: croissant
+    name: Butter Croissant
+    segment: cafe
+    target_gross_margin_pct: "95"
+    ingredients:
+      - { sku_id: butter, quantity: "10" }
+
+mappings:
+  - { item_id: i-croissant, sku_id: croissant }
+"""
+    _, costs_yaml = _CROISSANT_CONFIG
+    sales = [_sale("i-croissant", date(2026, 7, 2), "80", "l-1")]
+    source, _ = _seeded_source(
+        tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales
+    )
+
+    perf = build_item_performance(
+        source=source,
+        item_id="i-croissant",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 7),
+    )
+
+    assert perf is not None
+    assert perf.gross_margin_pct == D("93.75")
+    assert perf.target_gross_margin_pct == D("95")
+    assert perf.below_target
+
+
+def test_item_performance_flag_reflects_period_margin_not_per_day_or(
+    tmp_path: Path,
+) -> None:
+    """The below_target flag matches the displayed period margin, not a per-day OR.
+
+    Bug regression: ``below_target`` used to OR each day's per-day flag. With
+    as-of-date pricing (or just different sell prices per day), one day's
+    margin % can sit below target while the period aggregate — the number
+    shown next to the flag — sits above it. The per-day OR would then answer
+    True (one day was below) and contradict the displayed period %, e.g.
+    "Gross margin 73% / Target 60% / BELOW TARGET". The flag now compares
+    the period-level margin % against the target, matching the number beside
+    it.
+
+    Worked example — a latte with a 60% target, recipe 10 g beans at
+    5.00 THB/g = 50 THB COGS per unit:
+
+      * Day 1 (low-price day): 1 unit at 55 THB -> margin 5/55 = 9.09%
+        (below the 60% target). Low volume, so it barely moves the period.
+      * Day 2: 10 units at 200 THB -> revenue 2000, COGS 500, margin 1500
+        = 75% (above the 60% target). High volume dominates the period.
+
+    Period: revenue 2055, COGS 550, margin 1505/2055 = 73.24% — above the
+    60% target. The old per-day OR answered True (day 1 tripped it); the
+    period-level comparison answers False, matching "73.24% / target 60%".
+    """
+    recipes_yaml = """
+recipes:
+  - sku_id: latte
+    name: Latte
+    segment: cafe
+    target_gross_margin_pct: "60"
+    ingredients:
+      - { sku_id: beans, quantity: "10" }
+
+mappings:
+  - { item_id: i-latte, sku_id: latte }
+"""
+    costs_yaml = """
+costs:
+  beans: { price: "5.00", updated_at: "2026-06-01" }
+"""
+    # Day 2 is 10 units at 200 THB. _sale() builds a single-unit SaleRecord;
+    # record ten of them on the same day to get the high-margin volume.
+    day2_sales = [
+        _sale("i-latte", date(2026, 7, 2), "200", f"l-2-{i}") for i in range(10)
+    ]
+    sales = [_sale("i-latte", date(2026, 7, 1), "55", "l-1"), *day2_sales]
+    source, _ = _seeded_source(
+        tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales
+    )
+
+    perf = build_item_performance(
+        source=source,
+        item_id="i-latte",
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 2),
+    )
+
+    assert perf is not None
+    assert perf.revenue == D("2055")  # 55 + 10 x 200
+    assert perf.cogs == D("550")  # 11 x 50
+    assert perf.gross_margin == D("1505")
+    assert perf.gross_margin_pct == D("73.24")
+    assert perf.target_gross_margin_pct == D("60")
+    assert not perf.below_target  # 73.24% > 60%, even though day 1 was below.

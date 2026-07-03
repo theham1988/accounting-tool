@@ -68,6 +68,8 @@
     <!--/section:stale-banner-->
     {% endif %}
 
+    {% include "_breadcrumb.html" %}
+
     {% include "_mode_switcher.html" %}
 
     <!--section:day-nav-->
@@ -120,6 +122,14 @@
     </p>
     <!--/section:last-sync-->
 
+    {# Rankings and the below-target list carry reliable (mapped, priced)
+       rows only, so every name can link to the item-performance drill
+       (issue #31) — anchored on this day, the PRD's worked interaction. #}
+    {% macro item_link(im) -%}
+    <a class="item-performance-link"
+       href="/review?mode=item&amp;item={{ im.item_id }}&amp;start={{ review.day.isoformat() }}&amp;end={{ review.day.isoformat() }}">{{ im.name }}</a>
+    {%- endmacro %}
+
     <div id="review-body">
     <p class="day">For {{ review.day.isoformat() }}</p>
 
@@ -171,7 +181,7 @@
           <!--section:top-by-margin-->
           <ol class="ranking__list">
             {% for im in review.top_by_margin.items %}
-            <li>{{ im.name }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
             {% endfor %}
           </ol>
           <!--/section:top-by-margin-->
@@ -182,7 +192,7 @@
           <!--section:bottom-by-margin-->
           <ol class="ranking__list">
             {% for im in review.bottom_by_margin.items %}
-            <li>{{ im.name }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
             {% endfor %}
           </ol>
           <!--/section:bottom-by-margin-->
@@ -193,7 +203,7 @@
           <!--section:top-by-volume-->
           <ol class="ranking__list">
             {% for im in review.top_by_volume.items %}
-            <li>{{ im.name }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
             {% endfor %}
           </ol>
           <!--/section:top-by-volume-->
@@ -204,7 +214,7 @@
           <!--section:bottom-by-volume-->
           <ol class="ranking__list">
             {% for im in review.bottom_by_volume.items %}
-            <li>{{ im.name }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
             {% endfor %}
           </ol>
           <!--/section:bottom-by-volume-->
@@ -218,7 +228,7 @@
       <!--section:below-target-->
       <ul class="below-target__list">
         {% for im in review.below_target_items %}
-        <li>{{ im.name }} — actual {{ im.gross_margin_pct }}%</li>
+        <li>{{ item_link(im) }} — actual {{ im.gross_margin_pct }}%</li>
         {% endfor %}
       </ul>
       <!--/section:below-target-->
