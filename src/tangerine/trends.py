@@ -109,20 +109,30 @@ def build_trends(
         span=span,
         anchor=anchor,
         buckets=built,
-        weekdays=_weekday_aggregates(built),
+        weekdays=_weekday_aggregates(built, anchor=anchor),
     )
 
 
-def _weekday_aggregates(buckets: tuple[TrendBucket, ...]) -> tuple[WeekdayAggregate, ...]:
+def _weekday_aggregates(
+    buckets: tuple[TrendBucket, ...], *, anchor: date
+) -> tuple[WeekdayAggregate, ...]:
     """Roll the buckets' per-day rows up by weekday, Monday first.
 
-    Month buckets can reach past the trend's anchor (they are full calendar
-    months); days beyond the anchor carry zeros in the period engine's
-    per-day rows, and the anchor's own truncated week never claims them —
-    either way every day is counted exactly once because bucket ranges
-    never overlap.
+    Month buckets are full calendar months and can reach past the trend's
+    anchor (the month the anchor lives in has days that have not happened
+    yet). Those future days carry zeros in the period engine's per-day
+    rows, so counting them would dilute the averages with future zero-days
+    (worst early in the month). They are dropped here by clipping at the
+    anchor — the same rule the weekly span applies via ``_week_ranges``.
+    Bucket ranges never overlap, so after the clip every day is counted
+    exactly once.
     """
-    days = [day for bucket in buckets for day in bucket.review.days]
+    days = [
+        day
+        for bucket in buckets
+        for day in bucket.review.days
+        if day.day <= anchor
+    ]
     aggregates: list[WeekdayAggregate] = []
     for weekday, label in enumerate(_WEEKDAY_LABELS):
         matching = [d for d in days if d.day.weekday() == weekday]

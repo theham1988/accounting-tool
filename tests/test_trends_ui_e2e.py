@@ -463,6 +463,49 @@ def test_day_of_week_breakdown_compares_weekdays_across_the_span(
     assert "6.25" in breakdown
 
 
+def test_monthly_weekday_breakdown_excludes_future_days_in_anchors_month(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """A monthly span's weekday averages count only days up to the anchor.
+
+    ``span=months`` buckets are full calendar months, but the anchor's month
+    has not finished yet — days past the anchor carry zero sales (they have
+    not happened), so counting them dilutes the per-weekday average with
+    future zeros. The breakdown must clip the anchor's month at the anchor,
+    matching the weekly span's truncation rule (regression test for a
+    Bugbot finding on issue #32: weekday counts were inflated by future
+    days in monthly trends).
+
+    Anchor is Wed 15 Jul 2026. One latte (GM 75) sells on Fri 10 Jul. The
+    12-month span (Aug 2025 – Jul 2026) contains 53 Fridays in total, but
+    3 of July's Fridays (17, 24, 31) fall after the anchor and must not
+    count — so the average Friday gross margin is 75 / 50 = 1.50, not
+    75 / 53 ≈ 1.42.
+    """
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=date(2026, 7, 10),
+            price="120",
+        )
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=trends&metric=gross_margin&span=months").text
+
+    breakdown = html.split("<!--section:weekday-breakdown-->")[1].split(
+        "<!--/section:weekday-breakdown-->"
+    )[0]
+    # Friday's average is 75 over the 50 Fridays that have actually happened
+    # across the 12-month span (53 total minus July's 3 future Fridays).
+    assert "1.50" in breakdown
+    # The buggy denominator (all 53 Fridays, including July's future ones)
+    # produced ~1.42 — that value must not appear.
+    assert "1.42" not in breakdown
+
+
 # --- AC: the 10K THB/day goal tracked over weeks/months ---------------------------
 
 
