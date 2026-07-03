@@ -246,7 +246,6 @@ def build_item_performance(
 
     sales = source.sales()
     day_rows: list[ItemDay] = []
-    below_target = False
     current = start
     while current <= end:
         rows = compute_item_margins(
@@ -259,7 +258,6 @@ def build_item_performance(
         if row is None or row.excluded_from_totals:
             current += timedelta(days=1)
             continue
-        below_target = below_target or row.below_target
         day_rows.append(
             ItemDay(
                 day=current,
@@ -274,6 +272,16 @@ def build_item_performance(
     revenue = sum((d.revenue for d in day_rows), Money("0"))
     cogs = sum((d.cogs for d in day_rows), Money("0"))
     gross_margin = revenue - cogs
+    gross_margin_pct_value = gross_margin_pct(gross_margin, revenue)
+    # Compare the period-level margin % against the target — the same number
+    # the view shows next to this flag. OR-ing per-day flags can contradict
+    # the displayed period %, because as-of-date pricing lets an item dip
+    # below target on a low-volume day yet land above it for the period.
+    below_target = (
+        recipe.target_gross_margin_pct is not None
+        and gross_margin_pct_value is not None
+        and gross_margin_pct_value < recipe.target_gross_margin_pct
+    )
     return ItemPerformance(
         item_id=item_id,
         name=recipe.name,
@@ -284,7 +292,7 @@ def build_item_performance(
         revenue=revenue,
         cogs=cogs,
         gross_margin=gross_margin,
-        gross_margin_pct=gross_margin_pct(gross_margin, revenue),
+        gross_margin_pct=gross_margin_pct_value,
         target_gross_margin_pct=recipe.target_gross_margin_pct,
         below_target=below_target,
         days=tuple(day_rows),
