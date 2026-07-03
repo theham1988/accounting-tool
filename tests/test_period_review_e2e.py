@@ -12,12 +12,14 @@ reaching into internals.
 
 from __future__ import annotations
 
+import calendar
 import sqlite3
 from datetime import date, timedelta
 from decimal import Decimal as D
 from pathlib import Path
 
 from tangerine.daily_review import build_daily_review
+from tangerine.fixed_costs import FixedCostEntry, fixed_costs_for_period
 from tangerine.loyverse.source import StoreSource
 from tangerine.loyverse.store import InMemoryLoyverseStore, SaleRecord
 from tangerine.period_review import build_period_review
@@ -304,15 +306,16 @@ def test_one_day_period_agrees_exactly_with_the_daily_review(
 # --- goal status: 10K THB/day x days in range ----------------------------------
 
 
-def test_goal_compares_gross_margin_against_10k_per_day_times_days_in_range(
+def test_goal_compares_net_profit_against_10k_per_day_times_days_in_range(
     tmp_path: Path,
 ) -> None:
-    """Issue #29 AC: Month/Period compare against 10K THB/day x days.
+    """Issue #29/#30 AC: Month/Period compare against 10K THB/day x days.
 
     A 7-day period targets 70,000 THB. One 80 THB croissant sale (75 THB
-    gross margin) misses it by 69,925. Until slice 3 lands fixed costs the
-    comparison basis is gross margin, and the goal says so — no silent
-    net-profit claim.
+    gross margin) misses it by 69,925. From slice 3 the comparison basis is
+    net profit (PRD: net-profit-based for Period/Month, gross-margin-based
+    only for the daily view); with no fixed costs entered the two coincide
+    numerically but the basis label says what is being compared.
     """
     recipes_yaml, costs_yaml = _CROISSANT_CONFIG
     sales = [_sale("i-croissant", date(2026, 7, 1), "80", "l-1")]
@@ -326,10 +329,208 @@ def test_goal_compares_gross_margin_against_10k_per_day_times_days_in_range(
 
     assert review.goal.days_in_range == 7
     assert review.goal.target == D("70000")
-    assert review.goal.actual == review.gross_margin == D("75")
+    assert review.goal.actual == review.net_profit == D("75")
     assert not review.goal.met
     assert review.goal.surplus == D("-69925")
-    assert review.goal.basis == "gross_margin"
+    assert review.goal.basis == "net_profit"
+
+
+# --- fixed costs: recurring + one-off, exact for calendar months ---------------
+
+
+def test_recurring_fixed_cost_is_exact_over_a_calendar_month() -> None:
+    """Issue #30's worked example: "Rent, 50,000/month, recurring", July view.
+
+    A recurring cost defined once (from June) applies to July in full. A
+    whole-calendar-month range is exact — no apportioning, no estimate flag
+    (ADR-0004 decision 3: "calendar-month numbers stay exact").
+    """
+    rent = FixedCostEntry(
+        entry_id=1,
+        label="Rent",
+        category="rent",
+        amount=D("50000"),
+        kind="recurring",
+        period=(2026, 6),
+    )
+
+    result = fixed_costs_for_period(
+        start=date(2026, 7, 1), end=date(2026, 7, 31), entries=[rent]
+    )
+
+    assert not result.estimated
+    assert result.total == D("50000")
+    (line,) = result.lines
+    assert line.label == "Rent"
+    assert line.amount == D("50000")
+    assert not line.apportioned
+
+
+def test_sub_month_range_apportions_by_days_and_flags_the_estimate() -> None:
+    """The PRD's estimate example: last 7 days of July against 50K rent.
+
+    ``(7 / 31) × 50,000 = 11,290.32`` on an apportioned line, and the whole
+    result carries ``estimated=True`` — the label the ADR requires so a
+    sub-month net profit is never presented as exact.
+    """
+    rent = FixedCostEntry(
+        entry_id=1,
+        label="Rent",
+        category="rent",
+        amount=D("50000"),
+        kind="recurring",
+        period=(2026, 6),
+    )
+
+    result = fixed_costs_for_period(
+        start=date(2026, 7, 25), end=date(2026, 7, 31), entries=[rent]
+    )
+
+    assert result.estimated
+    (line,) = result.lines
+    assert line.apportioned
+    assert line.monthly_amount == D("50000")
+    assert line.amount == D("11290.32")
+    assert result.total == D("11290.32")
+
+
+def test_oneoff_applies_only_in_its_month() -> None:
+    """A one-off repair entered for July lands in July and nowhere else."""
+    repair = FixedCostEntry(
+        entry_id=1,
+        label="Espresso machine repair",
+        category="other",
+        amount=D("8000"),
+        kind="oneoff",
+        period=(2026, 7),
+    )
+
+    july = fixed_costs_for_period(
+        start=date(2026, 7, 1), end=date(2026, 7, 31), entries=[repair]
+    )
+    august = fixed_costs_for_period(
+        start=date(2026, 8, 1), end=date(2026, 8, 31), entries=[repair]
+    )
+
+    assert july.total == D("8000")
+    assert not july.estimated
+    assert august.total == D("0")
+    assert august.lines == ()
+
+
+def test_recurring_respects_its_first_month_and_its_ended_month() -> None:
+    """A recurring cost runs from its first month to its end month, inclusive.
+
+    Utilities defined from July and ended on 15 September: June charges
+    nothing (before the first month), July and September charge in full
+    (ending a cost mid-month does not un-charge the month it was ended in),
+    October charges nothing.
+    """
+    utilities = FixedCostEntry(
+        entry_id=1,
+        label="Utilities",
+        category="utilities",
+        amount=D("12000"),
+        kind="recurring",
+        period=(2026, 7),
+        ended_at=date(2026, 9, 15),
+    )
+
+    def month_total(year: int, month: int) -> D:
+        last = calendar.monthrange(year, month)[1]
+        return fixed_costs_for_period(
+            start=date(year, month, 1),
+            end=date(year, month, last),
+            entries=[utilities],
+        ).total
+
+    assert month_total(2026, 6) == D("0")
+    assert month_total(2026, 7) == D("12000")
+    assert month_total(2026, 9) == D("12000")
+    assert month_total(2026, 10) == D("0")
+
+
+# --- net profit: the period review consumes fixed costs ------------------------
+
+
+def test_month_review_shows_exact_net_profit_and_goal_moves_to_net_basis(
+    tmp_path: Path,
+) -> None:
+    """Issue #30 AC: Month mode's net profit = segment CM − entity fixed costs.
+
+    A July of daily croissant sales (31 × 75 = 2,325 gross margin) against
+    50K recurring rent: net profit = 2,325 − 50,000 = −47,675, exact (no
+    estimate flag for a calendar month), and the goal now compares *net
+    profit* — not gross margin — against 10K × 31.
+    """
+    recipes_yaml, costs_yaml = _CROISSANT_CONFIG
+    sales = [
+        _sale("i-croissant", date(2026, 7, 1) + timedelta(days=i), "80", f"l-{i}")
+        for i in range(31)
+    ]
+    source, _ = _seeded_source(
+        tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales
+    )
+    rent = FixedCostEntry(
+        entry_id=1,
+        label="Rent",
+        category="rent",
+        amount=D("50000"),
+        kind="recurring",
+        period=(2026, 6),
+    )
+
+    review = build_period_review(
+        source=source,
+        start=date(2026, 7, 1),
+        end=date(2026, 7, 31),
+        fixed_costs=[rent],
+    )
+
+    assert review.gross_margin == D("2325")
+    assert review.fixed_costs.total == D("50000")
+    assert not review.fixed_costs.estimated
+    assert review.net_profit == D("-47675")
+    assert review.goal.basis == "net_profit"
+    assert review.goal.actual == D("-47675")
+    assert review.goal.target == D("310000")
+    assert not review.goal.met
+
+
+def test_sub_month_review_carries_the_apportioned_estimate(
+    tmp_path: Path,
+) -> None:
+    """Issue #30 AC: a 7-day period shows apportioned costs as an estimate.
+
+    Last 7 days of July against 50K rent: the review's fixed costs carry
+    ``estimated=True`` and 11,290.32 (7/31 of the month), and net profit is
+    gross margin minus that estimate — the number the template must label.
+    """
+    recipes_yaml, costs_yaml = _CROISSANT_CONFIG
+    sales = [_sale("i-croissant", date(2026, 7, 28), "80", "l-1")]
+    source, _ = _seeded_source(
+        tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales
+    )
+    rent = FixedCostEntry(
+        entry_id=1,
+        label="Rent",
+        category="rent",
+        amount=D("50000"),
+        kind="recurring",
+        period=(2026, 6),
+    )
+
+    review = build_period_review(
+        source=source,
+        start=date(2026, 7, 25),
+        end=date(2026, 7, 31),
+        fixed_costs=[rent],
+    )
+
+    assert review.fixed_costs.estimated
+    assert review.fixed_costs.total == D("11290.32")
+    assert review.net_profit == D("75") - D("11290.32")
+    assert review.goal.actual == review.net_profit
 
 
 # --- per-day rows (drill-down foundation) --------------------------------------

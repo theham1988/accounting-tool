@@ -53,10 +53,51 @@
         <dt>Revenue</dt><dd>{{ review.revenue | money }} THB</dd>
         <dt>COGS (recipe cost)</dt><dd>{{ review.cogs | money }} THB</dd>
         <dt>Gross margin</dt><dd>{{ review.gross_margin | money }} THB</dd>
+        <dt>Fixed costs{% if review.fixed_costs.estimated %} (estimated, apportioned){% endif %}</dt>
+        <dd>{{ review.fixed_costs.total | money }} THB</dd>
+        <dt>Net profit{% if review.fixed_costs.estimated %} (estimate){% endif %}</dt>
+        <dd class="headline__net-profit">{{ review.net_profit | money }} THB</dd>
       </dl>
     </section>
 
     {% include "_segment_cm.html" %}
+
+    <section class="fixed-costs-block">
+      <h2>{% if review.fixed_costs.estimated %}Estimated fixed costs (apportioned){% else %}Fixed costs{% endif %}</h2>
+      <!--section:fixed-costs-->
+      {% if review.fixed_costs.lines %}
+      {% if review.fixed_costs.estimated %}
+      <p class="fixed-costs-block__estimate-note">
+        This range does not cover whole calendar months, so recurring costs
+        are day-apportioned — (days in range / days in month) &times; monthly
+        amount. An estimate: the exact number lives on the calendar month.
+      </p>
+      {% endif %}
+      <ul class="fixed-costs-block__lines">
+        {% for line in review.fixed_costs.lines %}
+        <li class="fixed-costs-block__line">
+          {{ line.label }} ({{ line.category }}) —
+          {{ line.amount | money }} THB{% if line.apportioned %}
+          <span class="fixed-costs-block__apportioned">apportioned from
+          {{ line.monthly_amount | money }} THB/month</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="fixed-costs-block__total">
+        Total: <strong>{{ review.fixed_costs.total | money }}</strong> THB
+      </p>
+      <p class="fixed-costs-block__entity-note">
+        Entity-level — never allocated to a segment.
+        <a href="/admin/fixed-costs">Edit in Admin &rarr;</a>
+      </p>
+      {% else %}
+      <p class="fixed-costs-block__empty">
+        No fixed costs apply to this range.
+        <a href="/admin/fixed-costs">Enter them in Admin &rarr;</a>
+      </p>
+      {% endif %}
+      <!--/section:fixed-costs-->
+    </section>
 
     {% if review.needs_attention %}
     <section class="needs-attention">
@@ -89,14 +130,15 @@
       <dl class="goal__stats">
         <dt>Target (10,000 THB/day &times; {{ review.goal.days_in_range }} days)</dt>
         <dd>{{ review.goal.target | money }} THB</dd>
-        <dt>Actual (gross margin)</dt>
+        <dt>Actual (net profit{% if review.fixed_costs.estimated %} — estimate{% endif %})</dt>
         <dd>{{ review.goal.actual | money }} THB</dd>
         <dt>Status</dt>
         <dd>{% if review.goal.met %}Met{% else %}Missing{% endif %}</dd>
       </dl>
       <p class="goal__basis-note">
-        Compared on <strong>gross margin</strong> — fixed costs are not yet
-        entered, so this is not a net-profit number.
+        Compared on <strong>net profit</strong> — segment contribution margin
+        minus entity fixed costs{% if review.fixed_costs.estimated %},
+        day-apportioned for this sub-month range (an estimate){% endif %}.
       </p>
       <!--/section:goal-->
     </section>

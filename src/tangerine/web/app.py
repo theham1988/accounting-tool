@@ -556,6 +556,121 @@ def create_app(
             "Unknown mode (expected day, period, or month).", status_code=400
         )
 
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_landing(request: Request) -> HTMLResponse:
+        """The Admin destination (Wave 2 slice 3, ADR-0004 decision 4).
+
+        The app's second top-level surface beside the Review: gathers the
+        Wave 1.5 config surfaces (SKUs, items, upload, audit) plus the
+        fixed-cost entry under one navigation umbrella. The gathered pages
+        keep their existing paths so pre-Wave-2 deep links (e.g. the daily
+        review's needs-attention link into ``/items?item=...``) still
+        resolve.
+        """
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request, name="admin.html", context={"request": request}
+        )
+
+    @app.get("/admin/fixed-costs", response_class=HTMLResponse)
+    def fixed_costs_page(request: Request) -> HTMLResponse:
+        """The fixed-cost entry surface (Wave 2 slice 3).
+
+        One page: the add form plus the current entries with end/delete
+        actions. Fixed costs are entity-level — the page never asks for a
+        segment (ADR-0004 decision 3: never allocated).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="fixed_costs.html",
+            context={"request": request, "entries": cfg.fixed_costs()},
+        )
+
+    @app.post("/admin/fixed-costs", response_model=None)
+    def create_fixed_cost(
+        request: Request,
+        label: str = Form(""),
+        category: str = Form("other"),
+        amount: str = Form(""),
+        kind: str = Form("recurring"),
+        period: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Store a new fixed cost from the form, audit-logged.
+
+        ``period`` arrives as ``YYYY-MM`` (the HTML month input's format):
+        the month a one-off applies to, or the first month a recurring cost
+        applies from. The redirect lands back on the list, which re-reads
+        the DB — what the partner sees after saving is what the next Month
+        view will subtract.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        label = label.strip()
+        if not label:
+            return HTMLResponse("Label is required.", status_code=400)
+        if kind not in ("recurring", "oneoff"):
+            return HTMLResponse(
+                "Kind must be recurring or oneoff.", status_code=400
+            )
+        try:
+            amount_value = Decimal(amount.strip())
+        except InvalidOperation:
+            return HTMLResponse("Amount must be a number.", status_code=400)
+        if amount_value < 0:
+            return HTMLResponse("Amount must be ≥ 0.", status_code=400)
+        try:
+            first_day = date.fromisoformat(f"{period}-01")
+        except ValueError:
+            return HTMLResponse(
+                "Month must be YYYY-MM.", status_code=400
+            )
+        cfg.create_fixed_cost(
+            label=label,
+            category=category,
+            amount=amount_value,
+            kind=kind,
+            period=(first_day.year, first_day.month),
+            created_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        return RedirectResponse(url="/admin/fixed-costs", status_code=303)
+
+    @app.post("/admin/fixed-costs/{entry_id}/end", response_model=None)
+    def end_fixed_cost(
+        request: Request, entry_id: int
+    ) -> HTMLResponse | RedirectResponse:
+        """Stop a recurring fixed cost applying after this month (logged).
+
+        Ending is dated *today*: the month the partner ends it in still
+        charges in full (it was already owed); later months charge nothing.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        ended = cfg.end_fixed_cost(
+            entry_id,
+            ended_on=app.state.today,
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not ended:
+            return HTMLResponse("Unknown fixed cost.", status_code=404)
+        return RedirectResponse(url="/admin/fixed-costs", status_code=303)
+
+    @app.post("/admin/fixed-costs/{entry_id}/delete", response_model=None)
+    def delete_fixed_cost(
+        request: Request, entry_id: int
+    ) -> HTMLResponse | RedirectResponse:
+        """Remove a fixed cost from every month (logged; revert restores)."""
+        cfg: SqliteConfigStore = app.state.config_store
+        deleted = cfg.delete_fixed_cost(
+            entry_id,
+            deleted_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not deleted:
+            return HTMLResponse("Unknown fixed cost.", status_code=404)
+        return RedirectResponse(url="/admin/fixed-costs", status_code=303)
+
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request) -> HTMLResponse:
         """The SKU view (Wave 1.5, Slice 2): one row per SKU, mapping/recipe/
@@ -1175,12 +1290,18 @@ def _render_period_review(
 
     Month mode is the same engine over the calendar month (``mode`` only
     changes the page's framing — title, active switcher tab, month picker),
-    so Period and Month cannot disagree.
+    so Period and Month cannot disagree. Fixed costs come from the config
+    store (Wave 2 slice 3): exact over calendar months, a labelled
+    apportioned estimate otherwise — the engine flags which, the template
+    labels it.
     """
     templates: Jinja2Templates = app.state.templates
     source: StoreSource = app.state.source
+    cfg: SqliteConfigStore = app.state.config_store
 
-    review = build_period_review(source=source, start=start, end=end)
+    review = build_period_review(
+        source=source, start=start, end=end, fixed_costs=cfg.fixed_costs()
+    )
     return templates.TemplateResponse(
         request=request,
         name="period_review.html",

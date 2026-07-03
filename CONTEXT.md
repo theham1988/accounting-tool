@@ -204,6 +204,18 @@ labelled as an estimate. Apportionment is a documented estimate
 (utilities are not truly linear); the un-apportioned monthly number
 remains the honest one.
 
+**Wave 2 slice 3 has landed** (entry in Admin at `/admin/fixed-costs`),
+pinning two semantics. **Ending** a recurring cost is dated the day the
+partner ends it, and the end month still charges in full — a month
+already owed is not un-charged; later months charge nothing. Ending is
+distinct from **deleting**, which removes the row from every month (for
+typos/duplicates; the audit log's revert restores it). In a partially-
+covered month, one-off costs are day-apportioned by the same ratio as
+recurring ones — the cost belongs to the month, not to a day in it, and
+the estimate label covers both. Fixed-cost edits write to the same
+`audit_log` (`table='fixed_costs'`) and revert the same way as every
+other config edit.
+
 ## Reporting periods and modes
 
 The reporting surface is one page rendered in four **modes** — **Day,
