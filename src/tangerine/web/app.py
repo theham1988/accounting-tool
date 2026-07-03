@@ -43,6 +43,7 @@ from ..config.loader import load_assignees
 from ..coverage import build_item_coverage, build_sku_coverage
 from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
+from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
@@ -56,6 +57,7 @@ from ..storage.config_store import (
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..upload import generate_template_csv, parse_upload
 from ..types import Assignee, Segment, SegmentMargin
+from .sparkline import ChartPoint, bar_row, sparkline_svg
 from .auth import (
     AuthConfig,
     AuthMiddleware,
@@ -496,6 +498,8 @@ def create_app(
         end: str | None = None,
         month: str | None = None,
         item: str | None = None,
+        metric: str = "gross_margin",
+        span: str = "weeks",
     ) -> HTMLResponse:
         """The one report page, rendered in a mode (Wave 2 slice 2).
 
@@ -504,8 +508,10 @@ def create_app(
         so pre-Wave-2 deep links keep resolving.
         ``?mode=period&start=...&end=...`` is the period engine over an
         arbitrary inclusive range; ``?mode=month&month=YYYY-MM`` is the same
-        engine over the calendar month. Malformed or backwards params are
-        client errors (400) rather than misleading zero-filled reports.
+        engine over the calendar month. ``?mode=trends&metric=...&span=...``
+        is the trend view (slice 5): the period engine per weekly/monthly
+        bucket, rendered as server-side SVG. Malformed or backwards params
+        are client errors (400) rather than misleading zero-filled reports.
         """
         if mode == "day":
             if day is None:
@@ -570,8 +576,10 @@ def create_app(
                     "Period end precedes start.", status_code=400
                 )
             return _render_item_review(request, app, item, start_date, end_date)
+        if mode == "trends":
+            return _render_trends(request, app, metric=metric, span=span)
         return HTMLResponse(
-            "Unknown mode (expected day, period, month, or item).",
+            "Unknown mode (expected day, period, month, item, or trends).",
             status_code=400,
         )
 
@@ -1333,10 +1341,12 @@ def _item_crumbs(name: str, start: date, end: date) -> list[dict[str, str | None
 
 
 def _mode_switcher_urls(anchor: date) -> dict[str, str]:
-    """The mode control's three deep-linkable targets, anchored on a date.
+    """The mode control's four deep-linkable targets, anchored on a date.
 
     From any view whose anchor day is ``anchor``: Day is that day, Period is
-    the 7 days ending on it, Month is its calendar month. Every target is an
+    the 7 days ending on it, Month is its calendar month, Trends is the
+    default trend view (always anchored on yesterday — a trend is about the
+    business's shape now, not about the day being viewed). Every target is an
     ordinary URL (mode + date/range as query params), so switching modes
     works without JavaScript and every state is shareable (ADR-0004
     decision 4).
@@ -1349,7 +1359,186 @@ def _mode_switcher_urls(anchor: date) -> dict[str, str]:
             f"&end={anchor.isoformat()}"
         ),
         "month": f"/review?mode=month&month={anchor.strftime('%Y-%m')}",
+        "trends": "/review?mode=trends",
     }
+
+
+#: The trend metrics the partner can plot, in display order. Each maps its
+#: query-param value to a human title (issue #32 AC: revenue, COGS, gross
+#: margin, and segment CM week-over-week / month-over-month).
+_TREND_METRICS: dict[str, str] = {
+    "revenue": "Revenue",
+    "cogs": "COGS (recipe cost)",
+    "gross_margin": "Gross margin",
+    "segment_cm": "Segment contribution margin",
+    "goal": "Goal vs 10,000 THB/day",
+}
+
+_TREND_SPANS: dict[str, str] = {"weeks": "Weekly", "months": "Monthly"}
+
+
+def _render_trends(
+    request: Request, app: FastAPI, *, metric: str, span: str
+) -> HTMLResponse:
+    """Build the trend report and render it as server-side SVG + CSS bars.
+
+    Each bucket is the period engine over that bucket's range (same engine,
+    same as-of-date prices as Period/Month mode), and each bar links into
+    the bucket's Period/Month view — a trend is a navigation surface
+    (ADR-0004 decision 5, issue #32). ``metric`` and ``span`` are query
+    params, so every chart is a deep-linkable, shareable URL.
+    """
+    if metric not in _TREND_METRICS:
+        expected = ", ".join(_TREND_METRICS)
+        return HTMLResponse(
+            f"Unknown trend metric (expected {expected}).", status_code=400
+        )
+    if span not in _TREND_SPANS:
+        return HTMLResponse(
+            "Unknown trend span (expected weeks or months).", status_code=400
+        )
+
+    templates: Jinja2Templates = app.state.templates
+    source: StoreSource = app.state.source
+    anchor = app.state.today - timedelta(days=1)
+
+    report = build_trends(source=source, anchor=anchor, span=span)
+
+    # A bucket's drill-in target is the exact view that renders its range:
+    # a month bucket is a calendar month (Month mode), a week bucket is its
+    # inclusive [start, end] (Period mode) — so the drilled-in page shows
+    # the identical numbers by construction.
+    def _bucket_href(bucket) -> str:  # type: ignore[no-untyped-def]
+        if span == "months":
+            return f"/review?mode=month&month={bucket.start.strftime('%Y-%m')}"
+        return (
+            f"/review?mode=period&start={bucket.start.isoformat()}"
+            f"&end={bucket.end.isoformat()}"
+        )
+
+    bucket_noun = "month" if span == "months" else "week"
+
+    def _chart(
+        key: str, title: str, values: list, *, display: Any = None, note: str = ""
+    ) -> dict[str, str]:  # type: ignore[type-arg]
+        fmt = display if display is not None else _money
+        points = [
+            ChartPoint(
+                label=bucket.label,
+                value=value,
+                href=_bucket_href(bucket),
+                display=fmt(value),
+            )
+            for bucket, value in zip(report.buckets, values)
+        ]
+        return {
+            "key": key,
+            "title": title,
+            "svg": sparkline_svg(points),
+            "bars": bar_row(points),
+            "note": note,
+        }
+
+    if metric == "segment_cm":
+        # One chart per segment, cafe then bar (the engine's canonical
+        # order) — two series that would blur into one polyline otherwise.
+        charts = [
+            _chart(
+                f"segment_cm-{segment.value}",
+                f"{segment.value.capitalize()} contribution margin by {bucket_noun}",
+                [
+                    next(
+                        sm.contribution_margin
+                        for sm in bucket.review.segment_margins
+                        if sm.segment is segment
+                    )
+                    for bucket in report.buckets
+                ],
+            )
+            for segment in _SEGMENT_ORDER
+        ]
+    elif metric == "goal":
+        # Per-bucket attainment of 10K THB/day × days in the bucket, as a
+        # percentage — so a truncated week and a full month compare on one
+        # scale. The engine's goal carries its target (10K × days_in_range)
+        # and its honest basis (gross margin until fixed costs land).
+        charts = [
+            _chart(
+                "goal",
+                f"Goal attainment by {bucket_noun}"
+                f" (10,000 THB/day \u00d7 days in the {bucket_noun})",
+                [
+                    (
+                        bucket.review.goal.actual / bucket.review.goal.target * 100
+                    ).quantize(Decimal("0.01"))
+                    for bucket in report.buckets
+                ],
+                display=lambda pct: f"{pct}%",
+                note=(
+                    "Compared on gross margin — fixed costs are not yet "
+                    "entered, so this is not a net-profit number."
+                ),
+            )
+        ]
+    else:
+        charts = [
+            _chart(
+                metric,
+                f"{_TREND_METRICS[metric]} by {bucket_noun}",
+                [getattr(bucket.review, metric) for bucket in report.buckets],
+            )
+        ]
+
+    # The Mondays-vs-Saturdays breakdown: the selected metric averaged per
+    # weekday across the span. Segment CM has no single per-day scalar, so
+    # its breakdown falls back to gross margin (and says so in the title).
+    weekday_metric = metric if metric in ("revenue", "cogs", "gross_margin") else "gross_margin"
+
+    def _weekday_average(agg: WeekdayAggregate) -> Decimal:
+        total: Decimal = getattr(agg, weekday_metric)
+        return total / agg.day_count if agg.day_count else Decimal("0")
+
+    weekday_points = [
+        ChartPoint(
+            label=agg.label,
+            value=_weekday_average(agg),
+            display=_money(_weekday_average(agg)),
+        )
+        for agg in report.weekdays
+    ]
+    weekday_chart = {
+        "title": (
+            f"By day of week (average {_TREND_METRICS[weekday_metric].lower()}"
+            " per day across the span)"
+        ),
+        "bars": bar_row(weekday_points, css_class="trend-bars trend-bars--weekday"),
+    }
+
+    def _trends_url(m: str, s: str) -> str:
+        return f"/review?mode=trends&metric={m}&span={s}"
+
+    metric_links = [
+        {"label": title, "href": _trends_url(m, span), "active": m == metric}
+        for m, title in _TREND_METRICS.items()
+    ]
+    span_links = [
+        {"label": label, "href": _trends_url(metric, s), "active": s == span}
+        for s, label in _TREND_SPANS.items()
+    ]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="trends_review.html",
+        context={
+            "request": request,
+            "mode": "trends",
+            "charts": charts,
+            "weekday_chart": weekday_chart,
+            "metric_links": metric_links,
+            "span_links": span_links,
+            "switcher": _mode_switcher_urls(anchor),
+        },
+    )
 
 
 def _render_period_review(

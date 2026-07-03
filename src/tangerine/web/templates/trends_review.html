@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trends — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review">
+    <h1>Trends</h1>
+
+    {% include "_mode_switcher.html" %}
+
+    <!--section:metric-switcher-->
+    <nav class="trend-picker" aria-label="Trend metric">
+      {% for link in metric_links %}
+      <a class="trend-picker__link{% if link.active %} trend-picker__link--active{% endif %}"
+         href="{{ link.href }}">{{ link.label }}</a>
+      {% endfor %}
+    </nav>
+    <!--/section:metric-switcher-->
+
+    <!--section:span-switcher-->
+    <nav class="trend-picker" aria-label="Trend span">
+      {% for link in span_links %}
+      <a class="trend-picker__link{% if link.active %} trend-picker__link--active{% endif %}"
+         href="{{ link.href }}">{{ link.label }}</a>
+      {% endfor %}
+    </nav>
+    <!--/section:span-switcher-->
+
+    <div id="review-body">
+
+    {% for chart in charts %}
+    <section class="trend-chart">
+      <h2>{{ chart.title }}</h2>
+      <!--section:trend-chart-{{ chart.key }}-->
+      {{ chart.svg | safe }}
+      {{ chart.bars | safe }}
+      {% if chart.note %}<p class="trend-chart__note">{{ chart.note }}</p>{% endif %}
+      <!--/section:trend-chart-{{ chart.key }}-->
+    </section>
+    {% endfor %}
+
+    <section class="trend-chart trend-chart--weekday">
+      <h2>{{ weekday_chart.title }}</h2>
+      <!--section:weekday-breakdown-->
+      {{ weekday_chart.bars | safe }}
+      <!--/section:weekday-breakdown-->
+    </section>
+
+    </div><!-- /#review-body -->
+  </main>
+</body>
+</html>
