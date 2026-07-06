@@ -153,6 +153,188 @@ recipes:
       - { sku_id: breadcrumbs, quantity: "10" }
     yield_units: 1
 
+  # ----------------------------------------------------------------------
+  # SAUCE & MEAT PREPS — authored from Recipe Book Feb 2024 (Sauce & Meat)
+  # docx, Feb 2024. Quantities are g unless the source says otherwise; the
+  # per-recipe ``yield_units`` is the weight the source says one execution
+  # yields (so a sauce divided into 100g portions has yield 1 and is priced
+  # per gram). Sub-recipes that feed other sauces sit on top so a parent
+  # recipe inherits their ingredients through recursive costing in
+  # scripts/build_cost_spreadsheet.py.
+  # ----------------------------------------------------------------------
+
+  # Building block for Oba Mentaiko Sauce (pickled-veg stock from docx T4).
+  - sku_id: prep-pickled-stock
+    name: "Prep: Pickled Vegetable Stock (น้ำผักดอง)"
+    segment: cafe
+    ingredients:
+      - { sku_id: vinegar-rice, quantity: "600" }
+      - { sku_id: water-filtered, quantity: "600" }
+      - { sku_id: sugar, quantity: "30" }
+      - { sku_id: salt, quantity: "30" }
+    yield_units: 1
+
+  # Knorr brown sauce (docx T0) — a base for Loco Moco and Chili con Carne.
+  - sku_id: sauce-knorr-brown
+    name: "Knorr Brown Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: knorr-brown-powder, quantity: "120" }
+      - { sku_id: water-filtered, quantity: "1000" }
+    yield_units: 1
+
+  # Tangerine brown sauce (docx T1) — house-made reduction base.
+  - sku_id: sauce-tangerine-brown
+    name: "Tangerine Brown Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: carrot, quantity: "200" }
+      - { sku_id: celery, quantity: "120" }
+      - { sku_id: onion, quantity: "250" }
+      - { sku_id: garlic, quantity: "50" }
+      - { sku_id: tomato-paste, quantity: "40" }
+      - { sku_id: bay-leaf, quantity: "2" }      # 2 leaves; counted in "No."
+      - { sku_id: wine-red, quantity: "50" }
+      - { sku_id: water-filtered, quantity: "2000" }
+    yield_units: 1
+
+  # Loco moco sauce (docx T2) — combines the two brown sauces.
+  - sku_id: sauce-loco-moco
+    name: "Loco Moco Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-knorr-brown, quantity: "250" }
+      - { sku_id: sauce-tangerine-brown, quantity: "250" }
+      - { sku_id: onion, quantity: "100" }
+      - { sku_id: oil-vegetable, quantity: "10" }
+    yield_units: 1
+
+  # Oba Mentaiko Sauce (docx T5).
+  - sku_id: sauce-oba
+    name: "Oba Mentaiko Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: garlic, quantity: "5" }
+      - { sku_id: shallot, quantity: "20" }
+      - { sku_id: rosdee-pork, quantity: "2" }
+      - { sku_id: lemon-juice, quantity: "5" }
+      - { sku_id: lime-juice, quantity: "5" }
+      - { sku_id: olive-oil, quantity: "25" }
+      - { sku_id: oba-leaf, quantity: "4" }       # 4 leaves; counted in "No."
+      - { sku_id: prep-pickled-stock, quantity: "50" }
+      - { sku_id: mentaiko-spicy, quantity: "10" }
+    yield_units: 1
+
+  # Balsamic Mustard dressing (docx T6).
+  - sku_id: dressing-balsamic-mustard
+    name: "Balsamic Mustard Dressing"
+    segment: cafe
+    ingredients:
+      - { sku_id: mustard-whole-grain, quantity: "50" }
+      - { sku_id: vinegar-balsamic, quantity: "100" }
+      - { sku_id: olive-oil, quantity: "100" }
+      - { sku_id: honey, quantity: "50" }
+      - { sku_id: chili-powder, quantity: "1" }
+      - { sku_id: rosdee-pork, quantity: "3" }
+    yield_units: 1
+
+  # Ranch Dressing (docx T7).
+  - sku_id: dressing-ranch
+    name: "Ranch Dressing"
+    segment: cafe
+    ingredients:
+      - { sku_id: yogurt-yolido, quantity: "200" }
+      - { sku_id: olive-oil, quantity: "50" }
+      - { sku_id: garlic, quantity: "10" }
+      - { sku_id: garlic-powder, quantity: "3" }
+      - { sku_id: pepper-black, quantity: "3" }
+      - { sku_id: lemon-juice, quantity: "10" }
+      - { sku_id: chili-powder, quantity: "1" }
+      - { sku_id: rosdee-pork, quantity: "3" }
+    yield_units: 1
+
+  # Ahi sauce (docx T9).
+  - sku_id: sauce-ahi
+    name: "Ahi Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-kikkoman, quantity: "30" }
+      - { sku_id: lemon-juice, quantity: "20" }
+      - { sku_id: mirin, quantity: "10" }
+      - { sku_id: rosdee-pork, quantity: "1.25" }   # 1/4 tsp ≈ 1.25 g
+    yield_units: 1
+
+  # Lemon & Lime Sauce (docx T10).
+  - sku_id: sauce-lemon
+    name: "Lemon & Lime Sauce"
+    segment: cafe
+    ingredients:
+      - { sku_id: mayonnaise-qp, quantity: "200" }
+      - { sku_id: mustard-yellow, quantity: "10" }
+      - { sku_id: milk-carnation, quantity: "40" }
+      - { sku_id: lemon-juice, quantity: "10" }
+      - { sku_id: lime-juice, quantity: "10" }
+      - { sku_id: pepper-white, quantity: "1" }
+      - { sku_id: rosdee-pork, quantity: "3" }
+    yield_units: 1
+
+  # Passion fruit jel (docx T11).
+  - sku_id: sauce-passionfruit
+    name: "Passion Fruit Jel"
+    segment: cafe
+    ingredients:
+      - { sku_id: passionfruit-pulp, quantity: "200" }
+      - { sku_id: agar-agar-powder, quantity: "3" }
+      - { sku_id: sugar, quantity: "30" }
+    yield_units: 1
+
+  # Guacamole (docx T12) — used in Mexican items; same-day only.
+  - sku_id: guacamole
+    name: "Guacamole"
+    segment: cafe
+    ingredients:
+      - { sku_id: avocado, quantity: "150" }
+      - { sku_id: shallot, quantity: "30" }
+      - { sku_id: tomato, quantity: "40" }
+      - { sku_id: salt, quantity: "3" }
+      - { sku_id: rosdee-pork, quantity: "1" }
+      - { sku_id: pepper-black, quantity: "1" }
+      - { sku_id: lime-juice, quantity: "20" }
+    yield_units: 1
+
+  # Chili con carne (docx T13) — batched into 80g portions per source.
+  - sku_id: beef-chili-con-carne
+    name: "Chili con Carne"
+    segment: cafe
+    ingredients:
+      - { sku_id: beef-minced, quantity: "300" }
+      - { sku_id: garlic, quantity: "60" }
+      - { sku_id: water-filtered, quantity: "100" }
+      - { sku_id: onion, quantity: "250" }
+      - { sku_id: sauce-tangerine-brown, quantity: "150" }
+      - { sku_id: sauce-knorr-brown, quantity: "150" }
+      - { sku_id: chili-sauce-dry, quantity: "100" }
+      - { sku_id: cumin-powder, quantity: "5" }
+      - { sku_id: paprika-powder, quantity: "8" }
+      - { sku_id: oil-vegetable, quantity: "30" }
+    yield_units: 1
+
+  # Homemade Spam (docx T15) — sous-vide slab batched into 150g portions.
+  - sku_id: spam-homemade
+    name: "Homemade Spam"
+    segment: cafe
+    ingredients:
+      - { sku_id: pork-shoulder-minced, quantity: "1000" }
+      - { sku_id: steak-ham, quantity: "300" }
+      - { sku_id: bacon, quantity: "200" }
+      - { sku_id: sugar, quantity: "15" }
+      - { sku_id: salt, quantity: "10" }
+      - { sku_id: pepper-white, quantity: "5" }
+      - { sku_id: flour-corn, quantity: "20" }
+      - { sku_id: rosdee-pork, quantity: "5" }
+      - { sku_id: water-filtered, quantity: "50" }
+    yield_units: 1
+
   # ======================================================================
   # CAFE — COFFEE
   # ======================================================================
