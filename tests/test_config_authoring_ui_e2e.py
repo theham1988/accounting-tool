@@ -561,6 +561,7 @@ costs:
   beans: { price: "0.65", updated_at: "2026-06-01" }  # 1 kg bag
   milk: { price: "0.02", updated_at: "2026-06-01" }  # 2 l bottle
   flour: { price: "0.05", updated_at: "2026-06-01" }  # 1 kg bag
+  egg: { price: "4.00", updated_at: "2026-06-01" }  # 120/30
 """
 
 
@@ -603,14 +604,20 @@ def test_recipe_editor_renders_existing_ingredients_as_editable_rows(
     assert beans_row < milk_row
 
 
-# --- AC: picker offers only existing SKUs (no orphan references possible) ---
+# --- AC: picker offers only purchasable SKUs and preps (issue #35) ----------
 
 
-def test_ingredient_picker_offers_only_existing_skus(tmp_path: Path) -> None:
-    """The picker is a dropdown over the SKUs the DB actually knows —
-    including flour, costed but not yet used by any recipe — and never a
-    free-text field, so the partner cannot type a ``sku_id`` that points
-    at nothing.
+def test_ingredient_picker_offers_only_purchasables_and_preps(
+    tmp_path: Path,
+) -> None:
+    """The picker offers every purchasable SKU — including flour, costed but
+    not yet used by any recipe — and never a sold-only dish: ``latte`` is
+    produced (it has a recipe) and not a prep, so it cannot honestly be an
+    ingredient and is absent from its own editor's picker.
+
+    This deliberately inverts the pre-#35 test that asserted ``latte``
+    appears: under SKU roles a mis-click can no longer pick a dish as an
+    ingredient and silently produce a garbage cost.
     """
     app = _recipe_app(tmp_path)
     client = _authed_client(app)
@@ -618,20 +625,264 @@ def test_ingredient_picker_offers_only_existing_skus(tmp_path: Path) -> None:
     html = client.get("/skus/latte").text
 
     picker = html.split('name="ingredient_sku_id"')[1].split("</select>")[0]
-    # Every existing SKU is offered, even ones no recipe uses yet.
-    for sku_id in ("beans", "milk", "flour", "latte"):
+    # Every purchasable SKU is offered, even ones no recipe uses yet.
+    for sku_id in ("beans", "milk", "flour"):
         assert f'value="{sku_id}"' in picker
+    # The sold-only dish is not: it is produced and not a prep.
+    assert 'value="latte"' not in picker
     # The ingredient reference is a dropdown, not free text: no text input
     # carries the ingredient_sku_id name.
     assert '<input type="text" name="ingredient_sku_id"' not in html
-    # Only real SKUs appear as options (plus the inline-create affordance,
-    # which deliberately carries a non-SKU sentinel value).
+    # Only purchasables (plus the inline-create affordance's sentinel)
+    # appear as options.
     option_values = [
         part.split('"')[0]
         for part in picker.split('value="')[1:]
     ]
-    known = {"beans", "milk", "flour", "latte", "__create__"}
+    known = {"beans", "milk", "flour", "egg", "__create__"}
     assert set(option_values) <= known
+
+
+def test_ingredient_picker_offers_preps(tmp_path: Path) -> None:
+    """A prep — a produced SKU declared usable inside other recipes — is
+    offered by the picker alongside the purchasables.
+
+    Worked example. ``oba-sauce`` has its own recipe and is consumed by the
+    poke bowl, so the seed auto-flags it prep (usage is the declaration).
+    Opening the poke bowl's editor offers oba-sauce as an ingredient; the
+    poke bowl itself (produced, not prep) is absent.
+    """
+    prep_recipes_yaml = """
+recipes:
+  - sku_id: oba-sauce
+    name: Oba Sauce
+    segment: cafe
+    ingredients:
+      - { sku_id: soy, quantity: "30" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: oba-sauce, quantity: "25" }
+      - { sku_id: rice, quantity: "100" }
+
+mappings:
+  - { item_id: i-poke, sku_id: poke-bowl }
+"""
+    prep_costs_yaml = """
+costs:
+  soy: { price: "0.05", updated_at: "2026-06-01" }  # 1 l bottle
+  rice: { price: "0.03", updated_at: "2026-06-01" }  # 5 kg bag
+"""
+    app = _build_app(
+        tmp_path, recipes_yaml=prep_recipes_yaml, costs_yaml=prep_costs_yaml
+    )
+    client = _authed_client(app)
+
+    html = client.get("/skus/poke-bowl").text
+
+    picker = html.split('name="ingredient_sku_id"')[1].split("</select>")[0]
+    # The prep and the purchasables are offered...
+    for sku_id in ("oba-sauce", "soy", "rice"):
+        assert f'value="{sku_id}"' in picker
+    # ...the sold-only dish is not.
+    assert 'value="poke-bowl"' not in picker
+
+
+# --- AC: sold-only dishes are rejected server-side at recipe save (issue #35)
+
+
+def test_saving_a_recipe_with_a_dish_as_ingredient_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """The picker filter is not merely cosmetic: a crafted POST that names a
+    sold-only dish (``latte``) as an ingredient is rejected server-side
+    with a message naming the offending SKU, and nothing lands.
+
+    Worked example. ``flour`` is purchasable; a POST gives it a recipe
+    containing the latte. The save returns 400, the message names latte,
+    and flour still has no recipe (it stays purchasable).
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/flour/recipe",
+        data={"ingredient_sku_id": ["latte"], "quantity": ["50"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "latte" in response.text
+    # The message says why: a dish is not an allowed ingredient.
+    assert "ingredient" in response.text.lower()
+    # Nothing landed: flour still has no recipe of its own.
+    editor_html = client.get("/skus/flour").text
+    rows = editor_html.split('id="recipe-rows"')[1].split("</ol>")[0]
+    assert "selected" not in rows
+
+
+# --- AC: cycle rejection at recipe save, direct or transitive (issue #35) ---
+
+# Two preps in a chain: marinade goes into oba-sauce, oba-sauce into the
+# poke bowl. Both are auto-flagged prep on seed (usage is the declaration),
+# so both are legal picker options — which is exactly what makes a cycle
+# *possible* to attempt and why the save must catch it.
+_CYCLE_RECIPES_YAML = """
+recipes:
+  - sku_id: marinade
+    name: House Marinade
+    segment: cafe
+    ingredients:
+      - { sku_id: soy, quantity: "50" }
+  - sku_id: oba-sauce
+    name: Oba Sauce
+    segment: cafe
+    ingredients:
+      - { sku_id: marinade, quantity: "30" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: oba-sauce, quantity: "25" }
+
+mappings:
+  - { item_id: i-poke, sku_id: poke-bowl }
+"""
+
+_CYCLE_COSTS_YAML = """
+costs:
+  soy: { price: "0.05", updated_at: "2026-06-01" }  # 1 l bottle
+"""
+
+
+def test_saving_a_recipe_that_would_create_a_transitive_cycle_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A save that would make a prep contain itself through another prep is
+    rejected with a message naming the loop, and nothing lands.
+
+    Worked example. Oba-sauce already contains marinade. Editing *marinade*
+    to contain oba-sauce would close the loop marinade → oba-sauce →
+    marinade — costing could never terminate. The save returns 400, the
+    message spells out the loop path, and marinade's stored recipe still
+    holds its original soy row.
+    """
+    app = _build_app(
+        tmp_path, recipes_yaml=_CYCLE_RECIPES_YAML, costs_yaml=_CYCLE_COSTS_YAML
+    )
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/marinade/recipe",
+        data={"ingredient_sku_id": ["oba-sauce"], "quantity": ["30"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    # The message names the loop: both participants, in path order.
+    assert "marinade" in response.text
+    assert "oba-sauce" in response.text
+    assert "cycle" in response.text.lower() or "loop" in response.text.lower()
+    # Nothing landed: marinade still holds its original soy row.
+    editor_html = client.get("/skus/marinade").text
+    assert 'value="soy" selected' in editor_html
+    assert 'value="oba-sauce" selected' not in editor_html
+
+
+def test_saving_a_recipe_that_contains_itself_is_rejected(tmp_path: Path) -> None:
+    """The direct flavour of the same rule: a prep cannot contain itself.
+
+    Oba-sauce is a prep, so it is a legal picker option in other recipes —
+    but a save putting oba-sauce inside its own recipe is the one-step
+    loop, rejected with the same loop-naming message.
+    """
+    app = _build_app(
+        tmp_path, recipes_yaml=_CYCLE_RECIPES_YAML, costs_yaml=_CYCLE_COSTS_YAML
+    )
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/oba-sauce/recipe",
+        data={"ingredient_sku_id": ["oba-sauce"], "quantity": ["10"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    assert "oba-sauce" in response.text
+    assert "cycle" in response.text.lower() or "loop" in response.text.lower()
+    # The stored recipe is untouched.
+    editor_html = client.get("/skus/oba-sauce").text
+    assert 'value="marinade" selected' in editor_html
+
+
+# --- AC: prep flag editable from the recipe editor, audited, revertable -----
+
+
+def test_prep_toggle_persists_and_widens_the_picker(tmp_path: Path) -> None:
+    """The recipe editor carries a prep checkbox; ticking it and saving
+    persists the flag, and the SKU immediately becomes offerable as an
+    ingredient in other editors.
+
+    Worked example. The latte starts as a sold-only dish: its editor's
+    checkbox is unchecked and flour's picker does not offer it. The partner
+    declares it a prep (batch-brewed latte base, say) and saves; reopening
+    shows the box checked, and flour's picker now offers latte.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    editor_html = client.get("/skus/latte").text
+    assert 'name="prep"' in editor_html
+    checkbox = editor_html.split('name="prep"')[1].split(">")[0]
+    assert "checked" not in checkbox
+    assert 'value="latte"' not in client.get("/skus/flour").text
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["beans", "milk"],
+            "quantity": ["18", "150"],
+            "prep": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    editor_html = client.get("/skus/latte").text
+    checkbox = editor_html.split('name="prep"')[1].split(">")[0]
+    assert "checked" in checkbox
+    assert 'value="latte"' in client.get("/skus/flour").text
+
+
+def test_prep_toggle_is_audited_and_revertable(tmp_path: Path) -> None:
+    """Flipping the prep flag is a config edit like any other: it lands in
+    the audit log with before/after recipe snapshots, and the per-entry
+    revert restores the flag (latte drops back out of other pickers).
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    client.post(
+        "/skus/latte/recipe",
+        data={
+            "ingredient_sku_id": ["beans", "milk"],
+            "quantity": ["18", "150"],
+            "prep": "1",
+        },
+        follow_redirects=False,
+    )
+
+    audit_html = client.get("/audit").text
+    assert "prep" in audit_html
+    entry_id = _first_revert_entry_id(audit_html)
+    response = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+    assert response.status_code == 303
+
+    editor_html = client.get("/skus/latte").text
+    checkbox = editor_html.split('name="prep"')[1].split(">")[0]
+    assert "checked" not in checkbox
+    assert 'value="latte"' not in client.get("/skus/flour").text
 
 
 # --- AC: saving a recipe updates DB; tomorrow's 9am review reflects it ------
@@ -727,16 +978,17 @@ def test_shorthand_vocabulary_covers_the_thai_spoon_measures(
 def test_shorthand_for_a_countable_ingredient_is_rejected_clearly(
     tmp_path: Path,
 ) -> None:
-    """A spoon of latte (a SKU with no confirmed g/ml unit) has no meaning;
-    the save is rejected with an error naming the problem rather than
-    guessing a conversion — a wrong guess is silent margin corruption.
+    """A spoon of egg (a purchasable whose g/ml unit is unconfirmed — its
+    "120/30" cost comment derives no unit) has no meaning; the save is
+    rejected with an error naming the problem rather than guessing a
+    conversion — a wrong guess is silent margin corruption.
     """
     app = _recipe_app(tmp_path)
     client = _authed_client(app)
 
     response = client.post(
         "/skus/latte/recipe",
-        data={"ingredient_sku_id": ["latte"], "quantity": ["1 tbsp"]},
+        data={"ingredient_sku_id": ["egg"], "quantity": ["1 tbsp"]},
         follow_redirects=False,
     )
 
@@ -1225,6 +1477,9 @@ def test_inline_create_sku_returns_a_picker_with_the_new_sku_selected(
     fragment = response.text
     assert 'name="ingredient_sku_id"' in fragment
     assert 'value="oat-milk" selected' in fragment
+    # The swapped-in picker obeys the same role filter as the editor page:
+    # the just-created purchasable is offered, the sold-only dish is not.
+    assert 'value="latte"' not in fragment
     # The SKU really exists now — it is priced and usable everywhere.
     assert 'value="oat-milk"' in client.get("/skus/latte").text
 

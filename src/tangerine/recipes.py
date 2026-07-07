@@ -18,6 +18,37 @@ from __future__ import annotations
 from .types import Recipe, SkuMapping
 
 
+def find_recipe_cycle(
+    recipes: list[Recipe],
+    sku_id: str,
+    ingredient_sku_ids: list[str],
+) -> list[str] | None:
+    """The loop a proposed recipe save would close, or None if it is acyclic.
+
+    Issue #35: a recipe may not contain its own output, directly or through
+    other preps — costing could never terminate. Called at save time with
+    the recipe being edited (``sku_id``) and its *proposed* ingredient list;
+    existing recipes supply the rest of the graph. Returns the loop as a
+    path starting and ending at ``sku_id`` (e.g. ``["marinade",
+    "oba-sauce", "marinade"]``) so the error can name it.
+    """
+    edges = {r.sku_id: [i.sku_id for i in r.ingredients] for r in recipes}
+    edges[sku_id] = list(ingredient_sku_ids)
+
+    def walk(node: str, path: list[str]) -> list[str] | None:
+        for nxt in edges.get(node, []):
+            if nxt == sku_id:
+                return [*path, node, sku_id]
+            if nxt in path:
+                continue
+            found = walk(nxt, [*path, node])
+            if found is not None:
+                return found
+        return None
+
+    return walk(sku_id, [])
+
+
 class RecipeCatalog:
     """Recipes keyed by SKU, with Loyverse-item -> SKU mappings."""
 

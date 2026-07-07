@@ -26,6 +26,7 @@
           <tr>
             <th>SKU</th>
             <th>Segment</th>
+            <th>Role</th>
             <th>Class</th>
             <th>Mapped items</th>
             <th>Recipe</th>
@@ -42,6 +43,7 @@
               <span class="sku-row__id">{{ row.sku_id }}</span>
             </td>
             <td>{{ row.segment.value | capitalize if row.segment else "—" }}</td>
+            <td class="sku-row__role"><span class="sku-role sku-role--{{ row.role.value }}">{{ row.role.value }}</span></td>
             <td class="sku-row__class">{{ row.classification.value }}</td>
             <td>{{ row.mapped_item_count }}</td>
             <td>

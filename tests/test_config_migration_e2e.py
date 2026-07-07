@@ -865,3 +865,56 @@ recipes:
     bowl = recipes["poke-bowl"]
     assert bowl.yield_qty == D("1")
     assert bowl.yield_estimated is False
+
+
+# --- AC: seed migration auto-flags preps (issue #35) -------------------------
+
+
+def test_seed_migration_auto_flags_preps_from_usage(tmp_path: Path) -> None:
+    """A recipe whose output SKU another recipe consumes is seeded with
+    ``prep=1``; a sold-only dish is seeded with ``prep=0``.
+
+    Per issue #35's "usage is the declaration" rule: the seed migration
+    flags a recipe as prep when its output SKU is referenced as an
+    ingredient by any other recipe. The ``prep-`` naming convention stops
+    carrying meaning — the relation is the truth.
+
+    Worked example. ``aha-sauce`` is consumed by ``poke-bowl`` (it is a
+    prep); ``poke-bowl`` is sold but consumed by nothing (it is a plain
+    dish). After seeding, ``recipes.prep`` is 1 for aha-sauce and 0 for
+    poke-bowl, and both recipes still resolve through ``recipes()``.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: aha-sauce
+    name: Ahi Sauce
+    segment: cafe
+    ingredients:
+      - { sku_id: soy-sauce, quantity: "30" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: aha-sauce, quantity: "25" }
+      - { sku_id: rice, quantity: "100" }
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml)
+
+    prep_flag_by_sku = dict(
+        conn.execute("SELECT sku_id, prep FROM recipes ORDER BY sku_id").fetchall()
+    )
+    # aha-sauce is referenced as an ingredient by poke-bowl -> prep.
+    assert prep_flag_by_sku["aha-sauce"] == 1
+    # poke-bowl is sold but consumed by nothing -> not prep.
+    assert prep_flag_by_sku["poke-bowl"] == 0
+
+    # Both recipes still resolve through the read side.
+    recipes = {r.sku_id: r for r in SqliteConfigStore(conn).recipes()}
+    assert recipes["aha-sauce"].prep is True
+    assert recipes["poke-bowl"].prep is False
