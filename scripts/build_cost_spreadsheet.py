@@ -16,7 +16,10 @@ when an ingredient has its own recipe, its unit cost is the sum of *its*
 ingredients divided by its ``yield_qty`` (so a sauce used at 5 g carries 5 g
 × the sauce's per-gram cost). The Breakdown sheet stays collapsed — one row per
 top-level ingredient — so a partner reads the parent recipe as sold, with each
-sauce/prep as a single priced line.
+sauce/prep as a single priced line. Since issue #36 the spreadsheet calls the
+live margin engine's :class:`tangerine.margin.CostResolver` directly — the
+offline tool and the running tool share one resolver, so they can never
+disagree about a dish's cost (no leaf-price-wins branch here either).
 
 Status values:
   - ``ok``                   recipe exists and every ingredient is priced
@@ -59,6 +62,7 @@ from openpyxl.styles import Alignment, Font, PatternFill  # noqa: E402
 from openpyxl.utils import get_column_letter  # noqa: E402
 
 from tangerine.cost import CostBook  # noqa: E402
+from tangerine.margin import CostResolver  # noqa: E402
 from tangerine.recipes import RecipeCatalog  # noqa: E402
 from tangerine.storage.config_store import (  # noqa: E402
     SqliteConfigStore,
@@ -124,7 +128,8 @@ def build(
     catalog, cost = _seed_and_read(recipes_path, costs_path)
     mappings = sorted(catalog.mappings(), key=lambda m: m.item_id)
 
-    resolver = _Resolver(catalog, cost)
+    resolver = CostResolver(catalog, cost)
+    names = _NameLookup(catalog)
 
     item_rows: list[ItemRow] = []
     ingredient_rows: list[IngredientRow] = []
@@ -155,7 +160,7 @@ def build(
                         item_id=mapping.item_id,
                         recipe_sku_id=recipe.sku_id,
                         ingredient_sku_id=ing.sku_id,
-                        ingredient_name=resolver.name_of(ing.sku_id),
+                        ingredient_name=names.name_of(ing.sku_id),
                         quantity=ing.quantity,
                         unit_cost=None,
                         line_cost=None,
@@ -170,7 +175,7 @@ def build(
                     item_id=mapping.item_id,
                     recipe_sku_id=recipe.sku_id,
                     ingredient_sku_id=ing.sku_id,
-                    ingredient_name=resolver.name_of(ing.sku_id),
+                    ingredient_name=names.name_of(ing.sku_id),
                     quantity=ing.quantity,
                     unit_cost=unit_price,
                     line_cost=line,
@@ -227,58 +232,21 @@ def _seed_and_read(
     return catalog, cost
 
 
-class _Resolver:
-    """Resolves a SKU's per-unit cost, recursing into sub-recipes.
+class _NameLookup:
+    """Ingredient display name for the Breakdown sheet's per-ingredient rows.
 
-    A leaf SKU returns its direct price from ``CostBook``. A SKU that has its
-    own recipe is costed as ``sum(ingredient qty × unit cost) / yield_qty``,
-    which lets a sauce used at 5 g carry 5 g of the sauce's per-gram cost.
-    Cycle-safe (a SKU on its own resolution stack returns ``None``).
+    The spreadsheet shows each top-level ingredient by name; the engine's
+    :class:`CostResolver` resolves costs but does not carry display names.
+    This helper closes that gap — a recipe's name when the SKU has one, the
+    raw SKU id otherwise.
     """
 
-    def __init__(self, catalog: RecipeCatalog, cost: CostBook) -> None:
+    def __init__(self, catalog: RecipeCatalog) -> None:
         self._catalog = catalog
-        self._cost = cost
-        # Per-SKU memo of resolved unit costs so a sauce used by 8 items is
-        # only walked once. ``None`` is cached too (still unpriced).
-        self._memo: dict[str, Decimal | None] = {}
-
-    def unit_cost(self, sku_id: str, seen: frozenset[str] = frozenset()) -> Decimal | None:
-        if sku_id in self._memo:
-            return self._memo[sku_id]
-        # Leaf price wins: if a SKU has a direct approved price, use it (a
-        # partner can price the sauce-as-bought even when a recipe exists).
-        direct = self._cost.price(sku_id)
-        if direct is not None:
-            self._memo[sku_id] = direct.price
-            return direct.price
-        # Otherwise recurse into the sub-recipe if one exists and is not a
-        # cycle on the current stack.
-        recipe = self._catalog.recipe_for_sku(sku_id)
-        if recipe is None or sku_id in seen:
-            self._memo[sku_id] = None
-            return None
-        total = Decimal("0")
-        priced_all = True
-        next_seen = seen | {sku_id}
-        for ing in recipe.ingredients:
-            child = self.unit_cost(ing.sku_id, next_seen)
-            if child is None:
-                priced_all = False
-                continue
-            total += ing.quantity * child
-        if not priced_all or recipe.yield_qty <= 0:
-            self._memo[sku_id] = None
-            return None
-        per_unit = total / recipe.yield_qty
-        self._memo[sku_id] = per_unit
-        return per_unit
 
     def name_of(self, sku_id: str) -> str:
         recipe = self._catalog.recipe_for_sku(sku_id)
-        if recipe is not None:
-            return recipe.name
-        return sku_id
+        return recipe.name if recipe is not None else sku_id
 
 
 def _write_workbook(

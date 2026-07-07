@@ -4,13 +4,25 @@ Given sales, recipes, and a cost book, compute per-item and daily gross
 margin. Pure functions over inputs — no I/O, no mutation. The PRD defines:
 
     gross_margin = revenue - cogs
-    cogs(item)   = (sum over recipe ingredients of quantity * current_unit_cost)
+    cogs(item)   = (sum over recipe ingredients of quantity * unit_cost)
                    / yield_qty
 
-Per slice 04, the current unit cost of each ingredient SKU is looked up from
-the ``CostBook`` (which tracks the latest approved purchase price), so a
-recipe is a formula and a re-pricing flows straight into margin without the
-recipe changing.
+An ingredient's **unit cost** is resolved recursively (issue #36, ADR-0005):
+
+  - a **purchasable** SKU (no recipe) takes its price from the ``CostBook``;
+  - a **produced** SKU (has a recipe) is costed as ``sum(ingredient qty ×
+    unit_cost) / yield_qty``, recursing through preps down to purchasables.
+
+The resolver is memoised per costing pass and cycle-safe. There is no
+leaf-price-wins branch — a produced SKU's cost is *always* derived from its
+recipe, never typed directly. A produced SKU with an unpriceable leaf (a
+missing price, or a cycle) is itself unpriceable; dishes using it flag
+``unknown_price`` exactly as a direct missing price does.
+
+Per slice 04, the current unit cost of each purchasable ingredient SKU is
+looked up from the ``CostBook`` (which tracks the latest approved purchase
+price), so a recipe is a formula and a re-pricing flows straight into
+margin without the recipe changing.
 
 Rows whose margin cannot be trusted — unmapped items (no recipe) or items
 where an ingredient SKU has no approved price — are flagged and excluded
@@ -44,10 +56,40 @@ from .types import (
 _MARGIN_PCT_QUANT = Decimal("0.01")
 
 
+def unit_cost(
+    sku_id: str, *, recipes: RecipeCatalog, cost: CostBook
+) -> Decimal | None:
+    """A SKU's per-unit cost, recursing into sub-recipes (issue #36, ADR-0005).
+
+    A **purchasable** SKU (no recipe) takes its price from ``cost``. A
+    **produced** SKU (has a recipe) is costed as ``sum(ingredient qty ×
+    unit_cost) / yield_qty`` — recursing through preps down to purchasables.
+    Returns ``None`` when any leaf needed to derive the price is itself
+    unpriceable, or when the SKU is on its own resolution stack (defense in
+    depth behind the save-time cycle rejection).
+
+    No leaf-price-wins: a produced SKU's cost is *always* derived from its
+    recipe. The seed migration removes any pre-existing direct cost rows
+    on produced SKUs, and the cost editor rejects them; a stale one
+    reaching this function is silently ignored rather than honoured.
+
+    This is the unmemoised one-shot form. For a margin pass over many sales
+    of the same dish, build a single :class:`CostResolver` instead — its per-
+    SKU memo walks each prep's graph once.
+    """
+    return CostResolver(recipes, cost).unit_cost(sku_id)
+
+
 def recipe_input_cost(recipe: Recipe, cost: CostBook) -> Money:
     """Cost of executing the recipe once (before dividing by yield).
 
     Sums each ingredient's ``quantity`` × its SKU's current cost per unit.
+    Does not recurse into sub-recipes — the bare form takes only one recipe
+    plus the cost book, with no catalog to look up other recipes in. The
+    margin engine's per-pass resolver (``CostResolver``) handles recursion for
+    the daily/period margins; this helper is the slice-04 primitive for
+    recipes whose ingredients are all purchasables (or whose caller has
+    already resolved any prep ingredients themselves).
     """
     return Money(
         sum(
@@ -76,6 +118,10 @@ def recipe_cost_per_unit(recipe: Recipe, cost: CostBook) -> Money:
     equal to its input cost; a 1L pitcher recipe yielding two pours halves
     it; an ahi-sauce batch yielding ~61 g costs the input sum spread over
     61 g. The yield is a decimal in the output SKU's own unit.
+
+    This is the bare slice-04 form (no recursion); callers needing recursive
+    derivation of a produced SKU's ingredients go through ``unit_cost`` or
+    ``compute_item_margins``.
     """
     return Money(recipe_input_cost(recipe, cost) / recipe.yield_qty)
 
@@ -83,8 +129,12 @@ def recipe_cost_per_unit(recipe: Recipe, cost: CostBook) -> Money:
 def has_unknown_price(recipe: Recipe, cost: CostBook) -> bool:
     """True if any ingredient SKU has no approved price in the cost book.
 
-    Such a recipe cannot be costed honestly; its margin row is flagged and
-    excluded from the daily totals rather than silently zero-costed.
+    Bare slice-04 form — checks each ingredient's direct cost-book entry,
+    does not recurse into sub-recipes. The per-pass resolver in
+    ``compute_item_margins`` does the recursive version for daily/period
+    margin. Such a recipe cannot be costed honestly; its margin row is
+    flagged and excluded from the daily totals rather than silently zero-
+    costed.
     """
     return any(
         cost.price(ing.sku_id) is None for ing in recipe.ingredients
@@ -96,6 +146,81 @@ def gross_margin_pct(gross_margin: Money, revenue: Money) -> Decimal | None:
     if revenue == 0:
         return None
     return (gross_margin / revenue * Decimal("100")).quantize(_MARGIN_PCT_QUANT)
+
+
+class CostResolver:
+    """Resolves a SKU's per-unit cost, recursing into sub-recipes.
+
+    Issue #36 (ADR-0005): a produced SKU's cost is *always* derived from its
+    recipe, never typed directly. A purchasable SKU takes its price from the
+    cost book; a produced SKU's cost is ``sum(ingredient qty × unit_cost) /
+    yield_qty``, recursing through preps down to purchasables.
+
+    Per-SKU memo so a sauce used by eight dishes is walked once. Cycle-safe:
+    a SKU on its own resolution stack returns ``None`` rather than looping
+    (defense in depth behind the save-time cycle rejection). No leaf-price-
+    wins branch — a produced SKU with a stale direct cost-book entry is
+    costed from its recipe regardless.
+    """
+
+    def __init__(self, recipes: RecipeCatalog, cost: CostBook) -> None:
+        self._recipes = recipes
+        self._cost = cost
+        # ``None`` is cached too (still unpriceable): a sauce used by eight
+        # dishes with one unpriced leaf is only walked once.
+        self._memo: dict[str, Decimal | None] = {}
+
+    def unit_cost(
+        self, sku_id: str, seen: frozenset[str] = frozenset()
+    ) -> Decimal | None:
+        if sku_id in self._memo and not seen:
+            return self._memo[sku_id]
+        # No leaf-price-wins: a produced SKU's cost comes from its recipe,
+        # never a direct price (issue #36). The cost book is consulted only
+        # for purchasables — SKUs with no recipe of their own.
+        recipe = self._recipes.recipe_for_sku(sku_id)
+        if recipe is None:
+            entry = self._cost.price(sku_id)
+            result = entry.price if entry is not None else None
+            if not seen:
+                self._memo[sku_id] = result
+            return result
+        # Cycle: ``sku_id`` is already on the path being resolved. Save-time
+        # rejection should prevent this; the engine treats a runtime cycle
+        # as unpriceable so costing can never loop (defense in depth).
+        if sku_id in seen:
+            return None
+        if recipe.yield_qty <= 0:
+            return None
+        total = Decimal("0")
+        for ing in recipe.ingredients:
+            child = self.unit_cost(ing.sku_id, seen | {sku_id})
+            if child is None:
+                # An unpriceable ingredient (missing leaf, deeper cycle)
+                # makes this SKU unpriceable too — its dishes flag
+                # ``unknown_price`` exactly as a direct missing price does.
+                if not seen:
+                    self._memo[sku_id] = None
+                return None
+            total += ing.quantity * child
+        per_unit = total / recipe.yield_qty
+        if not seen:
+            self._memo[sku_id] = per_unit
+        return per_unit
+
+    def has_unknown_price(self, recipe: Recipe) -> bool:
+        """Recursive unknown-price check for one recipe."""
+        return any(self.unit_cost(ing.sku_id) is None for ing in recipe.ingredients)
+
+    def cost_per_unit(self, recipe: Recipe) -> Money:
+        """Cost of one saleable unit of ``recipe`` via the memoised resolver."""
+        total = Decimal("0")
+        for ing in recipe.ingredients:
+            unit = self.unit_cost(ing.sku_id)
+            if unit is None:
+                continue
+            total += ing.quantity * unit
+        return Money(total / recipe.yield_qty)
 
 
 def compute_item_margins(
@@ -150,6 +275,7 @@ def compute_item_margins(
         segment_by_item.setdefault(sale.item_id, segment_of_sale(sale, recipe=None))
 
     rows: list[ItemMargin] = []
+    resolver = CostResolver(recipes, cost)
     for item_id in sorted(units_by_item):
         recipe = recipes.for_item(item_id)
         units = units_by_item[item_id]
@@ -168,11 +294,12 @@ def compute_item_margins(
             ))
             continue
 
-        unpriced = has_unknown_price(recipe, cost)
+        unpriced = resolver.has_unknown_price(recipe)
         if unpriced:
-            # Mapped, but at least one ingredient has no approved price.
-            # Surface the row (with the recipe's name/segment) but exclude it
-            # from totals — its COGS is unknown.
+            # Mapped, but at least one ingredient has no approved price —
+            # directly or recursively through a prep's recipe. Surface the
+            # row (with the recipe's name/segment) but exclude it from
+            # totals — its COGS is unknown.
             rows.append(_flagged_row(
                 item_id=item_id,
                 name=recipe.name,
@@ -185,7 +312,7 @@ def compute_item_margins(
             ))
             continue
 
-        cpu = recipe_cost_per_unit(recipe, cost)
+        cpu = resolver.cost_per_unit(recipe)
         cogs = cpu * units
         gm = revenue - cogs
         pct = gross_margin_pct(gm, revenue)
