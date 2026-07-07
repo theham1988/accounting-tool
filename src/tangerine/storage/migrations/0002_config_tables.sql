@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS skus (
     name                        TEXT NOT NULL,
     segment                     TEXT,                    -- 'cafe' | 'bar'; NULL for ingredient-only SKUs with no recipe of their own (they may feed both segments)
     unit                        TEXT,                    -- 'g' | 'ml' | 'unit'; NULL until confirmed (ADR-0003 decision 3)
-    yield_units                 INTEGER,                 -- NULL means inherit from the recipe row
+    yield_units                 INTEGER,                 -- NULL means inherit from the recipe row (renamed to yield_qty + yield_estimated in 0006)
     target_gross_margin_pct     TEXT,                    -- Decimal as TEXT; NULL when unset
     created_at                  TEXT NOT NULL,
     created_by                  TEXT NOT NULL            -- 'migration' for seeded rows
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS recipes (
     sku_id                      TEXT NOT NULL PRIMARY KEY REFERENCES skus(sku_id),
     name                        TEXT NOT NULL,
     segment                     TEXT NOT NULL,           -- denormalised from skus for query convenience
-    yield_units                 INTEGER NOT NULL DEFAULT 1,
+    yield_units                 INTEGER NOT NULL DEFAULT 1,  -- renamed to yield_qty + yield_estimated in 0006
     target_gross_margin_pct     TEXT                     -- Decimal as TEXT; NULL when unset
 );
 

@@ -105,15 +105,73 @@ def _approve_purchase(
 
 
 # --- recipe schema: inputs (SKU + qty) and yield ----------------------------
+#
+# Yield is a decimal quantity denominated in the output SKU's own unit
+# (issue #34 / CONTEXT.md "Yield"): an ahi-sauce batch yields ~61 g; a 1L
+# pitcher yields 2 (units — two pours). One formula everywhere:
+# cost-per-unit = input cost / yield_qty. A yield carries an
+# estimated/measured marker: estimated yields are recomputed from the sum of
+# input quantities when rows change; measured yields are fixed.
 
 
-def test_recipe_has_yield_and_is_defined_per_sku(day: date) -> None:
-    """A recipe is defined per SKU (the master item it produces) and carries
-    a yield (how many saleable units one execution produces).
+def test_recipe_costs_per_unit_against_a_fractional_weight_yield(
+    day: date,
+) -> None:
+    """Worked example: an ahi-sauce batch costs 12.20 THB of inputs and
+    yields 61 g, so one gram of sauce costs 0.20 THB.
 
-    Spec (issue 04 AC): "Recipe schema exists with inputs (SKU + qty) and
-    yield". A 1L Chang pitcher recipe takes 1000ml of beer and yields 2
-    units (two 500ml pours), so cost-per-unit = 1000 * 0.07 / 2 = 35 THB.
+    This is the recipe shape that motivated issue #34's unified yield: a
+    weight-denominated output whose batch yield is fractional. The old
+    integer ``yield_units`` could not express "yields 61 g" — every prep
+    was pinned to ``yield_units=1`` and cost the *whole batch* per gram.
+    """
+    cost = CostBook({
+        "soy sauce": (D("0.05"), date(2026, 6, 1)),
+        "mirin": (D("0.30"), date(2026, 6, 1)),
+    })
+    # Inputs: 100 g soy + 24 g mirin = 5.00 + 7.20 = 12.20 THB.
+    recipe = Recipe(
+        sku_id="sauce-ahi",
+        name="Ahi Sauce",
+        segment=Segment.BAR,
+        ingredients=(
+            RecipeIngredient(sku_id="soy sauce", quantity=D("100")),
+            RecipeIngredient(sku_id="mirin", quantity=D("24")),
+        ),
+        yield_qty=D("61"),
+    )
+
+    assert recipe_cost(recipe, cost) == D("12.20")
+    assert recipe_cost_per_unit(recipe, cost) == D("0.20")
+
+
+def test_recipe_yield_defaults_to_one_and_is_estimated() -> None:
+    """A recipe constructed without an explicit yield defaults to producing
+    one unit of its output SKU, marked as an estimate.
+
+    This is the "new recipe in the editor" case (issue #34 AC: the yield
+    defaults to the sum of input quantities, marked estimated, until a
+    partner enters a measured value). A single-input cafe recipe built with
+    no yield fields at all carries ``yield_qty=1`` and ``yield_estimated=True``.
+    """
+    recipe = Recipe(
+        sku_id="espresso",
+        name="Espresso",
+        segment=Segment.CAFE,
+        ingredients=(RecipeIngredient(sku_id="beans-arabica", quantity=D("18")),),
+    )
+    assert recipe.yield_qty == D("1")
+    assert recipe.yield_estimated is True
+
+
+def test_recipe_with_unit_denominated_yield_costs_per_pour(day: date) -> None:
+    """A 1L Chang pitcher recipe takes 1000 ml of beer and yields 2 units
+    (two 500 ml pours), so cost-per-unit = 1000 × 0.07 / 2 = 35 THB.
+
+    The pitcher is the case where the old integer ``yield_units`` and the
+    new decimal ``yield_qty`` agree: a ``unit``-denominated output whose
+    yield is a small whole number. The unified formula must still produce
+    the same per-pour cost the old engine did.
     """
     cost = CostBook({"chang-keg": (D("0.07"), date(2026, 6, 1))})
     recipe = Recipe(
@@ -121,25 +179,12 @@ def test_recipe_has_yield_and_is_defined_per_sku(day: date) -> None:
         name="Chang Pitcher 1L",
         segment=Segment.BAR,
         ingredients=(RecipeIngredient(sku_id="chang-keg", quantity=D("1000")),),
-        yield_units=2,
+        yield_qty=D("2"),
     )
     recipes = RecipeCatalog([recipe])
 
-    # 1000ml @ 0.07 = 70 THB input cost, yields 2 units -> 35 THB per unit.
+    # 1000 ml @ 0.07 = 70 THB input cost, yields 2 units -> 35 THB per unit.
     assert recipe_cost(recipe, cost) == D("70")
-    assert recipe_cost_per_unit(recipe, cost) == D("35")
-
-
-def test_recipe_default_yield_is_one(day: date) -> None:
-    """A single-pour recipe (the common case) implicitly yields 1 unit."""
-    cost = CostBook({"chang-keg": (D("0.07"), date(2026, 6, 1))})
-    recipe = Recipe(
-        sku_id="chang-draft-500",
-        name="Chang Draft 500ml",
-        segment=Segment.BAR,
-        ingredients=(RecipeIngredient(sku_id="chang-keg", quantity=D("500")),),
-    )
-    assert recipe.yield_units == 1
     assert recipe_cost_per_unit(recipe, cost) == D("35")
 
 

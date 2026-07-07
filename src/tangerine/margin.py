@@ -5,7 +5,7 @@ margin. Pure functions over inputs — no I/O, no mutation. The PRD defines:
 
     gross_margin = revenue - cogs
     cogs(item)   = (sum over recipe ingredients of quantity * current_unit_cost)
-                   / yield_units
+                   / yield_qty
 
 Per slice 04, the current unit cost of each ingredient SKU is looked up from
 the ``CostBook`` (which tracks the latest approved purchase price), so a
@@ -71,13 +71,13 @@ def recipe_cost(recipe: Recipe, cost: CostBook) -> Money:
 def recipe_cost_per_unit(recipe: Recipe, cost: CostBook) -> Money:
     """Cost of one saleable unit produced by the recipe.
 
-    ``recipe_input_cost / yield_units``. A single-pour recipe (yield 1) has
-    per-unit cost equal to its input cost; a 1L pitcher recipe yielding two
-    500ml pours halves it.
+    ``recipe_input_cost / yield_qty`` — one formula for every recipe shape
+    (CONTEXT.md "Yield"). A single-pour recipe (yield 1) has per-unit cost
+    equal to its input cost; a 1L pitcher recipe yielding two pours halves
+    it; an ahi-sauce batch yielding ~61 g costs the input sum spread over
+    61 g. The yield is a decimal in the output SKU's own unit.
     """
-    if recipe.yield_units <= 1:
-        return recipe_input_cost(recipe, cost)
-    return Money(recipe_input_cost(recipe, cost) / recipe.yield_units)
+    return Money(recipe_input_cost(recipe, cost) / recipe.yield_qty)
 
 
 def has_unknown_price(recipe: Recipe, cost: CostBook) -> bool:

@@ -8,7 +8,10 @@ Schema (``recipes.yaml``):
       - sku_id: chang-draft-500
         name: Chang Draft 500ml
         segment: bar              # "cafe" or "bar"
-        yield_units: 1            # optional, defaults to 1
+        yield: "500"              # optional decimal in the SKU's own unit,
+                                  # defaults to 1 (issue #34); the legacy
+                                  # integer key yield_units is still accepted
+        yield_estimated: false    # optional, defaults to false (measured)
         target_gross_margin_pct: "75"   # optional
         ingredients:
           - { sku_id: chang-keg, quantity: "500" }
@@ -93,7 +96,8 @@ def _parse_recipe(
         _required_str(raw, "segment", path, f"recipe #{index}"), path, f"recipe #{index}"
     )
     ingredients = _parse_ingredients(raw.get("ingredients"), path, f"recipe #{index}")
-    yield_units = _parse_int(raw.get("yield_units", 1), path, f"recipe #{index}.yield_units")
+    yield_qty = _parse_yield(raw, path, f"recipe #{index}")
+    yield_estimated = _parse_yield_estimated(raw, path, f"recipe #{index}")
     target = _parse_optional_decimal(
         raw.get("target_gross_margin_pct"), path, f"recipe #{index}.target_gross_margin_pct"
     )
@@ -102,7 +106,8 @@ def _parse_recipe(
         name=name,
         segment=segment,
         ingredients=ingredients,
-        yield_units=yield_units,
+        yield_qty=yield_qty,
+        yield_estimated=yield_estimated,
         target_gross_margin_pct=target,
     )
 
@@ -299,10 +304,56 @@ def _parse_optional_decimal(
     return _parse_decimal(value, path, ctx)
 
 
-def _parse_int(value: Any, path: str | Path, ctx: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"{path}: {ctx} must be an integer")
-    return value
+def _parse_yield(value_raw: Any, path: str | Path, ctx: str) -> Decimal:
+    """Parse a recipe's ``yield`` (decimal in the output SKU's own unit).
+
+    Accepts the new ``yield`` key (a quoted decimal) or the legacy
+    ``yield_units`` key (an integer) for seed files that have not been
+    rewritten — both fall through to the same ``Decimal``. Defaults to
+    ``Decimal("1")`` when neither key is present (the common dish case:
+    one execution serves one).
+
+    A negative or zero yield is rejected here rather than at save time so
+    a bad seed file fails loudly at startup (the same fail-loud contract
+    every other parse helper upholds).
+    """
+    if "yield" in value_raw:
+        raw = value_raw.get("yield")
+        try:
+            parsed = Decimal(str(raw))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ConfigError(
+                f"{path}: {ctx}.yield must be a decimal number ({exc})"
+            ) from exc
+    elif "yield_units" in value_raw:
+        legacy = value_raw.get("yield_units")
+        if isinstance(legacy, bool) or not isinstance(legacy, int):
+            raise ConfigError(f"{path}: {ctx}.yield_units must be an integer")
+        parsed = Decimal(legacy)
+    else:
+        return Decimal("1")
+    if parsed <= 0:
+        raise ConfigError(f"{path}: {ctx}.yield must be greater than zero")
+    return parsed
+
+
+def _parse_yield_estimated(
+    value_raw: Any, path: str | Path, ctx: str
+) -> bool:
+    """Parse the optional ``yield_estimated`` flag.
+
+    The YAML default is ``False`` — a dish serves one, so its yield of 1 is
+    meaningful, not a no-loss batch estimate. The seeder overrides this to
+    ``True`` for preps (recipes whose output is consumed by another recipe)
+    during the backfill pass, so partners do not have to declare estimated
+    yields by hand for the thirteen existing sub-recipes.
+    """
+    raw = value_raw.get("yield_estimated")
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise ConfigError(f"{path}: {ctx}.yield_estimated must be true or false")
+    return raw
 
 
 def _parse_date(value: Any, path: str | Path, ctx: str) -> date:

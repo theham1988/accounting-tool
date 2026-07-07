@@ -56,10 +56,18 @@ class Recipe:
     - ``sku_id``        the SKU this recipe produces (its key in a catalog)
     - ``ingredients``   the inputs; ``recipe_cost`` sums each input's
                         ``quantity`` × the input SKU's current cost per unit
-    - ``yield_units``   how many saleable units one execution of the recipe
-                        produces (PRD: "inputs and yield"). A single 500ml
-                        pour yields 1; a 1L pitcher yielding two 500ml pours
-                        is yield 2. Per-unit cost = input cost / yield_units.
+    - ``yield_qty``     how much of the output SKU one execution of the
+                        recipe produces, expressed in **that SKU's own
+                        unit** (CONTEXT.md "Yield"). A 1L pitcher recipe
+                        yields 2 (two pours, unit-denominated); an ahi-sauce
+                        batch yields ~61 (grams, weight-denominated).
+                        Per-unit cost = input cost / yield_qty — one formula
+                        for dishes, preps, and serving recipes alike.
+    - ``yield_estimated``  whether ``yield_qty`` is the no-loss estimate
+                        (defaults to the sum of input quantities) or a
+                        partner-measured value. Estimates are recomputed from
+                        the input sum whenever the recipe's rows change; a
+                        measured value is fixed until the partner edits it.
     - ``target_gross_margin_pct``  optional; when set, the margin engine
                         flags items whose actual gross-margin % is below it
                         (PRD user story 13).
@@ -69,7 +77,8 @@ class Recipe:
     name: str
     segment: Segment
     ingredients: tuple[RecipeIngredient, ...]
-    yield_units: int = 1
+    yield_qty: Decimal = Decimal("1")
+    yield_estimated: bool = True
     target_gross_margin_pct: Decimal | None = None
 
 

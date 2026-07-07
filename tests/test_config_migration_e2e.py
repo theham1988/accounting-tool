@@ -90,7 +90,8 @@ recipes:
             RecipeIngredient(sku_id="beans-arabica", quantity=D("20")),
             RecipeIngredient(sku_id="milk-fresh", quantity=D("200")),
         ),
-        yield_units=1,
+        yield_qty=D("1"),
+        yield_estimated=False,
         target_gross_margin_pct=D("70"),
     )
 
@@ -772,3 +773,95 @@ recipes:
 
     row = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()
     assert row[0] == 0
+
+
+# --- AC: unified yield — dish yields carry over; prep yields estimated (#34) ---
+
+
+def test_dish_recipe_round_trips_with_yield_marked_measured(
+    tmp_path: Path,
+) -> None:
+    """A sold dish seeded from YAML carries its yield as a fixed (measured)
+    value — ``yield_qty=1, yield_estimated=False`` — not as an estimate.
+
+    Issue #34: existing dish yields survive migration unchanged, treated as
+    fixed. A dish serves one; its yield of 1 is meaningful, not a no-loss
+    estimate of a batch. The estimated marker is reserved for preps whose
+    batch yield has not been weighed.
+
+    Worked example. One latte recipe (no ``yield`` field in YAML) round-
+    trips through SQLite as ``yield_qty=1`` and ``yield_estimated=False``.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: espresso-latte
+    name: Espresso Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "20" }
+      - { sku_id: milk-fresh, quantity: "200" }
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml)
+
+    recipes = SqliteConfigStore(conn).recipes()
+    assert len(recipes) == 1
+    recipe = recipes[0]
+    assert recipe.yield_qty == D("1")
+    assert recipe.yield_estimated is False
+
+
+def test_sub_recipe_used_as_ingredient_gets_estimated_yield_from_input_sum(
+    tmp_path: Path,
+) -> None:
+    """A sub-recipe consumed by another recipe is backfilled with an
+    estimated yield equal to the sum of its input quantities.
+
+    Issue #34 AC: "The thirteen sub-recipes used as ingredients are
+    backfilled with estimated yields equal to the sum of their input
+    quantities." Under the legacy seed every prep had ``yield_units: 1``,
+    so a poke bowl using 25 g of sauce was costed at 25 *whole batches* —
+    the ~25–150× inflation this backfill fixes.
+
+    Worked example. The ahi sauce takes 100 g soy + 24 g mirin (inputs sum
+    to 124); the poke bowl uses 25 g of it. After seeding, the sauce's
+    yield is 124 marked estimated, while the poke bowl (consumed by
+    nothing) keeps yield 1 marked measured.
+    """
+    recipes_yaml = tmp_path / "recipes.yaml"
+    _write(
+        recipes_yaml,
+        """
+recipes:
+  - sku_id: sauce-ahi
+    name: Ahi Sauce
+    segment: cafe
+    yield_units: 1
+    ingredients:
+      - { sku_id: soy-sauce, quantity: "100" }
+      - { sku_id: mirin, quantity: "24" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-ahi, quantity: "25" }
+      - { sku_id: rice, quantity: "200" }
+""",
+    )
+
+    conn = _connect()
+    seed_config(conn, recipes_path=recipes_yaml)
+
+    recipes = {r.sku_id: r for r in SqliteConfigStore(conn).recipes()}
+    sauce = recipes["sauce-ahi"]
+    assert sauce.yield_qty == D("124")
+    assert sauce.yield_estimated is True
+
+    bowl = recipes["poke-bowl"]
+    assert bowl.yield_qty == D("1")
+    assert bowl.yield_estimated is False
