@@ -23,6 +23,7 @@ from .types import (
     SkuHealth,
     SkuMapping,
     SkuRecord,
+    SkuRole,
 )
 
 #: Sort-order weight for each item coverage row's "badness" — unmapped is
@@ -33,6 +34,36 @@ _ITEM_SORT_ORDER: dict[SkuHealth | None, int] = {
     SkuHealth.YELLOW: 2,
     SkuHealth.GREEN: 3,
 }
+
+
+def pickable_ingredient_skus(
+    skus: list[SkuRecord], recipes: list[Recipe]
+) -> list[SkuRecord]:
+    """The SKUs the ingredient picker may honestly offer (issue #35).
+
+    Options = every purchasable SKU (no recipe of its own) plus every prep
+    (produced, declared usable inside other recipes). Sold-only dishes are
+    absent: picking one as an "ingredient" silently produces a garbage cost,
+    which is the mis-click this filter exists to prevent.
+    """
+    recipes_by_sku = {r.sku_id: r for r in recipes}
+    return [
+        sku
+        for sku in skus
+        if sku_role(recipes_by_sku.get(sku.sku_id)) is not SkuRole.PRODUCED
+    ]
+
+
+def sku_role(recipe: Recipe | None) -> SkuRole:
+    """A SKU's role, derived from its recipe (issue #35, CONTEXT.md).
+
+    No recipe means bought (purchasable); a recipe means made (produced);
+    the recipe's prep flag upgrades produced to prep — the role that also
+    makes the SKU a legal ingredient.
+    """
+    if recipe is None:
+        return SkuRole.PURCHASABLE
+    return SkuRole.PREP if recipe.prep else SkuRole.PRODUCED
 
 
 def classify_sku(
@@ -119,6 +150,7 @@ def build_sku_coverage(
                 segment=sku.segment,
                 unit=sku.unit,
                 classification=classification,
+                role=sku_role(recipe),
                 health=health,
                 mapped_item_count=mapped_counts.get(sku.sku_id, 0),
                 has_recipe=recipe is not None,

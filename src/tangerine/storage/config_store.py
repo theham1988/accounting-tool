@@ -137,7 +137,7 @@ class SqliteConfigStore:
         with self._lock:
             header_rows = self._conn.execute(
                 "SELECT sku_id, name, segment, yield_qty, yield_estimated,"
-                " target_gross_margin_pct"
+                " target_gross_margin_pct, prep"
                 " FROM recipes ORDER BY sku_id"
             ).fetchall()
             if not header_rows:
@@ -162,8 +162,9 @@ class SqliteConfigStore:
                 target_gross_margin_pct=(
                     _parse_decimal(target) if target is not None else None
                 ),
+                prep=bool(prep),
             )
-            for sku_id, name, segment, yield_qty, yield_estimated, target in header_rows
+            for sku_id, name, segment, yield_qty, yield_estimated, target, prep in header_rows
         ]
 
     def cost_book(self) -> CostBook:
@@ -666,6 +667,7 @@ class SqliteConfigStore:
         yield_qty: Decimal,
         yield_estimated: bool,
         target_gross_margin_pct: Decimal | None = None,
+        prep: bool = False,
         updated_by: str,
         session_id: str | None = None,
     ) -> None:
@@ -686,9 +688,11 @@ class SqliteConfigStore:
         estimate or a measured one; the editor's badge and recompute rule
         live off it.
 
-        ``target_gross_margin_pct`` is the recipe's whole-header optional
-        field: the editor posts it with every save (an empty input means
-        "no target"), so it is written unconditionally rather than preserved.
+        ``target_gross_margin_pct`` and ``prep`` (issue #35) are the
+        recipe's other whole-header editable fields: the editor posts both
+        with every save (an empty input means "no target"; an unticked box
+        means "not a prep"), so they are written unconditionally rather
+        than preserved.
 
         The recipe header is created on first save — name and segment come
         from the SKU row (segment defaults to cafe for a SKU that has none;
@@ -715,8 +719,8 @@ class SqliteConfigStore:
                 self._conn.execute(
                     "INSERT INTO recipes"
                     " (sku_id, name, segment, yield_qty, yield_estimated,"
-                    "  target_gross_margin_pct)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    "  target_gross_margin_pct, prep)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         sku_id,
                         name,
@@ -724,18 +728,20 @@ class SqliteConfigStore:
                         yield_str,
                         1 if yield_estimated else 0,
                         target_str,
+                        int(prep),
                     ),
                 )
             else:
                 self._conn.execute(
                     "UPDATE recipes"
                     " SET yield_qty = ?, yield_estimated = ?,"
-                    "     target_gross_margin_pct = ?"
+                    "     target_gross_margin_pct = ?, prep = ?"
                     " WHERE sku_id = ?",
                     (
                         yield_str,
                         1 if yield_estimated else 0,
                         target_str,
+                        int(prep),
                         sku_id,
                     ),
                 )
@@ -1022,6 +1028,13 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
     existing databases on upgrade, not just first seed, and so ingredient
     units (derived from the cost comments) are already known when it decides
     which inputs to sum. Dishes keep their yield marked measured (fixed).
+
+    Issue #35: ``prep`` is derived from usage, not from a YAML field: a
+    recipe whose output SKU is referenced as an ingredient by any other
+    recipe is flagged prep on seed. That derivation needs every recipe's
+    ingredient rows written first, so the seed is three passes — headers,
+    ingredient rows, then an ``UPDATE`` from a usage query — rather than
+    interleaving prep with the header write.
     """
     for recipe in catalog.all():
         target_str = _decimal_or_none_to_str(recipe.target_gross_margin_pct)
@@ -1051,8 +1064,8 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
         conn.execute(
             "INSERT OR IGNORE INTO recipes"
             " (sku_id, name, segment, yield_qty, yield_estimated,"
-            "  target_gross_margin_pct)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "  target_gross_margin_pct, prep)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 recipe.sku_id,
                 recipe.name,
@@ -1060,6 +1073,9 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
                 yield_str,
                 1 if recipe.yield_estimated else 0,
                 target_str,
+                # The catalog flag is honoured when set, then the usage
+                # derivation below ors in any prep declared only by usage.
+                1 if recipe.prep else 0,
             ),
         )
         for position, ing in enumerate(recipe.ingredients):
@@ -1069,6 +1085,20 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
                 " VALUES (?, ?, ?, ?)",
                 (recipe.sku_id, ing.sku_id, str(ing.quantity), position),
             )
+
+    # Issue #35: usage is the declaration. A recipe whose output SKU another
+    # recipe consumes is a prep regardless of what the YAML said — this is
+    # what makes the prep- naming convention stop carrying meaning. Mirrors
+    # the backfill in 0007_sku_roles.sql for databases seeded before the
+    # column existed; running both is idempotent (UPDATE sets the same bit).
+    conn.execute(
+        "UPDATE recipes SET prep = 1"
+        " WHERE sku_id IN ("
+        "   SELECT DISTINCT ri.ingredient_sku_id"
+        "     FROM recipe_ingredients AS ri"
+        "     JOIN recipes AS r ON r.sku_id = ri.ingredient_sku_id"
+        " )"
+    )
 
 
 def _backfill_estimated_yields(conn: sqlite3.Connection) -> None:

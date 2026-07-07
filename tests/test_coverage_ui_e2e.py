@@ -150,6 +150,53 @@ def test_get_skus_renders_one_row_per_sku_with_full_coverage_picture(tmp_path: P
     assert "45.00" in html
 
 
+# --- AC: the SKU view shows each SKU's role (issue #35) ---------------------
+
+
+def test_skus_page_shows_each_skus_role(tmp_path: Path) -> None:
+    """Each SKU row carries its role — purchasable / produced / prep — so a
+    partner can see at a glance why a SKU is or is not directly priceable.
+
+    Worked example. Beans are bought (no recipe): purchasable. The latte
+    has a recipe and is only sold: produced. The oba sauce has a recipe
+    *and* the latte consumes it, so the seed flags it prep: its row says
+    prep, not merely produced.
+    """
+    recipes_yaml = """
+recipes:
+  - sku_id: oba-sauce
+    name: Oba Sauce
+    segment: cafe
+    ingredients:
+      - { sku_id: soy, quantity: "30" }
+  - sku_id: espresso-latte
+    name: Espresso Latte
+    segment: cafe
+    ingredients:
+      - { sku_id: beans-arabica, quantity: "20" }
+      - { sku_id: oba-sauce, quantity: "10" }
+
+mappings:
+  - { item_id: i-latte, sku_id: espresso-latte }
+"""
+    app = _build_app(tmp_path, recipes_yaml=recipes_yaml, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+
+    html = client.get("/skus").text
+
+    def row_for(sku_id: str) -> str:
+        return html.split(f'href="/skus/{sku_id}"')[1].split("</tr>")[0]
+
+    # Role hooks are class-suffixed (like the health dots), so "prep" here
+    # cannot be satisfied by the unrelated "prep-internal" classification
+    # label that also appears in some rows.
+    assert "sku-role--purchasable" in row_for("beans-arabica")
+    assert "purchasable" in row_for("beans-arabica").lower()
+    assert "sku-role--produced" in row_for("espresso-latte")
+    assert "sku-role--prep" not in row_for("espresso-latte")
+    assert "sku-role--prep" in row_for("oba-sauce")
+
+
 # --- AC: mobile-first, consistent with the existing review page CSS --------
 
 
