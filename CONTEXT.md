@@ -34,6 +34,60 @@ review's `unmapped` section (that is their correct home — revenue the
 tool cannot cost is surfaced, not silently dropped). The bar is reviewed
 at every menu change.
 
+## SKU roles
+
+Every SKU has a **role**, a fact about its relations rather than a stored
+label:
+
+- A **purchasable SKU** is bought, not made — it has no recipe. Its cost
+  comes from purchases (the cost book). *Avoid*: "raw ingredient",
+  "leaf SKU".
+- A **produced SKU** is made in-house — it has a recipe. Sold dishes and
+  preps are both produced.
+- A **prep** is a produced SKU declared usable as a recipe ingredient
+  (house sauces, dressings, concentrates, guacamole, homemade spam).
+  Prep-ness is the one role fact that must be *declared*, not derived —
+  nothing about a recipe's shape says whether its output may go into
+  other recipes. A prep may also be sold directly; the two are not
+  exclusive.
+
+A produced SKU's cost is **always derived** from its recipe (recursively,
+down to purchasable SKUs at receipt prices); it is never priced directly
+in the cost book. Purchasable SKUs are priced *only* by the cost book.
+One source of truth per role — if the venue starts buying a prep
+pre-made instead of making it, deleting its recipe flips it to
+purchasable.
+
+## Serving recipe
+
+A one-line recipe expressing how much of a purchasable SKU one sold unit
+consumes: a bottled Chang sale = 330 ml of the `beer-chang` SKU, a
+draught pint = 473 ml of the keg SKU. Serving recipes exist so
+directly-sold purchasables (beer, wine, soft drinks) cost through the
+same item → SKU → recipe path as dishes — there is no second costing
+path. "Beers don't have recipes" is therefore false in this model; they
+have *uninteresting* ones.
+
+An **ingredient** is not a kind of SKU; it is a role a SKU plays inside
+one recipe: an (SKU, quantity) line. Purchasable SKUs and preps may play
+it; sold-only dishes may not.
+
+## Yield
+
+The quantity of its output SKU that one execution of a recipe produces,
+expressed in **that SKU's own unit**: a pitcher recipe yields 2 (units —
+two pours), an ahi sauce batch yields ~61 (g). One formula everywhere:
+cost per unit of output = batch cost ÷ yield. The old integer
+`yield_units` is the special case of a `unit`-denominated output; it is
+not a separate concept.
+_Avoid_: "yield units" and "batch yield" as distinct ideas.
+
+For a prep whose batch has never been measured, the yield defaults to
+the **sum of the recipe's input quantities** — a no-loss estimate,
+explicitly rough for reduced/cooked preps (evaporation means true yield
+is lower and true cost per gram higher). Measured yields replace
+defaults as batches get weighed.
+
 ## Cost unit convention
 
 Every ingredient SKU's per-unit cost is **THB per smallest weight/volume

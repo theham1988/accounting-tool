@@ -13,7 +13,7 @@ Reads ``config/recipes.yaml`` (recipes + the ``mappings:`` block) and
 
 Sub-recipes (the ``prep-*`` and sauce/dressing blocks) are costed **recursively**:
 when an ingredient has its own recipe, its unit cost is the sum of *its*
-ingredients divided by its ``yield_units`` (so a sauce used at 5 g carries 5 g
+ingredients divided by its ``yield_qty`` (so a sauce used at 5 g carries 5 g
 × the sauce's per-gram cost). The Breakdown sheet stays collapsed — one row per
 top-level ingredient — so a partner reads the parent recipe as sold, with each
 sauce/prep as a single priced line.
@@ -29,14 +29,18 @@ Status values:
 Anything missing is flagged with ``can't find`` in the offending cell, so a
 partner scanning the sheet can see exactly what to fix.
 
-Reuses the project's validated YAML loaders — a malformed file fails loudly
-with the same ``ConfigError`` the app raises at startup. No database, no
-server, no upload; pure analysis of the shipped config.
+Reuses the project's validated config seeding — a malformed file fails loudly
+with the same ``ConfigError`` the app raises at startup. Seeds a throwaway
+in-memory database so the sheet's numbers match what partners see in the
+running tool (net-of-VAT costs, derived units, and — issue #34 — the real
+prep yields the estimated-yield backfill fills in), then discards it; no
+server and no on-disk state.
 """
 
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass
 from decimal import Decimal
@@ -54,10 +58,12 @@ from openpyxl import Workbook  # noqa: E402
 from openpyxl.styles import Alignment, Font, PatternFill  # noqa: E402
 from openpyxl.utils import get_column_letter  # noqa: E402
 
-from tangerine.config.loader import load_costs, load_recipes  # noqa: E402
 from tangerine.cost import CostBook  # noqa: E402
 from tangerine.recipes import RecipeCatalog  # noqa: E402
-from tangerine.types import Recipe  # noqa: E402
+from tangerine.storage.config_store import (  # noqa: E402
+    SqliteConfigStore,
+    seed_config,
+)
 
 DEFAULT_RECIPES_PATH = "config/recipes.yaml"
 DEFAULT_COSTS_PATH = "config/costs.yaml"
@@ -115,8 +121,7 @@ def build(
     costs_path: str | Path = DEFAULT_COSTS_PATH,
     out_path: str | Path = DEFAULT_OUTPUT_PATH,
 ) -> int:
-    catalog = load_recipes(recipes_path)
-    cost = load_costs(costs_path)
+    catalog, cost = _seed_and_read(recipes_path, costs_path)
     mappings = sorted(catalog.mappings(), key=lambda m: m.item_id)
 
     resolver = _Resolver(catalog, cost)
@@ -197,11 +202,36 @@ def build(
     return 0
 
 
+def _seed_and_read(
+    recipes_path: str | Path, costs_path: str | Path
+) -> tuple[RecipeCatalog, CostBook]:
+    """Seed a throwaway in-memory database from the YAML and read it back.
+
+    The spreadsheet must agree with the numbers partners see in the running
+    tool, which reads from SQLite — not from the YAML directly. Seeding an
+    in-memory database reuses the exact production path (``seed_config``): the
+    net-of-VAT cost derivation, the unit derivation from the cost comments,
+    and — the reason this indirection exists (issue #34) — the estimated-yield
+    backfill that gives every prep its real batch yield instead of the legacy
+    default of 1. Costing straight off the YAML would divide prep costs by 1
+    and diverge from the tool by the same 25–150× the backfill fixes.
+    """
+    conn = sqlite3.connect(":memory:")
+    try:
+        seed_config(conn, recipes_path=recipes_path, costs_path=costs_path)
+        store = SqliteConfigStore(conn)
+        catalog = RecipeCatalog(list(store.recipes()), list(store.mappings()))
+        cost = store.cost_book()
+    finally:
+        conn.close()
+    return catalog, cost
+
+
 class _Resolver:
     """Resolves a SKU's per-unit cost, recursing into sub-recipes.
 
     A leaf SKU returns its direct price from ``CostBook``. A SKU that has its
-    own recipe is costed as ``sum(ingredient qty × unit cost) / yield_units``,
+    own recipe is costed as ``sum(ingredient qty × unit cost) / yield_qty``,
     which lets a sauce used at 5 g carry 5 g of the sauce's per-gram cost.
     Cycle-safe (a SKU on its own resolution stack returns ``None``).
     """
@@ -237,10 +267,10 @@ class _Resolver:
                 priced_all = False
                 continue
             total += ing.quantity * child
-        if not priced_all or recipe.yield_units <= 0:
+        if not priced_all or recipe.yield_qty <= 0:
             self._memo[sku_id] = None
             return None
-        per_unit = total / Decimal(recipe.yield_units)
+        per_unit = total / recipe.yield_qty
         self._memo[sku_id] = per_unit
         return per_unit
 

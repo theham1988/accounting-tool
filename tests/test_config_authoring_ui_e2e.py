@@ -872,6 +872,256 @@ def test_recipe_preview_converts_shorthand_too(tmp_path: Path) -> None:
     assert "0.30" in response.text  # 15 × 0.02
 
 
+# --- AC: yield field rendered in the output SKU's own unit (issue #34) ------
+
+
+def test_recipe_editor_renders_yield_field_in_the_output_skus_unit(
+    tmp_path: Path,
+) -> None:
+    """The editor offers a yield input labelled in the output SKU's own
+    unit — "yields ___ g" for a gram-denominated sauce, and the "units"
+    fallback for a SKU whose unit was never confirmed.
+
+    Issue #34: yield is a decimal quantity of the output SKU, so the label
+    must say *what* is being counted. The latte (unit never confirmed)
+    falls back to "units"; a partner-created gram sauce reads "g".
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    # The latte's unit is unconfirmed -> generic "units" label.
+    latte_html = client.get("/skus/latte").text
+    assert 'name="yield_qty"' in latte_html
+    assert 'yield-field__unit">units<' in latte_html
+
+    # A partner-created g-denominated SKU labels its yield in grams.
+    client.post(
+        "/skus",
+        data={"sku_id": "ahi-sauce", "name": "Ahi Sauce", "unit": "g", "price": "0.20"},
+        follow_redirects=False,
+    )
+    sauce_html = client.get("/skus/ahi-sauce").text
+    assert 'name="yield_qty"' in sauce_html
+    assert 'yield-field__unit">g<' in sauce_html
+
+
+# --- AC: estimated yields are labelled as estimates (issue #34) --------------
+
+# A prep fixture: the ahi sauce is consumed by the poke bowl, so the seed
+# backfills its yield with the input sum (124 g) marked estimated. The bowl
+# itself is a plain dish whose yield 1 stays measured.
+_PREP_RECIPES_YAML = """
+recipes:
+  - sku_id: sauce-ahi
+    name: Ahi Sauce
+    segment: cafe
+    ingredients:
+      - { sku_id: soy-sauce, quantity: "100" }
+      - { sku_id: mirin, quantity: "24" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-ahi, quantity: "25" }
+      - { sku_id: rice, quantity: "200" }
+
+mappings:
+  - { item_id: i-poke, sku_id: poke-bowl }
+"""
+
+_PREP_COSTS_YAML = """
+costs:
+  soy-sauce: { price: "0.05", updated_at: "2026-06-01" }  # 1 l bottle
+  mirin: { price: "0.30", updated_at: "2026-06-01" }  # 500 ml bottle
+  rice: { price: "0.04", updated_at: "2026-06-01" }  # 5 kg bag
+"""
+
+
+def _prep_app(tmp_path: Path, today: date | None = None):  # type: ignore[no-untyped-def]
+    return _build_app(
+        tmp_path,
+        recipes_yaml=_PREP_RECIPES_YAML,
+        costs_yaml=_PREP_COSTS_YAML,
+        today=today or date(2026, 7, 2),
+    )
+
+
+def test_estimated_yield_is_labelled_and_a_measured_one_is_not(
+    tmp_path: Path,
+) -> None:
+    """The sauce's backfilled yield (124, the input sum) renders with an
+    "estimated" badge; the poke bowl's migrated yield (1, fixed) does not.
+
+    Issue #34 AC: "an unmeasured prep's yield ... clearly labelled an
+    estimate", so a partner reading the editor knows the number is the
+    no-loss default, not a weighed batch.
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    sauce_html = client.get("/skus/sauce-ahi").text
+    assert 'name="yield_qty"' in sauce_html
+    assert 'value="124"' in sauce_html
+    assert "estimated" in sauce_html.split('class="yield-field"')[1].split("</label>")[0]
+
+    bowl_html = client.get("/skus/poke-bowl").text
+    assert 'value="1"' in bowl_html
+    assert "estimated" not in bowl_html.split('class="yield-field"')[1].split("</label>")[0]
+
+
+# --- AC: a measured yield replaces the estimate and drops the label ---------
+
+
+def test_entering_a_measured_yield_replaces_the_estimate(tmp_path: Path) -> None:
+    """The partner weighs an ahi batch at 61 g and types it in; the saved
+    yield is 61 marked measured, the badge disappears, and the margin uses
+    the measured number.
+
+    Issue #34 AC: "Entering a measured yield replaces the estimate and
+    drops the estimate label."
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/sauce-ahi/recipe",
+        data={
+            "ingredient_sku_id": ["soy-sauce", "mirin"],
+            "quantity": ["100", "24"],
+            "yield_qty": "61",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    editor_html = client.get("/skus/sauce-ahi").text
+    assert 'value="61"' in editor_html
+    yield_block = editor_html.split('class="yield-field"')[1].split("</label>")[0]
+    assert "estimated" not in yield_block
+
+
+def test_row_edits_recompute_an_estimated_yield_but_not_a_measured_one(
+    tmp_path: Path,
+) -> None:
+    """Editing an estimated prep's rows re-derives the estimate from the new
+    input sum; a measured yield is untouched by row edits.
+
+    Issue #34 AC: "Editing a recipe's ingredient rows recomputes an
+    estimated yield; a measured (partner-entered) yield is untouched by row
+    edits." The form posts the yield it displayed; the server tells a
+    partner-typed measurement (value changed) from an untouched estimate
+    (value equal to the stored one) — no client JS involved.
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    # Estimated: bumping soy 100 -> 150 recomputes the estimate 124 -> 174.
+    client.post(
+        "/skus/sauce-ahi/recipe",
+        data={
+            "ingredient_sku_id": ["soy-sauce", "mirin"],
+            "quantity": ["150", "24"],
+            "yield_qty": "124",  # displayed value, untouched by the partner
+        },
+        follow_redirects=False,
+    )
+    editor_html = client.get("/skus/sauce-ahi").text
+    assert 'value="174"' in editor_html
+    yield_block = editor_html.split('class="yield-field"')[1].split("</label>")[0]
+    assert "estimated" in yield_block
+
+    # Measured: weigh the batch (160 g), then edit a row — 160 stays.
+    client.post(
+        "/skus/sauce-ahi/recipe",
+        data={
+            "ingredient_sku_id": ["soy-sauce", "mirin"],
+            "quantity": ["150", "24"],
+            "yield_qty": "160",
+        },
+        follow_redirects=False,
+    )
+    client.post(
+        "/skus/sauce-ahi/recipe",
+        data={
+            "ingredient_sku_id": ["soy-sauce", "mirin"],
+            "quantity": ["150", "30"],
+            "yield_qty": "160",  # displayed value, untouched
+        },
+        follow_redirects=False,
+    )
+    editor_html = client.get("/skus/sauce-ahi").text
+    assert 'value="160"' in editor_html
+    yield_block = editor_html.split('class="yield-field"')[1].split("</label>")[0]
+    assert "estimated" not in yield_block
+
+
+# --- AC: zero/negative yields rejected with a clear message ------------------
+
+
+def test_zero_or_negative_yield_is_rejected_with_a_clear_message(
+    tmp_path: Path,
+) -> None:
+    """A yield of 0 (or below) is a typo, never a recipe — the engine would
+    divide by it. The save is refused with a message naming the problem,
+    and the stored recipe is unchanged.
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    for bad in ("0", "-5"):
+        response = client.post(
+            "/skus/sauce-ahi/recipe",
+            data={
+                "ingredient_sku_id": ["soy-sauce", "mirin"],
+                "quantity": ["100", "24"],
+                "yield_qty": bad,
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 400
+        assert "Yield must be greater than zero" in response.text
+
+    # The stored recipe still carries the backfilled estimate.
+    editor_html = client.get("/skus/sauce-ahi").text
+    assert 'value="124"' in editor_html
+
+
+# --- AC: yield changes are audited and revertable -----------------------------
+
+
+def test_yield_change_is_audited_and_revertable(tmp_path: Path) -> None:
+    """Measuring the sauce at 61 g writes an audit entry whose revert
+    restores the previous estimated yield — badge and all.
+
+    Issue #34 AC: "Changing a yield writes an audit entry and is
+    revertable, like any other recipe edit."
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    client.post(
+        "/skus/sauce-ahi/recipe",
+        data={
+            "ingredient_sku_id": ["soy-sauce", "mirin"],
+            "quantity": ["100", "24"],
+            "yield_qty": "61",
+        },
+        follow_redirects=False,
+    )
+
+    audit_html = client.get("/audit").text
+    assert "sauce-ahi" in audit_html
+    entry_id = _first_revert_entry_id(audit_html)
+    revert = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+    assert revert.status_code == 303
+
+    # The estimate is back: 124, labelled estimated.
+    editor_html = client.get("/skus/sauce-ahi").text
+    assert 'value="124"' in editor_html
+    yield_block = editor_html.split('class="yield-field"')[1].split("</label>")[0]
+    assert "estimated" in yield_block
+
+
 # --- AC: target gross margin % settable per recipe ---------------------------
 
 

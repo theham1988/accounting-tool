@@ -11,7 +11,13 @@ underneath stays canonical; shorthand never reaches the database.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
+
+#: The count unit (eggs, leaves, slices). A count is never additive with a
+#: weight (g) or volume (ml), so count-unit inputs are excluded from a yield
+#: estimate denominated in g/ml — 4 whole leaves are not 4 grams.
+_COUNT_UNIT = "unit"
 
 #: What one spoon/pinch/knob/grind holds, in the ingredient's canonical
 #: unit (ml for liquids, g for solids — same number either way, which is
@@ -79,4 +85,41 @@ def parse_quantity(text: str, unit: str | None) -> Decimal:
     return quantity
 
 
-__all__ = ["QuantityError", "parse_quantity"]
+def estimated_yield(
+    ingredients: list[tuple[str, Decimal]],
+    unit_by_sku: Mapping[str, str | None],
+) -> Decimal:
+    """Issue #34: the no-loss estimate of a recipe's batch yield.
+
+    The sum of the recipe's *weight/volume* input quantities, denominated in
+    the output SKU's own unit. A prep whose batch has never been weighed
+    defaults to this; the estimate is explicitly rough for reduced/cooked
+    preps (evaporation means true yield is lower and true cost per gram
+    higher). The seed migration uses it for every sub-recipe used as an
+    ingredient; the editor recomputes it whenever the recipe's rows change
+    until a partner replaces it with a measured value.
+
+    ``unit_by_sku`` maps each ingredient SKU to its canonical unit. Count-unit
+    inputs (whole eggs, leaves, slices) are excluded from the sum: N countable
+    items are not N grams or millilitres, so adding them into a weight- or
+    volume-denominated yield would inflate it with a meaningless number. An
+    ingredient whose unit is still unconfirmed (``None``) is kept — the seed
+    path runs before costs (and thus units) are known, and dropping unknown
+    inputs would understate the estimate to zero.
+
+    The remaining g/ml inputs are summed on the same no-loss simplification
+    the domain already documents (a gram of solid and a millilitre of liquid
+    both contribute one unit of batch): the inputs sum to what the batch
+    *would* yield with no loss.
+    """
+    return sum(
+        (
+            qty
+            for sku, qty in ingredients
+            if unit_by_sku.get(sku) != _COUNT_UNIT
+        ),
+        Decimal("0"),
+    )
+
+
+__all__ = ["QuantityError", "estimated_yield", "parse_quantity"]

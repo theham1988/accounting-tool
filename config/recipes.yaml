@@ -50,8 +50,6 @@ recipes:
     ingredients:
       - { sku_id: coffee-beans-robusta, quantity: "400" }
       - { sku_id: water-filtered, quantity: "1600" }
-    yield_units: 1
-
   - sku_id: prep-latte-con
     name: "Prep: Latte Concentrate (Robusta+House 1:1, cold brew 1:4)"
     segment: cafe
@@ -59,16 +57,12 @@ recipes:
       - { sku_id: coffee-beans-robusta, quantity: "200" }
       - { sku_id: coffee-beans-house, quantity: "200" }
       - { sku_id: water-filtered, quantity: "1600" }
-    yield_units: 1
-
   - sku_id: prep-cold-brew-dark
     name: "Prep: Dark Cold Brew, ready-to-drink (Robusta 1:10)"
     segment: cafe
     ingredients:
       - { sku_id: coffee-beans-robusta, quantity: "200" }
       - { sku_id: water-filtered, quantity: "2000" }
-    yield_units: 1
-
   - sku_id: prep-tangerine-syrup
     name: "Prep: Tangerine Syrup"
     segment: cafe
@@ -76,8 +70,6 @@ recipes:
       - { sku_id: syrup-mandarin-sunquick, quantity: "250" }
       - { sku_id: syrup-haleblueboy-red, quantity: "100" }
       - { sku_id: syrup-strawberry, quantity: "100" }
-    yield_units: 1
-
   - sku_id: prep-yuzu-syrup
     name: "Prep: Yuzu Syrup (Yuzu:Honey:Syrup 2:2:1)"
     segment: cafe
@@ -86,16 +78,12 @@ recipes:
       - { sku_id: honey, quantity: "200" }
       - { sku_id: syrup-sugar, quantity: "100" }
       - { sku_id: salt-pink, quantity: "1" }
-    yield_units: 1
-
   - sku_id: prep-matcha-mixed
     name: "Prep: Matcha Mixed blend (Maki:MatchaKai 1:2)"
     segment: cafe
     ingredients:
       - { sku_id: matcha-maki, quantity: "100" }
       - { sku_id: matcha-kai, quantity: "200" }
-    yield_units: 1
-
   - sku_id: prep-spicy-sandwich-sauce
     name: "Prep: Spicy Sandwich Sauce (mayo + sriracha)"
     segment: cafe
@@ -103,8 +91,6 @@ recipes:
       - { sku_id: mayonnaise, quantity: "100" }
       - { sku_id: sauce-sriracha, quantity: "50" }
       - { sku_id: pepper-black, quantity: "0.6" }
-    yield_units: 1
-
   - sku_id: prep-caramel-sauce
     name: "Prep: Caramel Sauce"
     segment: cafe
@@ -115,8 +101,6 @@ recipes:
       - { sku_id: milk-condensed, quantity: "125" }
       - { sku_id: milk-fresh, quantity: "50" }
       - { sku_id: butter-salted, quantity: "10" }
-    yield_units: 1
-
   - sku_id: prep-pesto-sauce
     name: "Prep: Pesto Sauce"
     segment: cafe
@@ -126,16 +110,12 @@ recipes:
       - { sku_id: salt, quantity: "20" }
       - { sku_id: pepper-black, quantity: "15" }
       - { sku_id: olive-oil, quantity: "500" }
-    yield_units: 1
-
   - sku_id: prep-homemade-yogurt
     name: "Prep: Homemade Yogurt"
     segment: cafe
     ingredients:
       - { sku_id: yogurt-starter, quantity: "200" }
       - { sku_id: milk-fresh, quantity: "1000" }
-    yield_units: 1
-
   - sku_id: prep-pork-marinade
     name: "Prep: HK Fried Pork (marinated neck)"
     segment: cafe
@@ -151,8 +131,6 @@ recipes:
       - { sku_id: flour-corn, quantity: "5" }
       - { sku_id: flour-crispy, quantity: "20" }
       - { sku_id: breadcrumbs, quantity: "10" }
-    yield_units: 1
-
   # ----------------------------------------------------------------------
   # SAUCE & MEAT PREPS — authored from Recipe Book Feb 2024 (Sauce & Meat)
   # docx, Feb 2024. Quantities are g unless the source says otherwise; the
@@ -172,8 +150,6 @@ recipes:
       - { sku_id: water-filtered, quantity: "600" }
       - { sku_id: sugar, quantity: "30" }
       - { sku_id: salt, quantity: "30" }
-    yield_units: 1
-
   # Knorr brown sauce (docx T0) — a base for Loco Moco and Chili con Carne.
   - sku_id: sauce-knorr-brown
     name: "Knorr Brown Sauce"
@@ -181,8 +157,6 @@ recipes:
     ingredients:
       - { sku_id: knorr-brown-powder, quantity: "120" }
       - { sku_id: water-filtered, quantity: "1000" }
-    yield_units: 1
-
   # Tangerine brown sauce (docx T1) — house-made reduction base.
   - sku_id: sauce-tangerine-brown
     name: "Tangerine Brown Sauce"
@@ -196,8 +170,6 @@ recipes:
       - { sku_id: bay-leaf, quantity: "2" }      # 2 leaves; counted in "No."
       - { sku_id: wine-red, quantity: "50" }
       - { sku_id: water-filtered, quantity: "2000" }
-    yield_units: 1
-
   # Loco moco sauce (docx T2) — combines the two brown sauces.
   - sku_id: sauce-loco-moco
     name: "Loco Moco Sauce"
@@ -207,8 +179,6 @@ recipes:
       - { sku_id: sauce-tangerine-brown, quantity: "250" }
       - { sku_id: onion, quantity: "100" }
       - { sku_id: oil-vegetable, quantity: "10" }
-    yield_units: 1
-
   # Oba Mentaiko Sauce (docx T5).
   - sku_id: sauce-oba
     name: "Oba Mentaiko Sauce"
@@ -223,8 +193,6 @@ recipes:
       - { sku_id: oba-leaf, quantity: "4" }       # 4 leaves; counted in "No."
       - { sku_id: prep-pickled-stock, quantity: "50" }
       - { sku_id: mentaiko-spicy, quantity: "10" }
-    yield_units: 1
-
   # Balsamic Mustard dressing (docx T6).
   - sku_id: dressing-balsamic-mustard
     name: "Balsamic Mustard Dressing"
@@ -236,8 +204,6 @@ recipes:
       - { sku_id: honey, quantity: "50" }
       - { sku_id: chili-powder, quantity: "1" }
       - { sku_id: rosdee-pork, quantity: "3" }
-    yield_units: 1
-
   # Ranch Dressing (docx T7).
   - sku_id: dressing-ranch
     name: "Ranch Dressing"
@@ -251,8 +217,6 @@ recipes:
       - { sku_id: lemon-juice, quantity: "10" }
       - { sku_id: chili-powder, quantity: "1" }
       - { sku_id: rosdee-pork, quantity: "3" }
-    yield_units: 1
-
   # Ahi sauce (docx T9).
   - sku_id: sauce-ahi
     name: "Ahi Sauce"
@@ -262,8 +226,6 @@ recipes:
       - { sku_id: lemon-juice, quantity: "20" }
       - { sku_id: mirin, quantity: "10" }
       - { sku_id: rosdee-pork, quantity: "1.25" }   # 1/4 tsp ≈ 1.25 g
-    yield_units: 1
-
   # Lemon & Lime Sauce (docx T10).
   - sku_id: sauce-lemon
     name: "Lemon & Lime Sauce"
@@ -276,8 +238,6 @@ recipes:
       - { sku_id: lime-juice, quantity: "10" }
       - { sku_id: pepper-white, quantity: "1" }
       - { sku_id: rosdee-pork, quantity: "3" }
-    yield_units: 1
-
   # Passion fruit jel (docx T11).
   - sku_id: sauce-passionfruit
     name: "Passion Fruit Jel"
@@ -286,8 +246,6 @@ recipes:
       - { sku_id: passionfruit-pulp, quantity: "200" }
       - { sku_id: agar-agar-powder, quantity: "3" }
       - { sku_id: sugar, quantity: "30" }
-    yield_units: 1
-
   # Guacamole (docx T12) — used in Mexican items; same-day only.
   - sku_id: guacamole
     name: "Guacamole"
@@ -300,8 +258,6 @@ recipes:
       - { sku_id: rosdee-pork, quantity: "1" }
       - { sku_id: pepper-black, quantity: "1" }
       - { sku_id: lime-juice, quantity: "20" }
-    yield_units: 1
-
   # Chili con carne (docx T13) — batched into 80g portions per source.
   - sku_id: beef-chili-con-carne
     name: "Chili con Carne"
@@ -317,8 +273,6 @@ recipes:
       - { sku_id: cumin-powder, quantity: "5" }
       - { sku_id: paprika-powder, quantity: "8" }
       - { sku_id: oil-vegetable, quantity: "30" }
-    yield_units: 1
-
   # Homemade Spam (docx T15) — sous-vide slab batched into 150g portions.
   - sku_id: spam-homemade
     name: "Homemade Spam"
@@ -333,8 +287,6 @@ recipes:
       - { sku_id: flour-corn, quantity: "20" }
       - { sku_id: rosdee-pork, quantity: "5" }
       - { sku_id: water-filtered, quantity: "50" }
-    yield_units: 1
-
   # ======================================================================
   # CAFE — COFFEE
   # ======================================================================

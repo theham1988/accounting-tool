@@ -47,7 +47,7 @@ from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
-from ..quantity import QuantityError, parse_quantity
+from ..quantity import QuantityError, estimated_yield, parse_quantity
 from ..storage.config_store import (
     AuditEntry,
     SqliteConfigStore,
@@ -965,15 +965,19 @@ def create_app(
         sku_id: str,
         ingredient_sku_id: list[str] = Form([]),
         quantity: list[str] = Form([]),
+        yield_qty: str = Form(""),
         target_gross_margin_pct: str = Form(""),
     ) -> HTMLResponse | RedirectResponse:
-        """Save the recipe editor's rows and target margin for one SKU.
+        """Save the recipe editor's rows, yield, and target margin for one SKU.
 
         The form posts parallel lists — one picker + one quantity input per
         row, in display order — so the saved positions mirror what the
-        partner saw. The redirect lands back on the editor, which re-reads
-        the DB: the rows shown after saving are the rows tomorrow's review
-        will cost.
+        partner saw. ``yield_qty`` is the recipe's yield in its output SKU's
+        own unit (issue #34); whether it counts as measured is decided by
+        comparing it against the stored yield, so older forms that omit the
+        field leave the yield alone. The redirect lands back on the editor,
+        which re-reads the DB: the rows and yield shown after saving are the
+        ones tomorrow's review will cost.
         """
         cfg: SqliteConfigStore = app.state.config_store
         if cfg.sku(sku_id) is None:
@@ -995,6 +999,39 @@ def create_app(
             return HTMLResponse(
                 "A recipe needs at least one ingredient row.", status_code=400
             )
+        # Issue #34: the yield must be a positive number. Zero or negative
+        # would divide-by-zero or invert the cost sign — neither is ever a
+        # real recipe, only a typo.
+        #
+        # The estimated/measured decision is server-side, no JS. A posted
+        # value that differs from the stored yield is a partner-typed
+        # measurement and fixes the yield. An unchanged (or absent) value
+        # means the partner left the field alone: a measured yield stays
+        # exactly as stored, an estimated one is recomputed from the
+        # (possibly edited) rows. A recipe with no stored row starts out
+        # estimated unless the partner types a yield up front.
+        stored = next((r for r in cfg.recipes() if r.sku_id == sku_id), None)
+        posted: Decimal | None = None
+        if yield_qty.strip():
+            try:
+                posted = Decimal(yield_qty.strip())
+            except InvalidOperation:
+                return HTMLResponse(
+                    "Yield must be a number.", status_code=400
+                )
+            if posted <= 0:
+                return HTMLResponse(
+                    "Yield must be greater than zero.", status_code=400
+                )
+        touched = posted is not None and (
+            stored is None or posted != stored.yield_qty
+        )
+        if posted is not None and touched:
+            yld, estimated = posted, False
+        elif stored is not None and not stored.yield_estimated:
+            yld, estimated = stored.yield_qty, False
+        else:
+            yld, estimated = estimated_yield(ingredients, unit_by_sku), True
         target: Decimal | None = None
         if target_gross_margin_pct.strip():
             try:
@@ -1006,6 +1043,8 @@ def create_app(
         cfg.save_recipe(
             sku_id,
             ingredients=ingredients,
+            yield_qty=yld,
+            yield_estimated=estimated,
             target_gross_margin_pct=target,
             updated_by=request.state.assignee_id,
             session_id=request.state.session_id,

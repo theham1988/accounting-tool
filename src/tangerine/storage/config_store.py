@@ -34,6 +34,7 @@ from ..config.loader import load_costs, load_recipes
 from ..cost import CostBook
 from ..fixed_costs import FixedCostEntry
 from ..price_history import PriceChange, PriceHistory
+from ..quantity import estimated_yield
 from ..recipes import RecipeCatalog
 from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
 from .schema import apply_migrations
@@ -135,7 +136,8 @@ class SqliteConfigStore:
         """
         with self._lock:
             header_rows = self._conn.execute(
-                "SELECT sku_id, name, segment, yield_units, target_gross_margin_pct"
+                "SELECT sku_id, name, segment, yield_qty, yield_estimated,"
+                " target_gross_margin_pct"
                 " FROM recipes ORDER BY sku_id"
             ).fetchall()
             if not header_rows:
@@ -155,12 +157,13 @@ class SqliteConfigStore:
                 name=name,
                 segment=Segment(segment),
                 ingredients=tuple(ingredients_by_recipe.get(sku_id, [])),
-                yield_units=yield_units,
+                yield_qty=_parse_decimal(yield_qty),
+                yield_estimated=bool(yield_estimated),
                 target_gross_margin_pct=(
                     _parse_decimal(target) if target is not None else None
                 ),
             )
-            for sku_id, name, segment, yield_units, target in header_rows
+            for sku_id, name, segment, yield_qty, yield_estimated, target in header_rows
         ]
 
     def cost_book(self) -> CostBook:
@@ -640,9 +643,10 @@ class SqliteConfigStore:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO skus"
-                " (sku_id, name, segment, unit, yield_units,"
-                "  target_gross_margin_pct, created_at, created_by)"
-                " VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)",
+                " (sku_id, name, segment, unit, yield_qty,"
+                "  yield_estimated, target_gross_margin_pct,"
+                "  created_at, created_by)"
+                " VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)",
                 (sku_id, name, unit, self._now(), created_by),
             )
             self._record_audit(
@@ -659,6 +663,8 @@ class SqliteConfigStore:
         sku_id: str,
         *,
         ingredients: list[tuple[str, Decimal]],
+        yield_qty: Decimal,
+        yield_estimated: bool,
         target_gross_margin_pct: Decimal | None = None,
         updated_by: str,
         session_id: str | None = None,
@@ -671,6 +677,15 @@ class SqliteConfigStore:
         Quantities are already in the ingredient's canonical unit; shorthand
         conversion happens at the edge (the web route), not here.
 
+        ``yield_qty`` (issue #34) is the recipe's yield in its output SKU's
+        own unit — a decimal that the engine divides the input cost by. It
+        is required on every save because the editor always posts it (the
+        estimated-yield recompute happens at the edge, not here, so by the
+        time we are called the yield is the value the partner sees).
+        ``yield_estimated`` records whether that value is the no-loss
+        estimate or a measured one; the editor's badge and recompute rule
+        live off it.
+
         ``target_gross_margin_pct`` is the recipe's whole-header optional
         field: the editor posts it with every save (an empty input means
         "no target"), so it is written unconditionally rather than preserved.
@@ -679,13 +694,14 @@ class SqliteConfigStore:
         from the SKU row (segment defaults to cafe for a SKU that has none;
         an ingredient-only SKU gaining a recipe must produce *something*
         saleable, and the editor lets the partner change it later) — and
-        its name/segment/yield are preserved as-is on subsequent saves.
+        its name/segment are preserved as-is on subsequent saves.
 
         The audit entry snapshots the *whole recipe* (header + ingredient
         rows) as one logical row, because that is what the partner edits and
         what a revert must restore in one stroke.
         """
         target_str = _decimal_or_none_to_str(target_gross_margin_pct)
+        yield_str = str(yield_qty)
         with self._lock, self._conn:
             old = self._recipe_snapshot(sku_id)
             header = self._conn.execute(
@@ -698,15 +714,30 @@ class SqliteConfigStore:
                 name, segment = sku_row if sku_row else (sku_id, None)
                 self._conn.execute(
                     "INSERT INTO recipes"
-                    " (sku_id, name, segment, yield_units, target_gross_margin_pct)"
-                    " VALUES (?, ?, ?, 1, ?)",
-                    (sku_id, name, segment or Segment.CAFE.value, target_str),
+                    " (sku_id, name, segment, yield_qty, yield_estimated,"
+                    "  target_gross_margin_pct)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        sku_id,
+                        name,
+                        segment or Segment.CAFE.value,
+                        yield_str,
+                        1 if yield_estimated else 0,
+                        target_str,
+                    ),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE recipes SET target_gross_margin_pct = ?"
+                    "UPDATE recipes"
+                    " SET yield_qty = ?, yield_estimated = ?,"
+                    "     target_gross_margin_pct = ?"
                     " WHERE sku_id = ?",
-                    (target_str, sku_id),
+                    (
+                        yield_str,
+                        1 if yield_estimated else 0,
+                        target_str,
+                        sku_id,
+                    ),
                 )
             self._conn.execute(
                 "DELETE FROM recipe_ingredients WHERE sku_id = ?", (sku_id,)
@@ -953,17 +984,26 @@ def seed_config(
     until some *other* call happens to commit, holding a write lock that
     blocks any other connection to the same file (surfaces as
     ``sqlite3.OperationalError: database is locked``).
+
+    The estimated-yield backfill (issue #34) runs on *every* call, not only
+    the first-seed path: an existing partner database predates the yield
+    concept, so its preps still carry the legacy default of 1 until this
+    flips them. The backfill is idempotent — it only touches a prep whose
+    yield is still the untouched legacy default — so re-running it every
+    startup neither churns data nor clobbers a partner-measured yield. It
+    runs after seeding so ingredient units (seeded from the cost comments)
+    are known, which is what lets it exclude count-unit inputs from the sum.
     """
     apply_migrations(conn)
-    if _skus_table_has_rows(conn):
-        return
-    catalog = load_recipes(recipes_path)
-    now = _utc_now_iso()
-    with conn:
-        _seed_recipes(conn, catalog, now)
-        _seed_mappings(conn, catalog, now)
-        if costs_path is not None:
-            _seed_costs(conn, costs_path, now)
+    if not _skus_table_has_rows(conn):
+        catalog = load_recipes(recipes_path)
+        now = _utc_now_iso()
+        with conn:
+            _seed_recipes(conn, catalog, now)
+            _seed_mappings(conn, catalog, now)
+            if costs_path is not None:
+                _seed_costs(conn, costs_path, now)
+    _backfill_estimated_yields(conn)
 
 
 def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) -> None:
@@ -972,22 +1012,37 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
     The SKU row carries name + segment; the unit column is left NULL here
     (ADR-0003 decision 3 — best-effort derivation happens in ``_seed_costs``
     where the pack-size comment lives; ambiguous cases stay NULL for the
-    Slice 3 editor to confirm). yield_units and target margin live on both
+    Slice 3 editor to confirm). yield_qty and target margin live on both
     the SKU (for the editor's eventual form) and the recipe (for the engine);
     the SKU's copy is left NULL where the recipe carries the default of 1.
+
+    Issue #34: the estimated-yield backfill (a sub-recipe consumed as an
+    ingredient gets an estimated yield from its input sum) is *not* run here.
+    It runs from :func:`seed_config` after ``_seed_costs`` — both so it covers
+    existing databases on upgrade, not just first seed, and so ingredient
+    units (derived from the cost comments) are already known when it decides
+    which inputs to sum. Dishes keep their yield marked measured (fixed).
     """
     for recipe in catalog.all():
         target_str = _decimal_or_none_to_str(recipe.target_gross_margin_pct)
+        # Migrated yield: write the value as-is, but defer yield_estimated to
+        # the usage-based backfill below. The engine divides by this number
+        # on read, so it must always be set (the loader defaults to 1).
+        yield_str = str(recipe.yield_qty)
         conn.execute(
             "INSERT OR IGNORE INTO skus"
-            " (sku_id, name, segment, unit, yield_units,"
-            "  target_gross_margin_pct, created_at, created_by)"
-            " VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+            " (sku_id, name, segment, unit, yield_qty,"
+            "  yield_estimated, target_gross_margin_pct,"
+            "  created_at, created_by)"
+            " VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?)",
             (
                 recipe.sku_id,
                 recipe.name,
                 recipe.segment.value,
-                recipe.yield_units if recipe.yield_units != 1 else None,
+                # The SKU's yield columns stay NULL where the recipe carries
+                # the default of 1 — same inheritance pattern the old
+                # yield_units column used.
+                None if recipe.yield_qty == Decimal("1") else yield_str,
                 target_str,
                 now,
                 _MIGRATION_ACTOR,
@@ -995,13 +1050,15 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
         )
         conn.execute(
             "INSERT OR IGNORE INTO recipes"
-            " (sku_id, name, segment, yield_units, target_gross_margin_pct)"
-            " VALUES (?, ?, ?, ?, ?)",
+            " (sku_id, name, segment, yield_qty, yield_estimated,"
+            "  target_gross_margin_pct)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 recipe.sku_id,
                 recipe.name,
                 recipe.segment.value,
-                recipe.yield_units,
+                yield_str,
+                1 if recipe.yield_estimated else 0,
                 target_str,
             ),
         )
@@ -1011,6 +1068,73 @@ def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) ->
                 " (sku_id, ingredient_sku_id, quantity, position)"
                 " VALUES (?, ?, ?, ?)",
                 (recipe.sku_id, ing.sku_id, str(ing.quantity), position),
+            )
+
+
+def _backfill_estimated_yields(conn: sqlite3.Connection) -> None:
+    """Issue #34: sub-recipes used as ingredients get estimated yields.
+
+    A recipe whose output SKU is referenced as an ingredient by another
+    recipe is a prep; its yield defaults to the no-loss estimate (the sum
+    of its weight/volume input quantities) and is marked estimated. The
+    partner can replace the estimate with a measured value after weighing
+    a batch.
+
+    The estimate uses the input sum because that is the cheapest upper
+    bound available without weighing: evaporation means a reduced sauce's
+    true yield is *lower* (so its true cost-per-gram is higher) — the
+    estimate is labelled to make that caveat visible (CONTEXT.md "Yield").
+
+    Idempotent and safe to run on every startup (``seed_config`` does):
+    a prep is only (re)derived while its yield is the *untouched legacy
+    default* — measured (``yield_estimated = 0``) with ``yield_qty = 1``,
+    the shape both a first seed and an on-disk 0006 migration leave. Once
+    flipped to an estimate, or once a partner types a measured value, the
+    stored yield is left alone. This is what carries existing partner
+    databases — which predate the yield concept and still hold the legacy
+    default — over on upgrade, not just fresh seeds.
+    """
+    used_as_ingredient = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT ri.ingredient_sku_id"
+            "  FROM recipe_ingredients AS ri"
+            "  JOIN recipes AS r ON r.sku_id = ri.ingredient_sku_id"
+        ).fetchall()
+    }
+    unit_by_sku = {
+        sku_id: unit
+        for sku_id, unit in conn.execute("SELECT sku_id, unit FROM skus").fetchall()
+    }
+    with conn:
+        for sku_id, yield_qty, yield_estimated in conn.execute(
+            "SELECT sku_id, yield_qty, yield_estimated FROM recipes"
+        ).fetchall():
+            if sku_id not in used_as_ingredient:
+                continue
+            # Only touch the untouched legacy default: a partner-measured
+            # yield (estimated 0, value != 1) or an already-derived estimate
+            # (estimated 1) is left exactly as stored.
+            if not (yield_estimated == 0 and Decimal(yield_qty) == Decimal("1")):
+                continue
+            rows = conn.execute(
+                "SELECT ingredient_sku_id, quantity FROM recipe_ingredients"
+                " WHERE sku_id = ?",
+                (sku_id,),
+            ).fetchall()
+            input_sum = estimated_yield(
+                [(ing_sku, Decimal(qty)) for ing_sku, qty in rows],
+                unit_by_sku,
+            )
+            # Zero inputs would mean the prep has no weighable rows yet —
+            # leave its yield alone rather than divide by zero in the engine.
+            if input_sum <= 0:
+                continue
+            conn.execute(
+                "UPDATE recipes"
+                " SET yield_qty = ?, yield_estimated = 1"
+                " WHERE sku_id = ?",
+                (str(input_sum), sku_id),
             )
 
 
@@ -1092,9 +1216,9 @@ def _ensure_sku_row(
     never overwriting a row's ``name``/``segment``.
     """
     conn.execute(
-        "INSERT INTO skus (sku_id, name, segment, unit, yield_units,"
-        " target_gross_margin_pct, created_at, created_by)"
-        " VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)"
+        "INSERT INTO skus (sku_id, name, segment, unit, yield_qty,"
+        " yield_estimated, target_gross_margin_pct, created_at, created_by)"
+        " VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)"
         " ON CONFLICT(sku_id) DO UPDATE SET unit = COALESCE(skus.unit, excluded.unit)",
         (sku_id, sku_id, unit, now, _MIGRATION_ACTOR),
     )
