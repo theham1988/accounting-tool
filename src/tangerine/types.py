@@ -63,6 +63,16 @@ class Recipe:
     - ``target_gross_margin_pct``  optional; when set, the margin engine
                         flags items whose actual gross-margin % is below it
                         (PRD user story 13).
+    - ``prep``          when True, this recipe's output SKU is declared
+                        usable as an ingredient inside other recipes (issue
+                        #35). The one stored role fact — purchasable vs
+                        produced is derived from "does it have a recipe",
+                        but prep-ness must be *declared* (nothing about a
+                        recipe's shape says whether its output may go into
+                        other recipes). The seed migration auto-declares a
+                        recipe as prep when its output is already referenced
+                        as an ingredient; the recipe editor toggles it
+                        afterwards.
     """
 
     sku_id: str
@@ -71,6 +81,7 @@ class Recipe:
     ingredients: tuple[RecipeIngredient, ...]
     yield_units: int = 1
     target_gross_margin_pct: Decimal | None = None
+    prep: bool = False
 
 
 @dataclass(frozen=True)
@@ -1313,6 +1324,25 @@ class SkuClassification(StrEnum):
     DANGLING = "dangling"
 
 
+class SkuRole(StrEnum):
+    """What a SKU *is* in the costing chain (issue #35, CONTEXT.md).
+
+    Derived from relations — never stored on the SKU itself:
+
+    - ``PURCHASABLE`` no recipe of its own; it is bought, and priced by a
+                      cost entry.
+    - ``PRODUCED``    has a recipe; it is made, and priced by resolving that
+                      recipe (a sold-only dish).
+    - ``PREP``        produced *and* declared usable as an ingredient in
+                      other recipes (the one stored fact, a flag on the
+                      recipe).
+    """
+
+    PURCHASABLE = "purchasable"
+    PRODUCED = "produced"
+    PREP = "prep"
+
+
 class SkuHealth(StrEnum):
     """At-a-glance costing health for a SKU or a mapped item's SKU chain.
 
@@ -1351,6 +1381,7 @@ class SkuCoverageRow:
     segment: Segment | None
     unit: str | None
     classification: SkuClassification
+    role: SkuRole
     health: SkuHealth
     mapped_item_count: int
     has_recipe: bool

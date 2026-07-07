@@ -76,6 +76,11 @@
           <input type="number" name="target_gross_margin_pct" step="any" min="0"
                  value="{{ recipe.target_gross_margin_pct if recipe and recipe.target_gross_margin_pct is not none else '' }}">
         </label>
+        <label>
+          <input type="checkbox" name="prep" value="1"
+                 {% if recipe and recipe.prep %}checked{% endif %}>
+          Usable as an ingredient in other recipes (prep)
+        </label>
         <div id="recipe-preview" class="recipe-preview"></div>
         <template id="recipe-row-template">{{ recipe_row(none, "") }}</template>
         <button type="button" class="recipe-row__add"

@@ -40,7 +40,12 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
 from ..config.loader import load_assignees
-from ..coverage import build_item_coverage, build_sku_coverage
+from ..coverage import (
+    build_item_coverage,
+    build_sku_coverage,
+    pickable_ingredient_skus,
+    sku_role,
+)
 from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
 from ..trends import WeekdayAggregate, build_trends
@@ -48,6 +53,7 @@ from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
 from ..quantity import QuantityError, parse_quantity
+from ..recipes import find_recipe_cycle
 from ..storage.config_store import (
     AuditEntry,
     SqliteConfigStore,
@@ -56,7 +62,7 @@ from ..storage.config_store import (
 )
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..upload import generate_template_csv, parse_upload
-from ..types import Assignee, Segment, SegmentMargin
+from ..types import Assignee, Segment, SegmentMargin, SkuRole
 from .sparkline import ChartPoint, bar_row, sparkline_svg
 from .auth import (
     AuthConfig,
@@ -802,7 +808,11 @@ def create_app(
                     context={
                         "request": request,
                         "recipe_sku_id": recipe_sku_id,
-                        "all_skus": cfg.skus(),
+                        # Same filter as the editor page: a just-created SKU
+                        # is purchasable (no recipe yet), so it appears.
+                        "all_skus": pickable_ingredient_skus(
+                            cfg.skus(), cfg.recipes()
+                        ),
                         "selected_sku_id": sku_id,
                     },
                 ),
@@ -823,7 +833,8 @@ def create_app(
         sku = cfg.sku(sku_id)
         if sku is None:
             return HTMLResponse("Unknown SKU.", status_code=404)
-        recipe = next((r for r in cfg.recipes() if r.sku_id == sku_id), None)
+        recipes = cfg.recipes()
+        recipe = next((r for r in recipes if r.sku_id == sku_id), None)
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
@@ -833,7 +844,9 @@ def create_app(
                 "sku": sku,
                 "current_cost": cfg.cost_book().price(sku_id),
                 "recipe": recipe,
-                "all_skus": cfg.skus(),
+                # The picker offers only what can honestly be an ingredient:
+                # purchasables + preps, never sold-only dishes (issue #35).
+                "all_skus": pickable_ingredient_skus(cfg.skus(), recipes),
             },
         )
 
@@ -966,8 +979,10 @@ def create_app(
         ingredient_sku_id: list[str] = Form([]),
         quantity: list[str] = Form([]),
         target_gross_margin_pct: str = Form(""),
+        prep: str = Form(""),
     ) -> HTMLResponse | RedirectResponse:
-        """Save the recipe editor's rows and target margin for one SKU.
+        """Save the recipe editor's rows, target margin and prep flag for
+        one SKU.
 
         The form posts parallel lists — one picker + one quantity input per
         row, in display order — so the saved positions mirror what the
@@ -979,10 +994,21 @@ def create_app(
         if cfg.sku(sku_id) is None:
             return HTMLResponse("Unknown SKU.", status_code=404)
         unit_by_sku = {s.sku_id: s.unit for s in cfg.skus()}
+        # The same rule the picker renders, enforced server-side so the
+        # filter is not merely cosmetic (issue #35): an ingredient must be
+        # purchasable (no recipe) or a prep — never a sold-only dish.
+        recipes_by_sku = {r.sku_id: r for r in cfg.recipes()}
         ingredients: list[tuple[str, Decimal]] = []
         for ing_sku_id, qty_text in zip(ingredient_sku_id, quantity):
             if ing_sku_id not in unit_by_sku:
                 return HTMLResponse(f"Unknown ingredient SKU: {ing_sku_id}.", status_code=400)
+            if sku_role(recipes_by_sku.get(ing_sku_id)) is SkuRole.PRODUCED:
+                return HTMLResponse(
+                    f"{ing_sku_id} is a sold-only dish, not an allowed "
+                    "ingredient — only purchasable SKUs and preps may go "
+                    "into a recipe. Declare it a prep first if it is one.",
+                    status_code=400,
+                )
             try:
                 qty = parse_quantity(qty_text, unit_by_sku[ing_sku_id])
             except QuantityError as exc:
@@ -994,6 +1020,15 @@ def create_app(
             # rejected rather than silently inflating tomorrow's review.
             return HTMLResponse(
                 "A recipe needs at least one ingredient row.", status_code=400
+            )
+        cycle = find_recipe_cycle(
+            list(recipes_by_sku.values()), sku_id, [i for i, _ in ingredients]
+        )
+        if cycle is not None:
+            return HTMLResponse(
+                "This save would create a recipe cycle — costing could "
+                f"never terminate: {' \u2192 '.join(cycle)}.",
+                status_code=400,
             )
         target: Decimal | None = None
         if target_gross_margin_pct.strip():
@@ -1007,6 +1042,7 @@ def create_app(
             sku_id,
             ingredients=ingredients,
             target_gross_margin_pct=target,
+            prep=bool(prep),
             updated_by=request.state.assignee_id,
             session_id=request.state.session_id,
         )
