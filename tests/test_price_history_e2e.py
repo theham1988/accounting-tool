@@ -361,3 +361,179 @@ costs:
 
     new_day = build_daily_review(source=source, review_date=date(2026, 7, 16))
     assert new_day.cogs == D("10")  # 10 g x 1.00 THB/g
+
+
+def test_leaf_price_edit_reprices_prep_containing_dish_for_later_days_only(
+    tmp_path: Path,
+) -> None:
+    """Issue #36 + ADR-0004 decision 2: derived costing composes with as-of-
+    date pricing by construction. A leaf price edit reprices a prep-
+    containing dish for later days only; earlier days keep the old derived
+    cost — the prep's per-gram cost is recomputed against each day's cost
+    book, never stored.
+
+    A poke bowl's recipe uses 25 g of ahi sauce. Ahi sauce is a prep whose
+    recipe is 100 g soy + 24 g mirin, yield 61 g. Soy sells on both 3 Jul
+    and 16 Jul; on 15 Jul the partner doubles soy's net cost. The 3 Jul
+    review still shows the 3 Jul derived sauce cost; the 16 Jul review
+    carries the new one.
+
+    This is the property the spreadsheet-vs-engine split risks losing if
+    the spreadsheet cached the prep's per-gram cost anywhere. The engine
+    never does — it re-derives against each day's cost book.
+    """
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    recipes_path = tmp_path / "recipes.yaml"
+    recipes_path.write_text(
+        """
+recipes:
+  - sku_id: sauce-ahi
+    name: Ahi Sauce
+    segment: cafe
+    yield: "61"
+    yield_estimated: false
+    ingredients:
+      - { sku_id: soy-sauce, quantity: "100" }
+      - { sku_id: mirin, quantity: "24" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-ahi, quantity: "25" }
+
+mappings:
+  - { item_id: i-poke, sku_id: poke-bowl }
+""",
+        encoding="utf-8",
+    )
+    costs_path = tmp_path / "costs.yaml"
+    costs_path.write_text(
+        """
+costs:
+  soy-sauce: { price: "0.05", updated_at: "2026-06-01" }  # soy
+  mirin: { price: "0.30", updated_at: "2026-06-01" }  # mirin
+""",
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(":memory:")
+    seed_config(conn, recipes_path=recipes_path, costs_path=costs_path)
+    config_store = SqliteConfigStore(conn, now=lambda: clock["now"])
+
+    loyverse_store = InMemoryLoyverseStore()
+    loyverse_store.record_sales(
+        [
+            _sale("i-poke", date(2026, 7, 3), "200", "l-1"),
+            _sale("i-poke", date(2026, 7, 16), "200", "l-2"),
+        ]
+    )
+    source = StoreSource(store=loyverse_store, config=config_store)
+
+    # Before edit: sauce batch = 100×0.05 + 24×0.30 = 5 + 7.20 = 12.20,
+    # divided by 61 g yield = 0.20/g; 25 g in the dish = 5.00 THB.
+    before_edit = build_daily_review(source=source, review_date=date(2026, 7, 3))
+    assert before_edit.cogs == D("5")
+
+    # 15 Jul: soy repriced 5x to 0.25/g.
+    config_store.save_cost(
+        "soy-sauce",
+        pack_price=D("250"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 15),
+    )
+
+    # 3 Jul review unchanged — as-of-date pricing composes with derived
+    # costing: the resolver runs against the 3-Jul cost book.
+    after_edit = build_daily_review(source=source, review_date=date(2026, 7, 3))
+    assert after_edit.cogs == D("5")
+    assert after_edit.daily.item_margins == before_edit.daily.item_margins
+
+    # 16 Jul review: new soy price. Sauce = 100×0.25 + 24×0.30 = 25 + 7.20
+    # = 32.20, / 61 = 0.5278.../g; 25 g × 0.5278... ≈ 13.20 THB.
+    # Decimal: 25 * 32.20 / 61 = 805 / 61 = 13.1967... -> round to 2dp the
+    # engine actually carries. We assert the full-precision cogs Decimal
+    # rather than guessing the rounding — the resolver divides straight
+    # through without quantising.
+    new_day = build_daily_review(source=source, review_date=date(2026, 7, 16))
+    # Derived: 25 × ((100 × 0.25 + 24 × 0.30) / 61) = 25 × 32.20 / 61
+    #        = 805 / 61 (THB — exact decimal, not quantised mid-derivation).
+    assert new_day.cogs == D("805") / D("61")
+
+
+def test_daily_review_totals_include_prep_containing_dish(tmp_path: Path) -> None:
+    """A dish whose recipe uses a prep counts in the daily review totals —
+    revenue, COGS, and gross margin — once its prep is fully priced.
+
+    Issue #36 isn't just a per-item change: the higher-level surfaces the
+    partner sees (daily review's revenue/COGS/margin rollups) must carry
+    prep-containing dishes too. Before #36 such a dish was flagged
+    ``unknown_price`` and excluded from totals; with derived costing it
+    contributes like any other reliable row.
+
+    Worked example. Two dishes sold on 3 Jul:
+      - plain-rice (200 g rice at 0.03/g = 6 THB cost, 50 THB revenue)
+      - poke-bowl (25 g ahi sauce at 0.20/g = 5 THB cost, 200 THB revenue)
+    Daily totals: revenue 250, COGS 11, gross margin 239.
+    """
+    clock = {"now": "2026-07-03T02:00:00+00:00"}
+    recipes_path = tmp_path / "recipes.yaml"
+    recipes_path.write_text(
+        """
+recipes:
+  - sku_id: sauce-ahi
+    name: Ahi Sauce
+    segment: cafe
+    yield: "61"
+    yield_estimated: false
+    ingredients:
+      - { sku_id: soy-sauce, quantity: "100" }
+      - { sku_id: mirin, quantity: "24" }
+  - sku_id: poke-bowl
+    name: Poke Bowl
+    segment: cafe
+    ingredients:
+      - { sku_id: sauce-ahi, quantity: "25" }
+  - sku_id: plain-rice
+    name: Plain Rice
+    segment: cafe
+    ingredients:
+      - { sku_id: rice, quantity: "200" }
+
+mappings:
+  - { item_id: i-poke, sku_id: poke-bowl }
+  - { item_id: i-rice, sku_id: plain-rice }
+""",
+        encoding="utf-8",
+    )
+    costs_path = tmp_path / "costs.yaml"
+    costs_path.write_text(
+        """
+costs:
+  soy-sauce: { price: "0.05", updated_at: "2026-06-01" }
+  mirin: { price: "0.30", updated_at: "2026-06-01" }
+  rice: { price: "0.03", updated_at: "2026-06-01" }
+""",
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(":memory:")
+    seed_config(conn, recipes_path=recipes_path, costs_path=costs_path)
+    config_store = SqliteConfigStore(conn, now=lambda: clock["now"])
+
+    loyverse_store = InMemoryLoyverseStore()
+    loyverse_store.record_sales(
+        [
+            _sale("i-poke", date(2026, 7, 3), "200", "l-1"),
+            _sale("i-rice", date(2026, 7, 3), "50", "l-2"),
+        ]
+    )
+    source = StoreSource(store=loyverse_store, config=config_store)
+
+    review = build_daily_review(source=source, review_date=date(2026, 7, 3))
+
+    # 200 (poke) + 50 (rice) = 250 THB revenue.
+    assert review.revenue == D("250")
+    # 5 (poke sauce) + 6 (rice) = 11 THB COGS.
+    assert review.cogs == D("11")
+    # 250 - 11 = 239 THB gross margin.
+    assert review.gross_margin == D("239")

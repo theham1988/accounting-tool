@@ -38,10 +38,12 @@ recipes:
 
   # ======================================================================
   # PREP SUB-RECIPES (internal, not sold directly — not mapped to Loyverse)
-  # Documented here so the composition is captured; the engine costs sold
-  # items from their ingredient SKUs (it does not recurse into prep recipes),
-  # so each prep output below is also a costable ingredient SKU in its own
-  # right once a partner prices it.
+  # Documented here so the composition is captured. The engine derives each
+  # prep's per-unit cost by recursing into its own recipe down to
+  # purchasables (issue #36, ADR-0005) — so a dish that uses 25 g of a
+  # sauce batch (yield 61 g) carries 25/61 of the batch's input cost. There
+  # is no need to price a prep output as a leaf; price its purchasable
+  # inputs in config/costs.yaml and the engine does the rest.
   # ======================================================================
 
   - sku_id: prep-dark-con

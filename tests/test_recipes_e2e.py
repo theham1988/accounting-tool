@@ -875,3 +875,456 @@ def test_reprice_flows_into_margin_without_recipe_edit(
     assert margins_june[0].gross_margin == D("85")
     assert margins_july[0].cost_per_unit == D("40")
     assert margins_july[0].gross_margin == D("80")
+
+
+# --- derived costing: produced SKUs costed from their recipe (issue #36) -------
+#
+# Reversal of two Wave 1 decisions (recorded as ADR-0005): the engine now
+# recurses into prep recipes, and a produced SKU's cost is *always* derived
+# from its recipe — there is no leaf-price-wins branch. A prep with an
+# unpriced purchasable leaf propagates ``unknown_price`` to every dish using
+# it, exactly as a direct missing price does. As-of-date pricing composes by
+# construction because the resolver runs against the as-of-date cost book.
+
+
+def test_dish_containing_prep_is_costed_from_prep_recipe(day: date) -> None:
+    """A dish whose recipe uses a prep is costed by recursing into the prep's
+    own recipe down to purchasables — not by leaving the prep unpriced.
+
+    Worked example (the ahi-sauce poke bowl the seed data exists to express).
+    Ahi sauce: 100 g soy (0.05/g) + 24 g mirin (0.30/g) = 12.20 THB of inputs,
+    yielding 61 g. Sauce per-gram cost = 12.20 / 61 = 0.20 THB/g. The bowl
+    uses 25 g of sauce -> 25 * 0.20 = 5.00 THB of sauce in the dish.
+
+    Before #36, the bowl was flagged ``unknown_price`` because the sauce SKU
+    has no direct cost-book entry (the 0-of-13 evidence the ADR cites). The
+    resolver recurses instead.
+    """
+    cost = CostBook(
+        {
+            "soy-sauce": (D("0.05"), date(2026, 6, 1)),
+            "mirin": (D("0.30"), date(2026, 6, 1)),
+        }
+    )
+    ahi_sauce = Recipe(
+        sku_id="sauce-ahi",
+        name="Ahi Sauce",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="soy-sauce", quantity=D("100")),
+            RecipeIngredient(sku_id="mirin", quantity=D("24")),
+        ),
+        yield_qty=D("61"),
+        prep=True,
+    )
+    poke_bowl = Recipe(
+        sku_id="poke-bowl",
+        name="Poke Bowl",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-ahi", quantity=D("25")),
+        ),
+    )
+    recipes = RecipeCatalog([ahi_sauce, poke_bowl])
+    sales = [Sale(item_id="poke-bowl", timestamp=day, sell_price=D("200"))]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+
+    m = margins[0]
+    assert m.unmapped is False
+    assert m.unknown_price is False
+    assert m.cost_per_unit == D("5")
+    assert m.gross_margin == D("195")
+
+
+def test_prep_cost_divides_by_yield_at_each_recipe_level(day: date) -> None:
+    """A dish using 25 g of a sauce whose 61 g batch costs 12.20 THB carries
+    (25 / 61) × 12.20 = 5.00 THB of sauce — not the whole batch cost.
+
+    Issue #36 AC: "Each recursion level divides by the prep's yield in its
+    own unit." This is the arithmetic that #34's unified yield exists to
+    express and #36's recursion makes use of; before #34 every prep had
+    ``yield_units: 1`` and 25 g of sauce was costed at 25 whole batches.
+    """
+    cost = CostBook(
+        {
+            "soy-sauce": (D("0.05"), date(2026, 6, 1)),
+            "mirin": (D("0.30"), date(2026, 6, 1)),
+        }
+    )
+    ahi_sauce = Recipe(
+        sku_id="sauce-ahi",
+        name="Ahi Sauce",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="soy-sauce", quantity=D("100")),
+            RecipeIngredient(sku_id="mirin", quantity=D("24")),
+        ),
+        yield_qty=D("61"),  # 100 g + 24 g inputs, ~61 g reduced sauce batch
+        prep=True,
+    )
+    # Two dishes use the same sauce at different quantities: each carries
+    # its own fraction of the batch cost, not the whole batch.
+    poke_bowl = Recipe(
+        sku_id="poke-bowl",
+        name="Poke Bowl (25 g sauce)",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-ahi", quantity=D("25")),
+        ),
+    )
+    tacos = Recipe(
+        sku_id="tacos",
+        name="Tacos (10 g sauce)",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-ahi", quantity=D("10")),
+        ),
+    )
+    recipes = RecipeCatalog([ahi_sauce, poke_bowl, tacos])
+    sales = [
+        Sale(item_id="poke-bowl", timestamp=day, sell_price=D("200")),
+        Sale(item_id="tacos", timestamp=day, sell_price=D("160")),
+    ]
+
+    by_item = {
+        m.item_id: m
+        for m in compute_item_margins(sales=sales, recipes=recipes, cost=cost, day=day)
+    }
+
+    # 25/61 × 12.20 = 5.00 THB of sauce in the bowl.
+    assert by_item["poke-bowl"].cost_per_unit == D("5")
+    # 10/61 × 12.20 ≈ 2.00 THB of sauce in the tacos (exact: 1220/61 = 20).
+    # Decimal: 10 * 12.20 / 61 = 122 / 61 = 2 exactly.
+    assert by_item["tacos"].cost_per_unit == D("2")
+
+
+def test_two_level_prep_nesting_costs_each_level(day: date) -> None:
+    """A dish → prep A → prep B → purchasables chain costs through two
+    recipe edges, each dividing by its own yield.
+
+    Worked example (the loco-moco "sauce made of sauces" shape). A base
+    mayo prep: 100 g oil (0.10/g) + 20 g egg (0.50/g) = 10 + 10 = 20 THB,
+    yields 100 g -> 0.20/g. A spicy mayo prep uses 50 g of the base mayo
+    (50 × 0.20 = 10 THB) + 5 g chili paste (4.00/g = 20 THB) = 30 THB,
+    yields 50 g -> 0.60/g. The loco moco dish uses 30 g of the spicy mayo:
+    30 × 0.60 = 18 THB of sauce in the dish.
+
+    Each recursion level divides by its own yield in its own unit, so the
+    sauce-on-sauce chain costs honestly per gram used rather than charging
+    the dish for two whole batches (issue #36 AC).
+    """
+    cost = CostBook(
+        {
+            "oil": (D("0.10"), date(2026, 6, 1)),
+            "egg": (D("0.50"), date(2026, 6, 1)),
+            "chili-paste": (D("4.00"), date(2026, 6, 1)),
+        }
+    )
+    base_mayo = Recipe(
+        sku_id="prep-mayo-base",
+        name="Base Mayo",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="oil", quantity=D("100")),
+            RecipeIngredient(sku_id="egg", quantity=D("20")),
+        ),
+        yield_qty=D("100"),
+        prep=True,
+    )
+    spicy_mayo = Recipe(
+        sku_id="prep-spicy-mayo",
+        name="Spicy Mayo",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="prep-mayo-base", quantity=D("50")),
+            RecipeIngredient(sku_id="chili-paste", quantity=D("5")),
+        ),
+        yield_qty=D("50"),
+        prep=True,
+    )
+    loco_moco = Recipe(
+        sku_id="loco-moco",
+        name="Loco Moco",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="prep-spicy-mayo", quantity=D("30")),
+        ),
+    )
+    recipes = RecipeCatalog([base_mayo, spicy_mayo, loco_moco])
+    sales = [Sale(item_id="loco-moco", timestamp=day, sell_price=D("220"))]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+
+    m = margins[0]
+    assert m.unmapped is False
+    assert m.unknown_price is False
+    assert m.cost_per_unit == D("18")
+
+
+def test_produced_sku_with_stale_direct_price_uses_recipe(day: date) -> None:
+    """A produced SKU's cost is *always* derived from its recipe — never the
+    cost book — even if a direct price entry exists for it.
+
+    Issue #36 reversal of the leaf-price-wins rule: the spreadsheet's
+    prototype resolver honoured a direct price over a recipe (so a partner
+    could price a sauce-as-bought even when a recipe existed). That branch
+    is deliberately *not* carried over. The seed migration removes any
+    pre-existing direct cost rows on produced SKUs; the cost editor rejects
+    new ones. A stale direct price reaching the resolver is silently
+    ignored rather than honoured — the recipe is the one source of truth.
+
+    Worked example. Ahi sauce has a recipe (12.20 THB / 61 g = 0.20/g).
+    A stale direct cost-book entry of 0.99/g exists for ``sauce-ahi`` from
+    before #36. A dish using 25 g of sauce costs 25 × 0.20 = 5.00 THB
+    (derived), not 25 × 0.99 = 24.75 THB (direct).
+    """
+    cost = CostBook(
+        {
+            "soy-sauce": (D("0.05"), date(2026, 6, 1)),
+            "mirin": (D("0.30"), date(2026, 6, 1)),
+            # Stale direct entry on a produced SKU — must be ignored.
+            "sauce-ahi": (D("0.99"), date(2026, 6, 1)),
+        }
+    )
+    ahi_sauce = Recipe(
+        sku_id="sauce-ahi",
+        name="Ahi Sauce",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="soy-sauce", quantity=D("100")),
+            RecipeIngredient(sku_id="mirin", quantity=D("24")),
+        ),
+        yield_qty=D("61"),
+        prep=True,
+    )
+    poke_bowl = Recipe(
+        sku_id="poke-bowl",
+        name="Poke Bowl",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-ahi", quantity=D("25")),
+        ),
+    )
+    recipes = RecipeCatalog([ahi_sauce, poke_bowl])
+    sales = [Sale(item_id="poke-bowl", timestamp=day, sell_price=D("200"))]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+
+    # 25 × 0.20 = 5.00 (derived). A leaf-price-wins resolver would have
+    # returned 25 × 0.99 = 24.75 instead.
+    assert margins[0].cost_per_unit == D("5")
+
+
+def test_unknown_price_propagates_through_prep_to_dish(day: date) -> None:
+    """A prep whose recipe contains an unpriced purchasable makes every dish
+    using it flag ``unknown_price`` — revenue stays surfaced, totals stay
+    clean (issue #36 AC).
+
+    Before #36, only the dish's *direct* ingredients were checked; a prep
+    could hide an unpriced leaf inside its own recipe and the dish would
+    silently zero-cost the prep line. The honesty rule now applies
+    recursively: if any leaf needed to derive a prep's cost is missing, the
+    prep itself is unpriceable, and so is any dish that uses it.
+
+    Worked example. Ahi sauce has a recipe, but mirin has no price in the
+    cost book. A poke bowl using 25 g of ahi sauce is flagged
+    ``unknown_price`` (excluded from totals); a second dish whose recipe
+    uses only purchasables is costed normally and counts in the totals.
+    """
+    cost = CostBook(
+        {
+            "soy-sauce": (D("0.05"), date(2026, 6, 1)),
+            # mirin deliberately missing — the ahi-sauce prep's unpriced leaf
+        }
+    )
+    ahi_sauce = Recipe(
+        sku_id="sauce-ahi",
+        name="Ahi Sauce",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="soy-sauce", quantity=D("100")),
+            RecipeIngredient(sku_id="mirin", quantity=D("24")),
+        ),
+        yield_qty=D("61"),
+        prep=True,
+    )
+    poke_bowl = Recipe(
+        sku_id="poke-bowl",
+        name="Poke Bowl",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-ahi", quantity=D("25")),
+        ),
+    )
+    # A reliable dish that uses only purchasables directly — counts in totals.
+    plain_rice = Recipe(
+        sku_id="plain-rice",
+        name="Plain Rice",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="rice", quantity=D("200")),
+        ),
+    )
+    cost = CostBook(
+        {
+            "soy-sauce": (D("0.05"), date(2026, 6, 1)),
+            "rice": (D("0.03"), date(2026, 6, 1)),
+        }
+    )
+    recipes = RecipeCatalog([ahi_sauce, poke_bowl, plain_rice])
+    sales = [
+        Sale(item_id="poke-bowl", timestamp=day, sell_price=D("200")),
+        Sale(item_id="plain-rice", timestamp=day, sell_price=D("50")),
+    ]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+    by_item = {m.item_id: m for m in margins}
+
+    # The bowl is mapped but its prep's recipe contains an unpriced leaf.
+    bowl = by_item["poke-bowl"]
+    assert bowl.unmapped is False
+    assert bowl.unknown_price is True
+    assert bowl.excluded_from_totals is True
+    # Revenue still surfaced (not silently dropped).
+    assert bowl.revenue == D("200")
+
+    # The reliable dish counts normally.
+    assert by_item["plain-rice"].unknown_price is False
+    assert by_item["plain-rice"].excluded_from_totals is False
+
+
+def test_runtime_recipe_cycle_resolves_unpriceable(day: date) -> None:
+    """A cycle in the recipe graph — however it arose — resolves as
+    unpriceable rather than looping the resolver.
+
+    Issue #36 AC: "A cycle encountered at costing time resolves as
+    unpriceable rather than looping (defense in depth behind the save-time
+    rejection)." The save-time guard (``find_recipe_cycle``, issue #35)
+    should prevent cycles from entering the store; this is the engine-side
+    fallback for a cycle that slipped past (a bad migration, a hand-edit
+    to the YAML seed, a future import path).
+
+    The test deliberately constructs a cycle the save-time guard would
+    reject: A contains B and B contains A. The resolver must terminate and
+    flag the dish ``unknown_price`` — never ``RecursionError``.
+
+    Memoisation must not mask the cycle: the ``seen`` set is the per-path
+    guard, and the memo is only written on the way back up (``seen`` is
+    non-empty while a SKU is on its own stack). A buggy memo-first
+    resolver would loop forever.
+    """
+    cost = CostBook(
+        {
+            "oil": (D("0.10"), date(2026, 6, 1)),
+        }
+    )
+    sauce_a = Recipe(
+        sku_id="sauce-a",
+        name="Sauce A",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="oil", quantity=D("10")),
+            RecipeIngredient(sku_id="sauce-b", quantity=D("5")),  # cycle!
+        ),
+        yield_qty=D("15"),
+        prep=True,
+    )
+    sauce_b = Recipe(
+        sku_id="sauce-b",
+        name="Sauce B",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-a", quantity=D("5")),  # cycle!
+        ),
+        yield_qty=D("5"),
+        prep=True,
+    )
+    dish = Recipe(
+        sku_id="dish",
+        name="Dish",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="sauce-a", quantity=D("10")),
+        ),
+    )
+    recipes = RecipeCatalog([sauce_a, sauce_b, dish])
+    sales = [Sale(item_id="dish", timestamp=day, sell_price=D("100"))]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+
+    m = margins[0]
+    assert m.unknown_price is True
+    assert m.excluded_from_totals is True
+    assert m.revenue == D("100")  # surfaced, not silently dropped
+
+
+def test_prep_cost_consistent_across_many_dishes_using_it(day: date) -> None:
+    """A prep used as an ingredient by several dishes costs the same per
+    gram in each — and the same as it costs standalone.
+
+    Issue #36 AC: "resolution is memoised per costing pass and cycle-safe."
+    The user-observable property of memoisation is consistency: the prep's
+    derived per-unit cost is computed once for the pass and reused, so
+    every dish that uses it sees the same number. (An incorrectly
+    memoised resolver — say, one that cached across costing passes with
+    different cost books — would make these numbers disagree.)
+
+    Worked example. A shared chili sauce prep (yield 50 g, batch 25 THB ->
+    0.50/g) is used by three dishes at three different quantities. Each
+    dish's sauce line is ``qty × 0.50``; the engine does not re-derive
+    differently per dish.
+    """
+    cost = CostBook(
+        {
+            "chili": (D("0.50"), date(2026, 6, 1)),
+        }
+    )
+    # Chili sauce: 50 g chili at 0.50/g = 25 THB batch, yields 50 g -> 0.50/g.
+    chili_sauce = Recipe(
+        sku_id="prep-chili-sauce",
+        name="Chili Sauce",
+        segment=Segment.CAFE,
+        ingredients=(RecipeIngredient(sku_id="chili", quantity=D("50")),),
+        yield_qty=D("50"),
+        prep=True,
+    )
+    # Three dishes each use the sauce at a different quantity.
+    dishes = [
+        Recipe(
+            sku_id=f"dish-{i}",
+            name=f"Dish {i}",
+            segment=Segment.CAFE,
+            ingredients=(
+                RecipeIngredient(
+                    sku_id="prep-chili-sauce", quantity=D(qty)
+                ),
+            ),
+        )
+        for i, qty in enumerate((10, 15, 30), start=1)
+    ]
+    recipes = RecipeCatalog([chili_sauce, *dishes])
+    sales = [
+        Sale(item_id=f"dish-{i}", timestamp=day, sell_price=D("100"))
+        for i in (1, 2, 3)
+    ]
+
+    margins = compute_item_margins(
+        sales=sales, recipes=recipes, cost=cost, day=day
+    )
+    by_item = {m.item_id: m for m in margins}
+
+    # 0.50/g in every dish: 10×0.50=5, 15×0.50=7.5, 30×0.50=15.
+    assert by_item["dish-1"].cost_per_unit == D("5")
+    assert by_item["dish-2"].cost_per_unit == D("7.5")
+    assert by_item["dish-3"].cost_per_unit == D("15")
