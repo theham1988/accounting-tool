@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sold as-is — Tangerine Phuket</title>
+  <link rel="stylesheet" href="/static/review.css">
+</head>
+<body>
+  <main class="review cost-editor">
+    <h1>Sold as-is: {{ item_name or item_id }}</h1>
+    <p class="day">
+      One stroke creates the purchasable SKU (receipt-priced), its serving
+      recipe, the sold SKU the recipe outputs, and the mapping to
+      <strong>{{ item_id }}</strong>. The bar item then costs through the
+      same item → SKU → recipe path as every dish.
+      — <a href="/items?item={{ item_id }}">&larr; Item coverage</a>
+    </p>
+
+    <section class="cost-form">
+      <form method="post" action="/items/{{ item_id }}/sold-as-is">
+        <fieldset>
+          <legend>The purchasable (what you buy)</legend>
+          <label>
+            SKU id
+            <input type="text" name="sku_id" required
+                   placeholder="e.g. beer-chang">
+          </label>
+          <label>
+            Name
+            <input type="text" name="name" required
+                   placeholder="e.g. Chang Bottle">
+          </label>
+          <label>
+            Unit (how this SKU is measured and priced)
+            <select name="unit">
+              <option value="ml">ml — liquids (beer, wine, soda by the millilitre)</option>
+              <option value="g">g — solids</option>
+              <option value="unit">unit — countables</option>
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Receipt price</legend>
+          <label>
+            Pack price (THB)
+            <input type="number" name="pack_price" step="any" min="0"
+                   required placeholder="e.g. 360">
+          </label>
+          <label>
+            Pack quantity (in the SKU's unit)
+            <input type="number" name="pack_quantity" step="any" min="0"
+                   required placeholder="e.g. 1980 for a 6 × 330 ml pack">
+          </label>
+          <label>
+            <input type="checkbox" name="vat_inclusive" value="1" checked>
+            Price includes VAT (Makro / ARO)
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Serving size</legend>
+          <label>
+            One sale consumes (in the purchasable's unit)
+            <input type="number" name="serving_size" step="any" min="0"
+                   required placeholder="e.g. 330 for one 330 ml bottle">
+          </label>
+          <p class="cost-form__hint">
+            The sold SKU is created for you, named
+            <em>&lt;Purchasable Name&gt; (serving)</em>, and mapped to
+            <strong>{{ item_id }}</strong>. Its serving recipe uses this many
+            units of the purchasable per sale.
+          </p>
+        </fieldset>
+        <button type="submit">Create &amp; map</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

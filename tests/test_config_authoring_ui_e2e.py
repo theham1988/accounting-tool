@@ -2052,3 +2052,377 @@ def _seed_sale(db_path: str, *, item_id: str, day: date, price: str) -> None:
         ]
     )
     store.close()
+
+
+# =============================================================================
+# Sold-as-is quick-create (issue 38 / parent PRD 33)
+# =============================================================================
+
+# A directly-sold purchasable (beer, wine, soft drinks — the whole bar segment
+# is currently uncosted by design) gets a one-line "serving recipe" so it costs
+# through the same item → SKU → recipe path as every dish. From an unmapped
+# Loyverse item's row, one stroke creates: the purchasable SKU (receipt-priced),
+# its serving recipe, a produced sold SKU the recipe outputs, and the mapping.
+#
+# Worked example for the tests below. A bottled Chang is bought as a 6-pack at
+# 360 THB VAT-inclusive (so 60 THB/bottle net of VAT, and a 330 ml bottle ->
+# 0.181308 THB/ml). One sale consumes one bottle = 330 ml, so COGS = 60 THB
+# and a 100 THB sell price yields a 40 THB margin. The sold SKU is
+# auto-derived as ``beer-chang:served`` (unit ``unit`` — one bottle per sale);
+# the purchasable ``beer-chang`` (unit ``ml``) is what the receipt prices and
+# what a future beer cocktail would re-use per ml.
+
+
+def test_sold_as_is_quick_create_costs_an_unmapped_item(tmp_path: Path) -> None:
+    """From an unmapped Loyverse item, posting the sold-as-is quick-create
+    creates the purchasable, its serving recipe, the sold SKU, and the
+    mapping in one stroke — and tomorrow's review costs the sale through
+    the same path as every dish.
+
+    This is the tracer bullet: it proves the whole flow end-to-end before
+    the per-AC tests fill in the audit, picker, costing-variants, and
+    entry-point-link behaviours.
+    """
+    today = date(2026, 7, 2)
+    app = _recipe_app(tmp_path, today=today)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR)],
+    )
+    _seed_sale(app.state.db_path, item_id="i-chang", day=today, price="100")
+    client = _authed_client(app)
+
+    response = client.post(
+        "/items/i-chang/sold-as-is",
+        data={
+            "sku_id": "beer-chang",
+            "name": "Chang Bottle",
+            "unit": "ml",
+            "pack_price": "360",
+            "pack_quantity": "1980",  # 6 × 330 ml
+            "vat_inclusive": "1",
+            "serving_size": "330",
+        },
+        follow_redirects=False,
+    )
+
+    # The stroke lands on the new sold SKU's editor.
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/beer-chang:served"
+    # The item is no longer unmapped: it is mapped to the produced sold SKU.
+    items_html = client.get("/items", params={"item": "i-chang"}).text
+    assert "item-row--unmapped" not in items_html
+    assert "beer-chang:served" in items_html
+    # Tomorrow's review costs the sale through the serving recipe:
+    # 360 / 1980 / 1.07 = 0.169923 THB/ml x 330 ml = 56.07 THB COGS,
+    # so a 100 THB sell price yields a 43.93 THB margin.
+    review_html = client.get("/review", params={"day": today.isoformat()}).text
+    assert "43.93" in review_html
+
+
+# --- AC: all edits gated behind existing auth middleware (issue 38) ----------
+
+
+def test_sold_as_is_routes_require_auth(tmp_path: Path) -> None:
+    """The quick-create's GET form and POST handler both redirect an
+    unauthenticated request to ``/login`` — exactly like every other write
+    surface in the app. Nothing lands.
+    """
+    app = _recipe_app(tmp_path)
+    client = TestClient(app)
+
+    for method, url in (
+        ("get", "/items/i-chang/sold-as-is"),
+        ("post", "/items/i-chang/sold-as-is"),
+    ):
+        response = getattr(client, method)(url, follow_redirects=False)
+        assert response.status_code == 302, f"{method} {url}"
+        assert response.headers["location"] == "/login", f"{method} {url}"
+
+
+# --- AC: reachable from an unmapped item's row (issue 38) --------------------
+
+
+def test_sold_as_is_entry_point_links_from_unmapped_item_row(
+    tmp_path: Path,
+) -> None:
+    """An unmapped item's row in ``/items`` carries a 'sold as-is…' link
+    beside the existing 'create new SKU…' option — the daily review's
+    unmapped section deep-links straight into fixing itself. The link
+    carries the item id so the form is pre-targeted.
+    """
+    app = _recipe_app(tmp_path)
+    _seed_menu(
+        app.state.db_path,
+        [
+            _menu_item("i-latte", "Cafe Latte", "120"),
+            _menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR),
+        ],
+    )
+    client = _authed_client(app)
+
+    items_html = client.get("/items").text
+    # The unmapped bar item's row carries both options; the mapped cafe
+    # item's row carries neither. Slice by <tr> so the link's own item id
+    # in its href does not split the row short.
+    rows = items_html.split("<tr class=")
+    chang_row = next(r for r in rows if "i-chang" in r)
+    latte_row = next(r for r in rows if "i-latte" in r)
+    assert 'href="/items/i-chang/sold-as-is"' in chang_row
+    assert "sold as-is" in chang_row.lower()
+    # The mapped cafe item (latte is seeded mapped) carries neither option.
+    assert "sold-as-is" not in latte_row
+    assert "create new SKU" not in latte_row
+
+    # The form itself is reachable and posts to the quick-create handler.
+    form_html = client.get("/items/i-chang/sold-as-is").text
+    assert 'action="/items/i-chang/sold-as-is"' in form_html
+    for field in (
+        "sku_id", "name", "unit",
+        "pack_price", "pack_quantity", "vat_inclusive", "serving_size",
+    ):
+        assert f'name="{field}"' in form_html
+
+
+# --- AC: the serving recipe is an ordinary recipe — visible & editable ------
+
+
+def test_serving_recipe_is_visible_and_editable_in_the_editor(
+    tmp_path: Path,
+) -> None:
+    """After the quick-create, opening the sold SKU's editor shows the
+    serving recipe as an ordinary recipe row — the purchasable selected at
+    the serving quantity — and saving an edit through the normal recipe
+    editor (``POST /skus/{sku}/recipe``) updates it. There is no separate
+    'serving recipe' kind; CONTEXT.md's glossary treats them as the
+    uninteresting-recipe case.
+    """
+    today = date(2026, 7, 2)
+    app = _recipe_app(tmp_path, today=today)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR)],
+    )
+    client = _authed_client(app)
+    client.post(
+        "/items/i-chang/sold-as-is",
+        data={
+            "sku_id": "beer-chang", "name": "Chang Bottle", "unit": "ml",
+            "pack_price": "360", "pack_quantity": "1980", "vat_inclusive": "1",
+            "serving_size": "330",
+        },
+        follow_redirects=False,
+    )
+
+    # The sold SKU's editor shows the serving recipe as one populated row.
+    editor_html = client.get("/skus/beer-chang:served").text
+    assert 'action="/skus/beer-chang:served/recipe"' in editor_html
+    rows = editor_html.split('id="recipe-rows"')[1].split("</ol>")[0]
+    assert 'value="beer-chang" selected' in rows
+    assert 'value="330"' in rows
+    # The yield is 1 unit (one sale), marked measured — not estimated.
+    yield_field = editor_html.split('name="yield_qty"')[1].split(">")[0]
+    assert 'value="1"' in yield_field
+
+    # Editing through the ordinary recipe editor (e.g. the partner realises
+    # a bottle is 320 ml, not 330) updates the serving recipe like any other.
+    response = client.post(
+        "/skus/beer-chang:served/recipe",
+        data={
+            "ingredient_sku_id": ["beer-chang"],
+            "quantity": ["320"],
+            "yield_qty": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/beer-chang:served"
+    reloaded = client.get("/skus/beer-chang:served").text
+    assert 'value="320"' in reloaded
+    assert 'value="330"' not in reloaded
+
+
+# --- AC: the purchasable is reusable as an ingredient (issue 38, US 18) -----
+
+
+def test_created_purchasable_is_pickable_in_other_recipes(tmp_path: Path) -> None:
+    """The purchasable the quick-create prices (``beer-chang``, per-ml) is
+    an ordinary purchasable SKU, so it appears in every other recipe's
+    ingredient picker — a future beer cocktail uses ``beer-chang x 165`` (ml)
+    exactly like milk in a latte. The produced sold SKU (``beer-chang:served``)
+    is not pickable: it is a produced non-prep, the same role rule every
+    other dish obeys.
+    """
+    app = _recipe_app(tmp_path)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR)],
+    )
+    client = _authed_client(app)
+    client.post(
+        "/items/i-chang/sold-as-is",
+        data={
+            "sku_id": "beer-chang", "name": "Chang Bottle", "unit": "ml",
+            "pack_price": "360", "pack_quantity": "1980", "vat_inclusive": "1",
+            "serving_size": "330",
+        },
+        follow_redirects=False,
+    )
+
+    # Opening an existing recipe's editor (the latte) offers the new
+    # purchasable, and does NOT offer the produced sold SKU.
+    latte_html = client.get("/skus/latte").text
+    picker = latte_html.split('name="ingredient_sku_id"')[1].split("</select>")[0]
+    assert 'value="beer-chang"' in picker
+    assert 'value="beer-chang:served"' not in picker
+
+    # The purchasable really is an ingredient: saving a 'beer cocktail' recipe
+    # that uses 165 ml of it lands and costs through the ordinary path.
+    response = client.post(
+        "/skus/flour/recipe",
+        data={
+            "ingredient_sku_id": ["beer-chang"],
+            "quantity": ["165"],
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    flour_html = client.get("/skus/flour").text
+    assert 'value="beer-chang" selected' in flour_html
+    assert 'value="165"' in flour_html
+
+
+# --- AC: all writes audited; session revert removes everything (issue 38) ---
+
+
+def test_sold_as_is_writes_are_audited_and_session_revert_removes_them(
+    tmp_path: Path,
+) -> None:
+    """The quick-create is five edits in one stroke — the purchasable SKU,
+    its cost, the sold SKU, the serving recipe, the mapping — and all five
+    land in the audit log attributed to the partner. The session revert
+    (the panic undo) removes every one of them cleanly: the item goes back
+    to unmapped, the purchasable and sold SKUs vanish, and the next review
+    surfaces the sale as unmapped revenue again.
+    """
+    today = date(2026, 7, 2)
+    app = _recipe_app(tmp_path, today=today)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR)],
+    )
+    _seed_sale(app.state.db_path, item_id="i-chang", day=today, price="100")
+    client = _authed_client(app, assignee_id="daniel")
+    client.post(
+        "/items/i-chang/sold-as-is",
+        data={
+            "sku_id": "beer-chang", "name": "Chang Bottle", "unit": "ml",
+            "pack_price": "360", "pack_quantity": "1980", "vat_inclusive": "1",
+            "serving_size": "330",
+        },
+        follow_redirects=False,
+    )
+
+    # Every created/changed fact is in the audit trail, attributed to daniel.
+    audit_html = client.get("/audit").text
+    for needle in (
+        "Chang Bottle",        # the purchasable SKU creation
+        "360",                 # the receipt cost
+        "Chang Bottle (serving)",  # the sold SKU creation
+        "330",                 # the serving recipe ingredient quantity
+        "i-chang",             # the mapping
+        "daniel",
+    ):
+        assert needle in audit_html, needle
+
+    # The session revert (all five edits share the one login session) is the
+    # panic undo. Extract the session id and POST it.
+    assert 'action="/audit/session/' in audit_html
+    session_id = audit_html.split('action="/audit/session/')[1].split("/revert")[0]
+    response = client.post(
+        f"/audit/session/{session_id}/revert", follow_redirects=False
+    )
+    assert response.status_code == 303
+
+    # The item is unmapped again; both SKUs are gone.
+    items_html = client.get("/items", params={"item": "i-chang"}).text
+    assert "item-row--unmapped" in items_html
+    assert "beer-chang" not in items_html
+    skus_html = client.get("/skus").text
+    assert "beer-chang" not in skus_html
+    # The sale resurfaces as unmapped revenue — no costable recipe resolves.
+    review_html = client.get("/review", params={"day": today.isoformat()}).text
+    assert "unmapped" in review_html.lower()
+    assert "43.93" not in review_html
+
+
+# --- AC: draught and bottle styles both cost correctly (issue 38) -----------
+
+
+def test_draught_serving_costs_through_the_same_path_as_bottle(
+    tmp_path: Path,
+) -> None:
+    """A draught-style serving (473 ml of a 30,000 ml keg purchasable) costs
+    through the same serving-recipe path as a bottle-style serving. The keg
+    is bought at 4,500 THB for 30 L VAT-inclusive -> 0.140187 THB/ml; one pint
+    of 473 ml is 66.31 THB of beer; sold at 180 THB yields a 113.69 THB
+    margin. The serving-recipe shape (one ingredient line, yield 1) is the
+    same as the bottle case — only the purchasable's unit and the serving
+    quantity differ.
+    """
+    today = date(2026, 7, 2)
+    app = _recipe_app(tmp_path, today=today)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-pint", "Draught Pint", "180", segment=Segment.BAR)],
+    )
+    _seed_sale(app.state.db_path, item_id="i-pint", day=today, price="180")
+    client = _authed_client(app)
+    client.post(
+        "/items/i-pint/sold-as-is",
+        data={
+            "sku_id": "beer-keg", "name": "Draught Beer Keg", "unit": "ml",
+            "pack_price": "4500", "pack_quantity": "30000", "vat_inclusive": "1",
+            "serving_size": "473",
+        },
+        follow_redirects=False,
+    )
+
+    review_html = client.get("/review", params={"day": today.isoformat()}).text
+    # 4500 / 30000 / 1.07 = 0.140187 THB/ml x 473 ml = 66.31 THB COGS;
+    # 180 - 66.31 = 113.69 THB margin.
+    assert "113.69" in review_html
+
+
+def test_sold_sku_inherits_the_items_segment(tmp_path: Path) -> None:
+    """A sold-as-is item sold from the bar segment carries through to the
+    segment-contribution-margin view as bar revenue/cost — the sold SKU
+    inherits the Loyverse item's segment, so a Chang sale does not silently
+    inflate the cafe row. The purchasable stays segment-NULL (it may feed
+    both cafe and bar; an ingredient carries no segment of its own).
+    """
+    today = date(2026, 7, 2)
+    app = _recipe_app(tmp_path, today=today)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-chang", "Chang Bottle", "100", segment=Segment.BAR)],
+    )
+    _seed_sale(app.state.db_path, item_id="i-chang", day=today, price="100")
+    client = _authed_client(app)
+    client.post(
+        "/items/i-chang/sold-as-is",
+        data={
+            "sku_id": "beer-chang", "name": "Chang Bottle", "unit": "ml",
+            "pack_price": "360", "pack_quantity": "1980", "vat_inclusive": "1",
+            "serving_size": "330",
+        },
+        follow_redirects=False,
+    )
+
+    # The daily review's segment table attributes the sale to Bar, not Cafe.
+    review_html = client.get("/review", params={"day": today.isoformat()}).text
+    seg_rows = review_html.split("segment-cm__row")
+    bar_row = next(r for r in seg_rows if "Bar" in r)
+    cafe_row = next(r for r in seg_rows if "Cafe" in r)
+    assert "100.00 THB" in bar_row  # the Chang sale's revenue
+    assert "0.00 THB" in cafe_row.split("segment-cm__revenue")[1][:60]

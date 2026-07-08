@@ -632,23 +632,27 @@ class SqliteConfigStore:
         unit: str,
         created_by: str,
         session_id: str | None = None,
+        segment: Segment | None = None,
     ) -> None:
         """Create a new SKU with its unit confirmed from the start.
 
         Unlike migrated rows (whose ``unit`` may be NULL pending partner
         confirmation), an editor-created SKU always carries its unit —
         ADR-0003 decision 3: an editor without the unit field is a
-        silent-corruption machine. Segment stays NULL until the SKU gains
-        a recipe of its own (an ingredient may feed both cafe and bar).
+        silent-corruption machine. Segment stays NULL by default (an
+        ingredient may feed both cafe and bar); the sold-as-is quick-create
+        passes the Loyverse item's segment for the *sold* SKU it creates, so
+        the segment-contribution-margin view attributes the sale correctly.
         """
+        segment_value = segment.value if segment is not None else None
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO skus"
                 " (sku_id, name, segment, unit, yield_qty,"
                 "  yield_estimated, target_gross_margin_pct,"
                 "  created_at, created_by)"
-                " VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)",
-                (sku_id, name, unit, self._now(), created_by),
+                " VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
+                (sku_id, name, segment_value, unit, self._now(), created_by),
             )
             self._record_audit(
                 "skus",

@@ -819,6 +819,126 @@ def create_app(
             )
         return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
 
+    @app.get("/items/{item_id}/sold-as-is", response_class=HTMLResponse)
+    def sold_as_is_form(request: Request, item_id: str) -> HTMLResponse:
+        """The sold-as-is quick-create form (issue 38).
+
+        Reachable from an unmapped item's row in ``/items``; collects the
+        seven facts that cost a directly-sold purchasable through the same
+        path as every dish and posts to the sibling handler below.
+        """
+        store: SqliteLoyverseStore = app.state.store
+        item = store.current_menu().get(item_id)
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="sold_as_is.html",
+            context={
+                "request": request,
+                "item_id": item_id,
+                "item_name": item.name if item is not None else None,
+            },
+        )
+
+    @app.post("/items/{item_id}/sold-as-is", response_model=None)
+    def sold_as_is_quick_create(
+        request: Request,
+        item_id: str,
+        sku_id: str = Form(""),
+        name: str = Form(""),
+        unit: str = Form(""),
+        pack_price: str = Form(""),
+        pack_quantity: str = Form(""),
+        vat_inclusive: str = Form(""),
+        serving_size: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """The sold-as-is quick-create (issue 38 / parent PRD 33).
+
+        From an unmapped item's row, one stroke creates the four facts that
+        cost a directly-sold purchasable through the same path as every dish:
+        the purchasable SKU (receipt-priced), its one-line serving recipe, the
+        produced sold SKU the recipe outputs, and the item → sold-SKU mapping.
+        No second costing path exists — the serving recipe is an ordinary
+        recipe (one ingredient line, yield 1 in the sold SKU's unit).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        store: SqliteLoyverseStore = app.state.store
+        item = store.current_menu().get(item_id)
+        # The sold SKU inherits the item's segment so the segment-CM view
+        # attributes the sale correctly; the purchasable stays segment-NULL
+        # (an ingredient may feed both cafe and bar).
+        sold_segment = item.segment if item is not None else None
+        sku_id = sku_id.strip()
+        name = name.strip()
+        if not sku_id or not name:
+            return HTMLResponse("sku_id and name are required.", status_code=400)
+        if unit not in ("g", "ml", "unit"):
+            return HTMLResponse("Unit must be g, ml, or unit.", status_code=400)
+        if cfg.sku(sku_id) is not None:
+            return HTMLResponse(f"SKU {sku_id} already exists.", status_code=400)
+        try:
+            pack_price_value = Decimal(pack_price.strip())
+            pack_quantity_value = Decimal(pack_quantity.strip())
+        except InvalidOperation:
+            return HTMLResponse(
+                "Pack price and pack quantity must be numbers.", status_code=400
+            )
+        if pack_price_value < 0 or pack_quantity_value <= 0:
+            return HTMLResponse(
+                "Pack price must be \u2265 0 and pack quantity must be > 0.",
+                status_code=400,
+            )
+        try:
+            serving_qty = Decimal(serving_size.strip())
+        except InvalidOperation:
+            return HTMLResponse("Serving size must be a number.", status_code=400)
+        if serving_qty <= 0:
+            return HTMLResponse("Serving size must be > 0.", status_code=400)
+        actor: str = request.state.assignee_id
+        session_id: str | None = request.state.session_id
+        sold_sku_id = f"{sku_id}:served"
+        if cfg.sku(sold_sku_id) is not None:
+            return HTMLResponse(
+                f"SKU {sold_sku_id} already exists.", status_code=400
+            )
+        # 1. The purchasable SKU — receipt-priced.
+        cfg.create_sku(
+            sku_id, name=name, unit=unit, created_by=actor, session_id=session_id
+        )
+        cfg.save_cost(
+            sku_id,
+            pack_price=pack_price_value,
+            pack_quantity=pack_quantity_value,
+            vat_inclusive=bool(vat_inclusive),
+            updated_by=actor,
+            updated_on=app.state.today,
+            session_id=session_id,
+        )
+        # 2. The produced sold SKU the serving recipe outputs (one per sale).
+        cfg.create_sku(
+            sold_sku_id,
+            name=f"{name} (serving)",
+            unit="unit",
+            segment=sold_segment,
+            created_by=actor,
+            session_id=session_id,
+        )
+        # 3. The serving recipe — one ingredient line, yield 1 sold unit.
+        cfg.save_recipe(
+            sold_sku_id,
+            ingredients=[(sku_id, serving_qty)],
+            yield_qty=Decimal("1"),
+            yield_estimated=False,
+            prep=False,
+            updated_by=actor,
+            session_id=session_id,
+        )
+        # 4. The mapping — the Loyverse item now resolves to the sold SKU.
+        cfg.save_mapping(
+            item_id, sold_sku_id, updated_by=actor, session_id=session_id
+        )
+        return RedirectResponse(url=f"/skus/{sold_sku_id}", status_code=303)
+
     @app.get("/skus/{sku_id}", response_class=HTMLResponse)
     def sku_detail(request: Request, sku_id: str) -> HTMLResponse:
         """The editor page for one SKU: recipe (Slice 4) + cost (Slice 3).
