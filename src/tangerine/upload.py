@@ -97,6 +97,7 @@ def parse_upload(
     skus: list[SkuRecord],
     mappings: list[SkuMapping],
     cost_rows: list[CostRow],
+    produced_sku_ids: set[str] | None = None,
 ) -> UploadPreview:
     """Reconcile an uploaded CSV against current state.
 
@@ -106,8 +107,15 @@ def parse_upload(
     a mapping row with no ``sku_id`` stays unmapped; a cost row with no pack
     inputs keeps its current price. A blank ``vat_inclusive`` on a filled
     cost row defaults to TRUE, matching the editor's checkbox default.
+
+    ``produced_sku_ids`` is the set of SKUs that have a recipe. A cost row
+    targeting one is a per-row error (issue #37): a produced SKU's cost is
+    derived from its recipe, never typed — the "derived only" rule the cost
+    form enforces, held on the bulk path too so a spreadsheet cannot slip a
+    direct price past it.
     """
     known_skus = {s.sku_id for s in skus}
+    produced = produced_sku_ids or set()
     mapping_by_item = {m.item_id: m.sku_id for m in mappings}
     cost_by_sku = {c.sku_id: c for c in cost_rows}
 
@@ -158,6 +166,7 @@ def parse_upload(
                 pack_quantity=cell("pack_quantity"),
                 vat_inclusive=cell("vat_inclusive"),
                 known_skus=known_skus,
+                produced=produced,
                 cost_by_sku=cost_by_sku,
             )
             if isinstance(cost_or_error, RowError):
@@ -202,6 +211,7 @@ def _parse_cost_row(
     pack_quantity: str,
     vat_inclusive: str,
     known_skus: set[str],
+    produced: set[str],
     cost_by_sku: dict[str, CostRow],
 ) -> CostChange | RowError | None:
     if not sku_id:
@@ -210,6 +220,12 @@ def _parse_cost_row(
         return None  # blank = the partner left this cost as is
     if sku_id not in known_skus:
         return RowError(row_number, f"unknown SKU {sku_id!r}")
+    if sku_id in produced:
+        return RowError(
+            row_number,
+            f"{sku_id!r} is a produced SKU — its cost is derived from its "
+            "recipe and cannot be entered directly",
+        )
     try:
         price = Decimal(pack_price)
         quantity = Decimal(pack_quantity)

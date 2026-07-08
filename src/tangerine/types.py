@@ -1400,6 +1400,41 @@ class SkuCoverageRow:
 
 
 @dataclass(frozen=True)
+class CostBreakdownLine:
+    """One ingredient row of a produced SKU's derived-cost breakdown.
+
+    ``unit_cost`` is the ingredient's resolved per-unit cost — recursing
+    display-wise into a prep as a single priced row (the prep's own derived
+    figure), never expanding the prep's recipe inline. ``line_cost`` is
+    ``quantity × unit_cost``. Both are ``None`` when the ingredient is
+    itself unpriceable, so the row renders "unpriced" rather than a number.
+    """
+
+    sku_id: str
+    name: str
+    quantity: Decimal
+    unit_cost: Money | None
+    line_cost: Money | None
+
+
+@dataclass(frozen=True)
+class CostBreakdown:
+    """A produced SKU's read-only derived cost and its ingredient breakdown.
+
+    ``per_unit`` is the recursively-derived cost of one output unit, or
+    ``None`` when any leaf needed to derive it is unpriced. ``unpriced_leaves``
+    names those leaf SKUs (issue #37) so the page can say *which* leaf blocks
+    the number instead of silently showing nothing.
+    """
+
+    sku_id: str
+    per_unit: Money | None
+    yield_qty: Decimal
+    lines: tuple[CostBreakdownLine, ...]
+    unpriced_leaves: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ItemCoverageRow:
     """One item coverage view row: a Loyverse item and its SKU chain health.
 

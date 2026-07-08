@@ -2426,3 +2426,206 @@ def test_sold_sku_inherits_the_items_segment(tmp_path: Path) -> None:
     cafe_row = next(r for r in seg_rows if "Cafe" in r)
     assert "100.00 THB" in bar_row  # the Chang sale's revenue
     assert "0.00 THB" in cafe_row.split("segment-cm__revenue")[1][:60]
+
+
+# =============================================================================
+# Produced SKUs are never priced directly: read-only derived cost (issue 37)
+# =============================================================================
+
+# "One source of truth per role" (CONTEXT.md / ADR-0005): a produced SKU's
+# cost is always derived from its recipe, never typed. Its SKU page replaces
+# the cost-entry form with a read-only derived cost plus an ingredient-level
+# breakdown; attempts to price it directly (cost form or CSV row) are rejected.
+#
+# The latte fixture is a produced SKU: 18 g beans @ 0.65/g = 11.70 THB plus
+# 200 ml milk @ 0.02/ml = 4.00 THB, yield 1 -> 15.70 THB derived per unit.
+
+
+def test_produced_sku_shows_read_only_derived_cost_and_breakdown(
+    tmp_path: Path,
+) -> None:
+    """A produced SKU's page shows its derived cost per unit and a
+    per-ingredient breakdown (quantity x unit cost per line) instead of a
+    cost-entry form — a partner can trace the cost to receipts, and cannot
+    type a direct price that would shadow the derived one.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    html = client.get("/skus/latte").text
+
+    # The derived per-unit cost is shown: 11.70 + 4.00 = 15.70 THB.
+    assert "15.70" in html
+    # The breakdown names each ingredient and its line cost.
+    assert "beans" in html
+    assert "11.70" in html  # 18 g x 0.65/g
+    assert "milk" in html
+    assert "4.00" in html  # 200 ml x 0.02/ml
+    # There is NO cost-entry form: a produced SKU is never priced directly.
+    assert 'action="/skus/latte/cost"' not in html
+    assert "/skus/latte/cost-preview" not in html
+    assert "Enter a new cost" not in html
+
+
+def test_posting_a_direct_cost_for_a_produced_sku_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """A crafted POST that tries to price a produced SKU (``latte``) directly
+    is rejected with a message explaining produced SKUs derive their cost
+    from their recipe — and nothing lands, so the derived cost still stands.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/cost",
+        data={"pack_price": "50", "pack_quantity": "1", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400
+    body = response.text.lower()
+    assert "recipe" in body
+    assert "derive" in body or "derived" in body
+    # Nothing landed: the latte's page still shows its derived cost, and no
+    # direct cost entry shadows it.
+    html = client.get("/skus/latte").text
+    assert "15.70" in html
+
+
+def test_unpriceable_produced_sku_names_the_unpriced_leaf(tmp_path: Path) -> None:
+    """A produced SKU that cannot be costed — because a leaf below it has no
+    price — shows *which* leaf is unpriced instead of a number. The answer
+    walks recursively past a prep: a taco made of salsa (a prep) made of
+    tomato (unpriced) names ``tomato``, not ``salsa``.
+    """
+    recipes_yaml = """
+recipes:
+  - sku_id: salsa
+    name: House Salsa
+    segment: cafe
+    ingredients:
+      - { sku_id: tomato, quantity: "200" }
+  - sku_id: taco
+    name: Taco
+    segment: cafe
+    ingredients:
+      - { sku_id: salsa, quantity: "50" }
+
+mappings:
+  - { item_id: i-taco, sku_id: taco }
+"""
+    costs_yaml = """
+costs: {}
+"""
+    app = _build_app(tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml)
+    client = _authed_client(app)
+
+    html = client.get("/skus/taco").text
+
+    # No derived number is shown; the unpriced leaf is named instead.
+    assert "tomato" in html
+    assert "unpriced" in html.lower()
+    # The breakdown's salsa row is flagged unpriced (its own leaf is missing).
+    assert "cost-breakdown__row--unpriced" in html
+    # Still no cost-entry form — the rule holds regardless of priceability.
+    assert 'action="/skus/taco/cost"' not in html
+
+
+def test_csv_cost_row_for_a_produced_sku_is_a_per_row_error(tmp_path: Path) -> None:
+    """A CSV upload carrying a cost row for a produced SKU (``croissant`` has
+    a recipe) is a per-row error that blocks the whole apply — the same
+    "derived only" rule the cost form enforces, on the bulk path too. The
+    error names the row and the SKU, and no confirm control is offered.
+    """
+    bad_csv = (
+        "kind,item_id,item_name,sku_id,sku_name,unit,pack_price,pack_quantity,vat_inclusive\n"
+        "cost,,,croissant,Butter Croissant,unit,50,1,TRUE\n"
+    )
+    app = _upload_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/upload", files={"file": ("filled.csv", bad_csv, "text/csv")}
+    )
+
+    assert response.status_code == 200
+    html = response.text
+    assert "croissant" in html
+    assert "produced" in html.lower()
+    # Row 2 as Excel numbers it (header is row 1).
+    assert ">2<" in html
+    # Errors block the apply: no confirm control is offered.
+    assert 'name="confirm"' not in html
+
+    # Even a crafted confirm re-submit lands nothing (errors block apply):
+    # croissant stays a produced SKU with no cost-entry form on its page.
+    client.post("/upload", data={"csv_text": bad_csv, "confirm": "1"})
+    croissant_html = client.get("/skus/croissant").text
+    assert 'action="/skus/croissant/cost"' not in croissant_html
+
+
+def test_purchasable_cost_editing_is_unchanged(tmp_path: Path) -> None:
+    """Regression guard: a purchasable SKU (``flour`` — no recipe) keeps the
+    cost-entry form, no derived-cost section, and saving still applies VAT
+    and lands an audit entry. Issue #37 changes produced SKUs only.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    page = client.get("/skus/flour").text
+    assert 'action="/skus/flour/cost"' in page  # the editor form is present
+    assert "Enter a new cost" in page
+    assert "Derived cost" not in page  # no read-only derived surface
+
+    # A VAT-inclusive save lands the net per-unit price: 107 / 100 / 1.07 = 1.00.
+    response = client.post(
+        "/skus/flour/cost",
+        data={"pack_price": "107", "pack_quantity": "100", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+    after = client.get("/skus/flour").text
+    assert "1.00" in after  # current cost reflects the VAT-netted price
+
+    # The write is audited.
+    audit_html = client.get("/audit").text
+    assert "flour" in audit_html
+
+
+def test_deleting_a_recipe_flips_the_sku_back_to_purchasable(tmp_path: Path) -> None:
+    """Deleting a SKU's recipe makes it purchasable again: the derived-cost
+    surface gives way to the cost-entry form, and a direct cost can be saved
+    once more. The role-flip demo — and the delete is audited so it can be
+    reverted like any other config change.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    # Before: latte is produced — derived cost, no cost form, offers delete.
+    before = client.get("/skus/latte").text
+    assert "Derived cost" in before
+    assert 'action="/skus/latte/cost"' not in before
+    assert 'action="/skus/latte/recipe/delete"' in before
+
+    response = client.post("/skus/latte/recipe/delete", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/latte"
+
+    # After: latte is purchasable — the cost-entry form is back.
+    after = client.get("/skus/latte").text
+    assert 'action="/skus/latte/cost"' in after
+    assert "Enter a new cost" in after
+    assert "Derived cost" not in after
+
+    # And a direct cost now saves, since latte no longer has a recipe.
+    save = client.post(
+        "/skus/latte/cost",
+        data={"pack_price": "20", "pack_quantity": "1", "vat_inclusive": ""},
+        follow_redirects=False,
+    )
+    assert save.status_code == 303
+
+    # The deletion is audited.
+    assert "latte" in client.get("/audit").text

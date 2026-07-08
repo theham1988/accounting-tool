@@ -773,6 +773,35 @@ class SqliteConfigStore:
                 session_id=session_id,
             )
 
+    def delete_recipe(
+        self,
+        sku_id: str,
+        *,
+        updated_by: str,
+        session_id: str | None = None,
+    ) -> None:
+        """Remove ``sku_id``'s recipe, flipping the SKU back to purchasable.
+
+        A no-op when the SKU has no recipe. The whole recipe (header +
+        ingredient rows) is snapshotted before deletion and the audit entry
+        records the removal (``new`` is ``None``), so a revert restores the
+        recipe in one stroke — the mirror image of the create-on-first-save
+        the recipe editor performs (issue #37, the role-flip demo).
+        """
+        with self._lock, self._conn:
+            old = self._recipe_snapshot(sku_id)
+            if old is None:
+                return
+            self._apply_snapshot("recipes", sku_id, None)
+            self._record_audit(
+                "recipes",
+                sku_id,
+                old=old,
+                new=None,
+                changed_by=updated_by,
+                session_id=session_id,
+            )
+
     def _recipe_snapshot(self, sku_id: str) -> dict[str, Any] | None:
         """One recipe — header plus ordered ingredient rows — as a single dict.
 

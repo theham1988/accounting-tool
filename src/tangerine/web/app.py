@@ -52,8 +52,9 @@ from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
+from ..margin import cost_breakdown
 from ..quantity import QuantityError, estimated_yield, parse_quantity
-from ..recipes import find_recipe_cycle
+from ..recipes import RecipeCatalog, find_recipe_cycle
 from ..storage.config_store import (
     AuditEntry,
     SqliteConfigStore,
@@ -955,6 +956,19 @@ def create_app(
             return HTMLResponse("Unknown SKU.", status_code=404)
         recipes = cfg.recipes()
         recipe = next((r for r in recipes if r.sku_id == sku_id), None)
+        # One source of truth per role (issue #37): a produced SKU is never
+        # priced directly — its page shows a read-only derived cost and an
+        # ingredient breakdown instead of the cost-entry form. Purchasables
+        # keep the cost editor.
+        role = sku_role(recipe)
+        breakdown = None
+        if role is not SkuRole.PURCHASABLE:
+            breakdown = cost_breakdown(
+                sku_id,
+                recipes=RecipeCatalog(recipes),
+                cost=cfg.cost_book(),
+                name_of={s.sku_id: s.name for s in cfg.skus()},
+            )
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
@@ -964,6 +978,9 @@ def create_app(
                 "sku": sku,
                 "current_cost": cfg.cost_book().price(sku_id),
                 "recipe": recipe,
+                "role": role,
+                "is_produced": role is not SkuRole.PURCHASABLE,
+                "breakdown": breakdown,
                 # The picker offers only what can honestly be an ingredient:
                 # purchasables + preps, never sold-only dishes (issue #35).
                 "all_skus": pickable_ingredient_skus(cfg.skus(), recipes),
@@ -1023,6 +1040,18 @@ def create_app(
         cfg: SqliteConfigStore = app.state.config_store
         if cfg.sku(sku_id) is None:
             return HTMLResponse("Unknown SKU.", status_code=404)
+        # One source of truth per role (issue #37): a produced SKU (one with
+        # a recipe) is never priced directly — the picker/editor hides the
+        # form, and this rejects a crafted POST so the rule is not merely
+        # cosmetic.
+        recipe = next((r for r in cfg.recipes() if r.sku_id == sku_id), None)
+        if sku_role(recipe) is not SkuRole.PURCHASABLE:
+            return HTMLResponse(
+                f"{sku_id} is a produced SKU — its cost is derived from its "
+                "recipe and cannot be entered directly. Edit the recipe "
+                "instead, or delete it to make the SKU purchasable.",
+                status_code=400,
+            )
         try:
             price = Decimal(pack_price)
             quantity = Decimal(pack_quantity)
@@ -1207,6 +1236,27 @@ def create_app(
         )
         return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
 
+    @app.post("/skus/{sku_id}/recipe/delete", response_model=None)
+    def delete_recipe(
+        request: Request, sku_id: str
+    ) -> HTMLResponse | RedirectResponse:
+        """Delete a SKU's recipe, flipping it back to purchasable (issue #37).
+
+        The role-flip demo: once the recipe is gone the SKU is bought again,
+        so the editor re-offers the cost-entry form. The delete is audited
+        (and revertible) like any config change; the redirect lands back on
+        the editor, which re-reads the DB and renders the restored form.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        if cfg.sku(sku_id) is None:
+            return HTMLResponse("Unknown SKU.", status_code=404)
+        cfg.delete_recipe(
+            sku_id,
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+
     @app.get("/audit", response_class=HTMLResponse)
     def audit_log(request: Request) -> HTMLResponse:
         """The audit log (Wave 1.5, Slice 5): every config edit, newest first.
@@ -1375,7 +1425,14 @@ def create_app(
         else:
             text = csv_text
         preview = parse_upload(
-            text, skus=cfg.skus(), mappings=cfg.mappings(), cost_rows=cfg.cost_rows()
+            text,
+            skus=cfg.skus(),
+            mappings=cfg.mappings(),
+            cost_rows=cfg.cost_rows(),
+            # A produced SKU (one with a recipe) is never priced directly —
+            # the same rule the cost form enforces, held on the bulk path
+            # (issue #37).
+            produced_sku_ids={r.sku_id for r in cfg.recipes()},
         )
         t: Jinja2Templates = app.state.templates
         if confirm is None or preview.errors or not preview.has_changes:

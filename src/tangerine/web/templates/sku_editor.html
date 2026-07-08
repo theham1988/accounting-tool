@@ -24,6 +24,48 @@
       — <a href="/skus">&larr; SKU view</a>
     </p>
 
+    {% if is_produced %}
+    <section class="cost-derived">
+      <h2>Derived cost</h2>
+      <p class="cost-form__hint">
+        This SKU is made, not bought — its cost is derived from its recipe
+        (down to receipt prices) and cannot be entered directly. One source
+        of truth per role.
+      </p>
+      {% if breakdown.per_unit is not none %}
+      <p>
+        <strong class="cost-derived__net">{{ breakdown.per_unit | money }}</strong>
+        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net per unit
+        {% if breakdown.yield_qty != 1 %}
+        <span class="cost-derived__yield">(batch ÷ yield {{ breakdown.yield_qty }})</span>
+        {% endif %}
+      </p>
+      {% else %}
+      <p class="cost-derived__unpriced">
+        <em>Cannot be costed yet — unpriced:
+        {% for leaf in breakdown.unpriced_leaves %}<span class="cost-derived__unpriced-leaf">{{ leaf }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.</em>
+        Price {{ "it" if breakdown.unpriced_leaves | length == 1 else "them" }} to cost this SKU.
+      </p>
+      {% endif %}
+      {% if breakdown.lines %}
+      <table class="cost-breakdown">
+        <thead>
+          <tr><th>Ingredient</th><th>Quantity</th><th>Unit cost</th><th>Line cost</th></tr>
+        </thead>
+        <tbody>
+        {% for line in breakdown.lines %}
+          <tr class="cost-breakdown__row{% if line.line_cost is none %} cost-breakdown__row--unpriced{% endif %}">
+            <td><a href="/skus/{{ line.sku_id }}">{{ line.name }}</a><span class="sku-row__id">{{ line.sku_id }}</span></td>
+            <td>{{ line.quantity }}</td>
+            <td>{{ (line.unit_cost | money) if line.unit_cost is not none else "unpriced" }}</td>
+            <td>{{ (line.line_cost | money) if line.line_cost is not none else "unpriced" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+    {% else %}
     <section class="cost-current">
       <h2>Current cost</h2>
       {% if current_cost %}
@@ -36,6 +78,7 @@
       <p class="empty-note"><em>No cost recorded yet.</em></p>
       {% endif %}
     </section>
+    {% endif %}
 
     {% from "_ingredient_picker.html" import ingredient_picker %}
 
@@ -103,8 +146,20 @@
         </button>
         <button type="submit">Save recipe</button>
       </form>
+      {% if recipe %}
+      <form method="post" action="/skus/{{ sku.sku_id }}/recipe/delete"
+            class="recipe-delete"
+            onsubmit="return confirm('Delete this recipe? {{ sku.name }} becomes a purchasable SKU priced by a direct cost entry.');">
+        <button type="submit" class="recipe-delete__button">Delete recipe</button>
+        <span class="cost-form__hint">
+          Removes the recipe and makes {{ sku.name }} a bought (purchasable)
+          SKU again — you enter its cost directly.
+        </span>
+      </form>
+      {% endif %}
     </section>
 
+    {% if not is_produced %}
     <section class="cost-form">
       <h2>Enter a new cost</h2>
       <p class="cost-form__hint">
@@ -141,6 +196,7 @@
         <button type="submit">Save cost</button>
       </form>
     </section>
+    {% endif %}
   </main>
 </body>
 </html>

@@ -41,6 +41,8 @@ from .ingestion import Source
 from .recipes import RecipeCatalog
 from .segments import segment_of_sale
 from .types import (
+    CostBreakdown,
+    CostBreakdownLine,
     DailyMargin,
     ItemMargin,
     Money,
@@ -221,6 +223,68 @@ class CostResolver:
                 continue
             total += ing.quantity * unit
         return Money(total / recipe.yield_qty)
+
+    def unpriced_leaves(
+        self, sku_id: str, seen: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """The purchasable leaf SKUs reachable from ``sku_id`` that lack a price.
+
+        Walks the recipe tree to the purchasables at the bottom and returns,
+        in stable first-seen order, those with no cost-book entry — the
+        answer to "which leaf is unpriced" (issue #37). A cycle contributes
+        nothing (the runtime guard treats it as unpriceable elsewhere).
+        """
+        recipe = self._recipes.recipe_for_sku(sku_id)
+        if recipe is None:
+            return [] if self._cost.price(sku_id) is not None else [sku_id]
+        if sku_id in seen:
+            return []
+        leaves: list[str] = []
+        for ing in recipe.ingredients:
+            for leaf in self.unpriced_leaves(ing.sku_id, seen | {sku_id}):
+                if leaf not in leaves:
+                    leaves.append(leaf)
+        return leaves
+
+
+def cost_breakdown(
+    sku_id: str, *, recipes: RecipeCatalog, cost: CostBook, name_of: dict[str, str]
+) -> CostBreakdown:
+    """A produced SKU's read-only derived cost and per-ingredient breakdown.
+
+    One line per direct ingredient (quantity × resolved unit cost), a prep
+    shown as a single priced row via its own derived figure — never expanded
+    inline. ``per_unit`` is the recursive cost of one output unit (``None``
+    when unpriceable); ``unpriced_leaves`` names the leaf SKUs blocking it.
+    ``name_of`` maps sku_id → display name for the lines.
+    """
+    resolver = CostResolver(recipes, cost)
+    recipe = recipes.recipe_for_sku(sku_id)
+    if recipe is None:
+        raise ValueError(f"{sku_id} has no recipe; it is not a produced SKU")
+    lines: list[CostBreakdownLine] = []
+    for ing in recipe.ingredients:
+        unit_cost = resolver.unit_cost(ing.sku_id)
+        line_cost = (
+            Money(ing.quantity * unit_cost) if unit_cost is not None else None
+        )
+        lines.append(
+            CostBreakdownLine(
+                sku_id=ing.sku_id,
+                name=name_of.get(ing.sku_id, ing.sku_id),
+                quantity=ing.quantity,
+                unit_cost=unit_cost,
+                line_cost=line_cost,
+            )
+        )
+    per_unit = resolver.unit_cost(sku_id)
+    return CostBreakdown(
+        sku_id=sku_id,
+        per_unit=Money(per_unit) if per_unit is not None else None,
+        yield_qty=recipe.yield_qty,
+        lines=tuple(lines),
+        unpriced_leaves=tuple(resolver.unpriced_leaves(sku_id)),
+    )
 
 
 def compute_item_margins(
