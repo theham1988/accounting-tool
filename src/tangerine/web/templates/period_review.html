@@ -1,13 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% if mode == 'month' %}Month{% else %}Period{% endif %} review — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review">
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}{% if mode == 'month' %}Month{% else %}Period{% endif %} review — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review">
     <h1>{% if mode == 'month' %}Month review{% else %}Period review{% endif %}</h1>
 
     {% include "_breadcrumb.html" %}
@@ -174,6 +169,5 @@
       <!--/section:goal-->
     </section>
     </div><!-- /#review-body -->
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

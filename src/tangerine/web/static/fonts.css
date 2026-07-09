@@ -1,0 +1,53 @@
+/* Tangerine Books — self-hosted @font-face sheet (ADR-0006 decision 3).
+ *
+ * Every font is served from this app's own /static/fonts/ — there is NO
+ * request to Google Fonts or any font CDN, so a slow or blocked café
+ * connection can never leave the body text unstyled at 9am. The old Kavoon
+ * Google-Fonts fallback is dropped entirely.
+ *
+ * - Space Mono (OFL, freely redistributable) is bundled here as woff2 and is
+ *   the body typeface for the whole UI.
+ * - Hobo BT and TAN Nimbus are the commercial display faces from the design
+ *   handoff. They are declared here against local names and self-hosted
+ *   files; drop `hobo-bt.woff2` / `tan-nimbus.woff2` into /static/fonts/ to
+ *   light them up. Until then the families fall back to Space Mono (see
+ *   typography.css), so nothing renders unstyled.
+ *
+ * `font-display: swap` keeps text visible during any load.
+ */
+
+/* --- Space Mono (body) — self-hosted OFL woff2 ---------------------------- */
+@font-face {
+  font-family: "Space Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/space-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/space-mono-700.woff2") format("woff2");
+}
+
+/* --- Hobo BT (display) — commercial handoff face, self-hosted ------------- */
+@font-face {
+  font-family: "Hobo BT";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Hobo BT"), local("HoboBT-Regular"),
+    url("/static/fonts/hobo-bt.woff2") format("woff2");
+}
+
+/* --- TAN Nimbus (accent display) — commercial handoff face, self-hosted --- */
+@font-face {
+  font-family: "TAN Nimbus";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("TAN Nimbus"), local("TANNimbus"),
+    url("/static/fonts/tan-nimbus.woff2") format("woff2");
+}

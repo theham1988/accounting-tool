@@ -1,0 +1,47 @@
+/* Tangerine Books — colour tokens (design-system source of truth).
+ *
+ * Vendored as the single source of truth for the brand palette (ADR-0006:
+ * vendor the design tokens; consume them via CSS custom properties). The
+ * component stylesheet (app.css) reads these `--tb-*` variables and never
+ * hard-codes a hex value, so a future design-system refresh is a file swap
+ * here, not a hunt through the components.
+ *
+ * The "Tangerine / Tangerine Taps" identity: a cream paper ground, hard ink
+ * keylines, tango orange as the brand accent, teal for money that is good
+ * news, mustard for "look before you trust", a midnight surface for the
+ * night (Taps / bar) segment, and terracotta numerals for the numbered
+ * upload steps.
+ */
+
+:root {
+  /* Grounds and ink */
+  --tb-paper: #f4ead2;          /* cream paper — the default page ground */
+  --tb-paper-sunk: #ecdfc0;     /* a slightly deeper cream for sunk panels */
+  --tb-paper-raised: #fbf4e3;   /* a lifted cream for cards on the ground */
+  --tb-ink: #1c1712;            /* near-black ink — text and hard keylines */
+  --tb-ink-soft: #6d6152;       /* warm grey — secondary/muted text */
+
+  /* Brand accents */
+  --tb-tango: #e2582a;          /* tango orange — the brand accent */
+  --tb-tango-ink: #b23f18;      /* a darker tango for text on paper */
+  --tb-terracotta: #bf5b3c;     /* terracotta — the numbered step numerals */
+
+  /* Semantic money colours */
+  --tb-teal: #12796b;           /* teal — net profit, on-target, "good" */
+  --tb-mustard: #d99a24;        /* mustard — unreviewed / attention */
+  --tb-mustard-wash: #f8eccf;   /* mustard's pale banner wash */
+  --tb-red: #b8371f;            /* red — negative CM, below target, "bad" */
+
+  /* Night (Taps / bar) surface */
+  --tb-midnight: #12233a;       /* midnight — the TAPS · NIGHT segment ground */
+  --tb-midnight-ink: #f4ead2;   /* cream ink on the midnight ground */
+
+  /* Health dots (map onto the existing green/yellow/red classification) */
+  --tb-health-green: #12796b;
+  --tb-health-yellow: #d99a24;
+  --tb-health-red: #b8371f;
+
+  /* Pure white/black kept as tokens so components never reach past the set */
+  --tb-white: #ffffff;
+  --tb-black: #000000;
+}

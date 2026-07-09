@@ -1,0 +1,61 @@
+{#
+  Tangerine Books — base layout (Wave 3 foundation, ADR-0006).
+
+  The repo's first Jinja inheritance. Every screen `{% extends "_base.html" %}`
+  and fills `{% block content %}` instead of repeating its own `<head>` /
+  scripts / stylesheet link. The shared chrome — the sticky app header, the
+  four-cell bottom nav, and the detail-screen (back-arrow) variant — lives
+  here so it is edited once and screens cannot drift.
+
+  A screen configures its chrome with top-level `{% set %}` statements (these
+  propagate into this parent):
+
+    {% set chrome = "main" %}      main | detail | bare   (default: main)
+    {% set nav_active = "today" %} today | reports | stock | log | "" 
+    {% set wide = true %}          widen the column for big tables
+    {% set back_href = "/skus" %}  the detail back-arrow target (default: /)
+
+  - main   : app header + four-cell bottom nav (the everyday screens).
+  - detail : app header with a back arrow, NO bottom nav (focused sub-tasks:
+             the SKU editor, bulk upload, and the out-of-scope create forms).
+  - bare   : no header, no nav (the login screen).
+#}
+{% set chrome = chrome | default("main") %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Tangerine Books{% endblock %}</title>
+  {# Vendored design tokens (source of truth) consumed as CSS custom
+     properties, the self-hosted @font-face sheet, then the component
+     stylesheet on top. No font CDN. #}
+  <link rel="stylesheet" href="/static/tokens/colors.css">
+  <link rel="stylesheet" href="/static/tokens/typography.css">
+  <link rel="stylesheet" href="/static/tokens/spacing.css">
+  <link rel="stylesheet" href="/static/fonts.css">
+  <link rel="stylesheet" href="/static/app.css">
+  {# HTMX stays on its CDN (ADR-0002, unchanged) with a Subresource-Integrity
+     hash. Loaded globally so any screen's hx-* controls work. #}
+  <script
+    src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"
+    integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
+    crossorigin="anonymous"
+    defer
+  ></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="tb-body{% if chrome == 'detail' %} tb-body--detail{% elif chrome == 'bare' %} tb-body--bare{% endif %}">
+  {% if chrome != "bare" %}
+    {% include "_app_header.html" %}
+  {% endif %}
+
+  <main class="tb-main{% if wide | default(false) %} tb-main--wide{% endif %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% if chrome == "main" %}
+    {% include "_bottom_nav.html" %}
+  {% endif %}
+</body>
+</html>

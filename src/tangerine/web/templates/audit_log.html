@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Audit log — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review audit">
+{% extends "_base.html" %}
+{% set nav_active = "log" %}
+{% set wide = true %}
+{% block title %}Audit log — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review audit">
     <h1>Audit log</h1>
     <p class="day">
       Every config edit: who, when, from what to what.
@@ -87,6 +83,5 @@
       </table>
     </section>
     {% endif %}
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

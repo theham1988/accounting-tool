@@ -576,7 +576,10 @@ def test_trends_page_ships_no_javascript(
         "/review?mode=trends&metric=goal&span=weeks",
     ):
         html = client.get(url).text
-        assert "<script" not in html
+        # The base layout loads HTMX from its CDN (ADR-0002, unchanged); the
+        # trend charts themselves remain server-rendered with no page-local JS.
+        assert html.count("<script") == 1
+        assert "htmx.org" in html
         assert "onclick" not in html
         # The chart is drawn in the markup itself: an SVG polyline and CSS
         # bars are already present in the raw response.

@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bulk upload — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review upload">
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/skus" %}
+{% block title %}Bulk upload — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review upload">
     <h1>Bulk upload</h1>
     <p class="day">
       Mappings and costs by spreadsheet — download, fill in the blanks in
@@ -33,6 +29,5 @@
         <button type="submit">Preview changes</button>
       </form>
     </section>
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

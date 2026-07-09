@@ -1,0 +1,1318 @@
+/* Tangerine Books — component stylesheet (Wave 3 foundation, ADR-0006).
+ *
+ * This replaces the old review.css outright (no dual stylesheet). It consumes
+ * the vendored design tokens (tokens/colors.css, typography.css, spacing.css)
+ * via CSS custom properties and never hard-codes a brand value. It carries:
+ *
+ *   1. a legacy-variable alias block, so every screen's existing component
+ *      classes (ported verbatim onto the base layout) pick up the brand
+ *      palette without being rewritten screen-by-screen in this slice;
+ *   2. the base element look (Space Mono on cream paper, hard ink keylines,
+ *      square corners, no shadows);
+ *   3. the shared chrome — the sticky app header, the four-cell bottom nav,
+ *      and the detail-screen (back-arrow) variant;
+ *   4. the ported component rules for every existing screen.
+ *
+ * Mobile-first: base rules apply at every width; wider viewports are
+ * progressively enhanced behind `@media (min-width: ...)` at the very end.
+ */
+
+/* --- 1. Legacy variable aliases -> brand tokens --------------------------- */
+/* The ported screens reference these names; point them at the brand palette
+   so a single mapping re-skins every screen. */
+:root {
+  --text: var(--tb-ink);
+  --muted: var(--tb-ink-soft);
+  --rule: var(--tb-ink);
+  --surface: var(--tb-paper-raised);
+  --surface-alt: var(--tb-paper-sunk);
+  --flag-red: var(--tb-red);
+  --flag-yellow: var(--tb-mustard);
+  --flag-green: var(--tb-teal);
+}
+
+/* --- 2. Base element look ------------------------------------------------- */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--tb-font-body);
+  color: var(--tb-ink);
+  background: var(--tb-paper);
+  font-size: var(--tb-size-body);
+  line-height: var(--tb-leading-body);
+}
+
+/* Main screens carry the sticky header + bottom nav; pad the body so the
+   fixed chrome never covers content. Detail/bare screens override below. */
+body.tb-body {
+  min-height: 100vh;
+  padding-top: var(--tb-header-height);
+  padding-bottom: calc(var(--tb-bottomnav-height) + env(safe-area-inset-bottom, 0px));
+}
+
+body.tb-body--detail {
+  padding-bottom: 0;
+}
+
+body.tb-body--bare {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+a {
+  color: var(--tb-tango-ink);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--tb-font-display);
+  letter-spacing: 0.01em;
+}
+
+/* Square corners, hard keylines, no shadows on the interactive controls the
+   brand touches (the printed, hard-edged feel). */
+button,
+input,
+select,
+textarea {
+  border-radius: var(--tb-radius);
+  font-family: inherit;
+}
+
+/* --- 3. Shared chrome ----------------------------------------------------- */
+
+/* App header — sticky, brand wordmark + signed-in partner (+ OUT on Today);
+   a back-arrow variant on detail screens. */
+.tb-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: var(--tb-header-height);
+  display: flex;
+  align-items: center;
+  gap: var(--tb-space-3);
+  padding: 0 var(--tb-space-4);
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  border-bottom: var(--tb-keyline) solid var(--tb-tango);
+}
+
+.tb-header__brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--tb-space-2);
+  text-decoration: none;
+  color: var(--tb-paper);
+}
+
+.tb-header__wordmark {
+  font-family: var(--tb-font-display);
+  font-size: 1.25rem;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.02em;
+}
+
+.tb-header__partner {
+  margin-left: auto;
+  font-size: var(--tb-size-small);
+  color: var(--tb-paper);
+  white-space: nowrap;
+}
+
+.tb-header__logout {
+  font: inherit;
+  font-size: var(--tb-size-small);
+  color: var(--tb-paper);
+  background: none;
+  border: var(--tb-keyline-thin) solid var(--tb-paper);
+  border-radius: var(--tb-radius);
+  padding: var(--tb-space-1) var(--tb-space-2);
+  cursor: pointer;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+}
+
+.tb-header__logout:hover {
+  background: var(--tb-tango);
+  border-color: var(--tb-tango);
+}
+
+.tb-header__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--tb-space-1);
+  font-size: 1.4rem;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--tb-paper);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tb-header__back-label {
+  font-size: var(--tb-size-small);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+}
+
+/* Bottom nav — four equal cells, the active one marked. */
+.tb-bottomnav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  height: var(--tb-bottomnav-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--tb-ink);
+  border-top: var(--tb-keyline) solid var(--tb-tango);
+}
+
+.tb-bottomnav__cell {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  color: var(--tb-paper);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  border-right: var(--tb-keyline-thin) solid rgba(244, 234, 210, 0.25);
+}
+
+.tb-bottomnav__cell:last-child {
+  border-right: 0;
+}
+
+.tb-bottomnav__cell--active {
+  color: var(--tb-ink);
+  background: var(--tb-tango);
+  font-weight: var(--tb-weight-bold);
+}
+
+/* The content column all screens render into. */
+.tb-main {
+  width: 100%;
+  max-width: var(--tb-content-max);
+  margin: 0 auto;
+}
+
+/* --- 4. Ported screen components ------------------------------------------ */
+/* These are the existing per-screen rules, carried onto the base layout and
+   re-skinned through the alias block above. Bespoke per-screen redesigns land
+   in the later Wave 3 slices; this keeps every screen coherent in the meantime.
+*/
+
+.review {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: var(--tb-space-4);
+  background: var(--tb-paper);
+}
+
+.review h1 {
+  font-size: var(--tb-size-h1);
+  margin: 0 0 var(--tb-space-1);
+}
+
+.review .day {
+  color: var(--muted);
+  margin: 0 0 var(--tb-space-4);
+  font-size: 0.95rem;
+}
+
+.review .empty-note {
+  background: var(--surface-alt);
+  padding: var(--tb-space-3);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  color: var(--muted);
+}
+
+.review section {
+  margin-bottom: var(--tb-space-5);
+}
+
+.review h2 {
+  font-size: var(--tb-size-h2);
+  margin: 0 0 var(--tb-space-2);
+  padding-bottom: var(--tb-space-1);
+  border-bottom: var(--tb-keyline) solid var(--rule);
+}
+
+.review dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--tb-space-1) var(--tb-space-3);
+  margin: 0;
+}
+
+.review dt {
+  color: var(--muted);
+}
+
+.review dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segment CM table. */
+.segment-cm table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.segment-cm th,
+.segment-cm td {
+  text-align: left;
+  padding: 0.4rem 0.25rem;
+  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.segment-cm th {
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+  font-weight: var(--tb-weight-bold);
+}
+
+.segment-cm__cm {
+  text-align: right;
+}
+
+.segment-cm__row--red .segment-cm__cm {
+  color: var(--flag-red);
+  font-weight: var(--tb-weight-bold);
+}
+
+.segment-cm__flag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  background: var(--flag-red);
+  color: var(--tb-white);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+}
+
+/* Rankings. */
+.rankings__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--tb-space-4);
+}
+
+.ranking h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+}
+
+.ranking__list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.ranking__list li {
+  margin-bottom: 0.2rem;
+}
+
+.ranking__metric {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.below-target ul,
+.needs-attention ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.needs-attention__note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.needs-attention__reason {
+  font-weight: var(--tb-weight-bold);
+}
+
+.needs-attention__link {
+  font-weight: var(--tb-weight-bold);
+  white-space: nowrap;
+}
+
+/* Sync control. */
+.sync-control {
+  margin-bottom: var(--tb-space-5);
+  padding: var(--tb-space-3);
+  background: var(--surface-alt);
+  border: var(--tb-keyline-thin) solid var(--rule);
+}
+
+.sync-control__button {
+  display: inline-block;
+  padding: var(--tb-space-2) var(--tb-space-4);
+  font-size: 1rem;
+  font-weight: var(--tb-weight-bold);
+  color: var(--tb-paper);
+  background: var(--tb-ink);
+  border: 0;
+  cursor: pointer;
+}
+
+.sync-control__button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.sync-control__indicator {
+  margin-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sync-result {
+  margin-top: 0.5rem;
+}
+
+.sync-result h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+}
+
+.sync-result__errors {
+  margin: 0.35rem 0 0;
+  padding-left: 1.25rem;
+  color: var(--flag-red);
+}
+
+.sync-result__error {
+  margin-bottom: 0.2rem;
+}
+
+/* Signed-in-as row (legacy in-body variant; the header now carries this too). */
+.signed-in-as {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 var(--tb-space-4);
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.logout-button {
+  font: inherit;
+  color: var(--muted);
+  background: none;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: var(--surface-alt);
+}
+
+/* Day navigation, freshness, and error states. */
+.day-nav {
+  margin-bottom: var(--tb-space-4);
+}
+
+.day-nav__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.day-nav__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.day-nav__input,
+.range-nav__input {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.stale-banner,
+.config-changes-banner,
+.audit-unreviewed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 var(--tb-space-4);
+  padding: var(--tb-space-3);
+  background: var(--tb-mustard-wash);
+  border: var(--tb-keyline) solid var(--tb-mustard);
+}
+
+.stale-banner__text {
+  flex: 1 1 auto;
+}
+
+.stale-banner__sync,
+.empty-store__sync {
+  display: inline-block;
+  padding: var(--tb-space-2) var(--tb-space-4);
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  color: var(--tb-paper);
+  background: var(--tb-ink);
+  border: 0;
+  cursor: pointer;
+}
+
+.stale-banner__sync:disabled,
+.empty-store__sync:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.last-sync {
+  margin: 0 0 var(--tb-space-5);
+  color: var(--muted);
+  font-size: var(--tb-size-small);
+}
+
+.empty-store {
+  padding: var(--tb-space-5);
+  background: var(--surface-alt);
+  border: var(--tb-keyline) dashed var(--rule);
+  text-align: center;
+}
+
+.empty-store h2 {
+  border: 0;
+  margin-top: 0;
+}
+
+.empty-store__message {
+  color: var(--muted);
+  margin: 0 0 var(--tb-space-4);
+}
+
+.empty-store__sync {
+  font-size: 1.05rem;
+  padding: 0.6rem 1.25rem;
+}
+
+.empty-note--day {
+  color: var(--muted);
+}
+
+/* Login (legacy plain form; the full-midnight redesign is slice #44). */
+.login {
+  max-width: 100%;
+  margin: 0 auto;
+  padding: var(--tb-space-5) var(--tb-space-4);
+  background: var(--tb-paper);
+}
+
+.login h1 {
+  font-size: var(--tb-size-h1);
+  margin: 0 0 var(--tb-space-4);
+}
+
+.login__error {
+  background: var(--flag-red);
+  color: var(--tb-white);
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 var(--tb-space-4);
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-4);
+}
+
+.login__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.login__field span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.login__field input,
+.login__field select {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.login__field input:focus,
+.login__field select:focus {
+  outline: var(--tb-keyline) solid var(--tb-tango);
+  outline-offset: 0;
+}
+
+.login__form button {
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  padding: 0.6rem;
+  border: 0;
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  cursor: pointer;
+}
+
+/* Coverage tables (SKU view + item coverage). */
+.coverage-table,
+.audit-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.coverage-table table,
+.audit-table table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.coverage-table th,
+.coverage-table td {
+  text-align: left;
+  padding: var(--tb-space-2);
+  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.coverage-table th {
+  color: var(--muted);
+  font-weight: var(--tb-weight-bold);
+  font-size: 0.8rem;
+}
+
+.coverage-table td.sku-row__name,
+.coverage-table td.item-row__name {
+  white-space: normal;
+}
+
+.sku-row__id,
+.item-row__id {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.health-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+
+.health-dot--green {
+  background: var(--tb-health-green);
+}
+
+.health-dot--yellow {
+  background: var(--tb-health-yellow);
+}
+
+.health-dot--red {
+  background: var(--tb-health-red);
+}
+
+.sku-row--green,
+.item-row--green {
+  border-left: var(--tb-keyline) solid var(--flag-green);
+}
+
+.sku-row--yellow,
+.item-row--yellow {
+  border-left: var(--tb-keyline) solid var(--flag-yellow);
+}
+
+.sku-row--red,
+.item-row--red,
+.item-row--unmapped {
+  border-left: var(--tb-keyline) solid var(--flag-red);
+}
+
+.item-row__unmapped-label {
+  color: var(--flag-red);
+  font-weight: var(--tb-weight-bold);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+.coverage-filter {
+  margin: 0 0 var(--tb-space-4);
+  padding: 0.6rem 0.75rem;
+  background: var(--surface-alt);
+  color: var(--muted);
+}
+
+/* Cost editor + bulk upload forms. */
+.cost-form form,
+.upload-form form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+  max-width: 420px;
+}
+
+.cost-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.cost-form input[type="number"],
+.cost-form input[type="text"],
+.upload-form input[type="file"] {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.cost-form label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cost-form button,
+.upload-form button,
+.upload-confirm button {
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  padding: 0.6rem;
+  border: 0;
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  cursor: pointer;
+}
+
+.cost-preview {
+  min-height: 1.4rem;
+  font-size: 1rem;
+}
+
+.cost-preview__net,
+.cost-current__net {
+  font-size: 1.1rem;
+}
+
+.cost-form__hint,
+.upload-template p,
+.upload-form p {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.upload-error__message {
+  white-space: normal;
+}
+
+/* Recipe editor. */
+.recipe-rows {
+  list-style: none;
+  margin: 0 0 var(--tb-space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.recipe-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.recipe-row select,
+.recipe-editor input[type="text"],
+.recipe-editor input[type="number"],
+.sku-create input,
+.sku-create select {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.recipe-row input[name="quantity"] {
+  width: 7.5rem;
+}
+
+.recipe-row__up,
+.recipe-row__down,
+.recipe-row__remove {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recipe-row__add {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) dashed var(--rule);
+  background: var(--tb-paper-raised);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recipe-editor form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+  max-width: 560px;
+}
+
+.recipe-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.recipe-editor button[type="submit"] {
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  padding: 0.6rem;
+  border: 0;
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  cursor: pointer;
+}
+
+.sku-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--surface-alt);
+}
+
+.sku-create[hidden] {
+  display: none;
+}
+
+.sku-create__submit {
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  cursor: pointer;
+}
+
+.recipe-preview__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.recipe-preview__total {
+  margin: 0.3rem 0 0;
+  font-size: 1rem;
+}
+
+/* Audit log. */
+.audit-unreviewed__note {
+  flex: 1 1 auto;
+}
+
+.audit-unreviewed__mark {
+  padding: 0.35rem 0.8rem;
+  font: inherit;
+  font-size: var(--tb-size-small);
+  cursor: pointer;
+}
+
+.audit-table th,
+.audit-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--tb-space-2);
+  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+  font-size: var(--tb-size-small);
+}
+
+.audit-table th {
+  color: var(--muted);
+  font-weight: var(--tb-weight-bold);
+  font-size: 0.8rem;
+}
+
+.audit-row__when {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.audit-row__kind {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.audit-changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.audit-changes__field {
+  color: var(--muted);
+}
+
+.audit-changes__old {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.audit-changes__new {
+  font-weight: var(--tb-weight-bold);
+}
+
+.audit-row--unreviewed td {
+  background: var(--tb-mustard-wash);
+}
+
+.audit-row--unreviewed {
+  border-left: var(--tb-keyline) solid var(--tb-mustard);
+}
+
+.audit-row__reason {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.audit-row__actions form {
+  display: inline-block;
+  margin: 0 0.25rem 0.25rem 0;
+}
+
+.audit-row__reason-input {
+  width: 9rem;
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+  font-size: 0.8rem;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.audit-row__revert,
+.audit-row__revert-session {
+  padding: 0.25rem 0.6rem;
+  font: inherit;
+  font-size: 0.8rem;
+  background: var(--tb-paper-raised);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  cursor: pointer;
+}
+
+/* Admin landing (out-of-scope screen; plain but coherent). */
+.admin-links__list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+}
+
+.admin-links__link {
+  font-weight: var(--tb-weight-bold);
+}
+
+/* Mode switcher (report tabs) + range picker. */
+.mode-switcher {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: var(--tb-space-4);
+}
+
+.mode-switcher__link {
+  padding: 0.4rem 0.9rem;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  text-decoration: none;
+  color: inherit;
+}
+
+.mode-switcher__link:hover {
+  background: var(--surface-alt);
+}
+
+.mode-switcher__link--active {
+  background: var(--tb-tango);
+  color: var(--tb-ink);
+  font-weight: var(--tb-weight-bold);
+  border-color: var(--tb-tango);
+  pointer-events: none;
+}
+
+.mode-switcher__admin {
+  margin-left: auto;
+  padding: 0.4rem 0.9rem;
+  border: var(--tb-keyline-thin) dashed var(--rule);
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.mode-switcher__admin:hover {
+  background: var(--surface-alt);
+}
+
+.range-nav {
+  margin-bottom: var(--tb-space-4);
+}
+
+.range-nav__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.range-nav__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.range-nav__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.range-nav__apply {
+  font: inherit;
+  padding: var(--tb-space-2) var(--tb-space-4);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+  cursor: pointer;
+}
+
+.range-nav__apply:hover {
+  background: var(--surface-alt);
+}
+
+.goal__basis-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Fixed costs admin. */
+.fixed-cost-form form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+  max-width: 420px;
+}
+
+.fixed-cost-form__label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.fixed-cost-form__label span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.fixed-cost-form input,
+.fixed-cost-form select {
+  font: inherit;
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+}
+
+.fixed-cost-form__save {
+  font: inherit;
+  padding: var(--tb-space-2) var(--tb-space-4);
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.fixed-cost-form__save:hover {
+  background: var(--surface-alt);
+}
+
+.fixed-cost-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.fixed-cost-list th,
+.fixed-cost-list td {
+  text-align: left;
+  padding: var(--tb-space-2) var(--tb-space-3);
+  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+}
+
+.fixed-cost-list__end,
+.fixed-cost-list__delete {
+  font: inherit;
+  font-size: var(--tb-size-small);
+  padding: 0.25rem 0.6rem;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  background: var(--tb-paper-raised);
+  cursor: pointer;
+}
+
+.fixed-cost-list__delete:hover {
+  background: var(--tb-mustard-wash);
+}
+
+.fixed-cost-list__end:hover {
+  background: var(--surface-alt);
+}
+
+.fixed-costs-block__lines {
+  list-style: none;
+  padding: 0;
+}
+
+.fixed-costs-block__line {
+  padding: 0.25rem 0;
+}
+
+.fixed-costs-block__apportioned,
+.fixed-costs-block__estimate-note,
+.fixed-costs-block__entity-note,
+.fixed-costs-block__empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.headline__net-profit {
+  font-weight: var(--tb-weight-bold);
+  color: var(--tb-teal);
+}
+
+/* Drill-down: breadcrumb + day-by-day tables. */
+.breadcrumb__list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  list-style: none;
+  margin: 0 0 var(--tb-space-3);
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.breadcrumb__item + .breadcrumb__item::before {
+  content: "\203A";
+  margin: 0 0.4rem;
+  color: var(--muted);
+}
+
+.breadcrumb__current {
+  color: var(--muted);
+}
+
+.period-days__table,
+.item-days__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.period-days__table th,
+.period-days__table td,
+.item-days__table th,
+.item-days__table td {
+  text-align: left;
+  padding: 0.4rem 0.25rem;
+  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+
+.period-days__table th,
+.item-days__table th {
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+  font-weight: var(--tb-weight-bold);
+}
+
+.item-performance__below-target {
+  color: var(--flag-red);
+}
+
+.item-performance__on-target {
+  color: var(--flag-green);
+}
+
+.edit-recipe__link {
+  font-weight: var(--tb-weight-bold);
+}
+
+/* Trends. */
+.trend-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: var(--tb-space-3);
+}
+
+.trend-picker__link {
+  padding: 0.25rem 0.7rem;
+  border: var(--tb-keyline-thin) solid var(--rule);
+  text-decoration: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.trend-picker__link:hover {
+  background: var(--surface-alt);
+}
+
+.trend-picker__link--active {
+  background: var(--tb-tango);
+  color: var(--tb-ink);
+  font-weight: var(--tb-weight-bold);
+  border-color: var(--tb-tango);
+  pointer-events: none;
+}
+
+.trend-sparkline {
+  display: block;
+  width: 100%;
+  height: 120px;
+  margin-bottom: 0.5rem;
+  stroke: var(--tb-ink);
+  stroke-width: 2;
+  background: var(--surface-alt);
+}
+
+.trend-bars {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.trend-bar {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  text-align: center;
+}
+
+a.trend-bar:hover .trend-bar__fill {
+  background: var(--tb-tango);
+}
+
+.trend-bar__fill {
+  display: block;
+  height: calc(var(--bar-height, 0%) * 0.6 + 3px);
+  background: var(--muted);
+}
+
+.trend-bar__value {
+  order: -1;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-bar__label {
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend-bars--weekday {
+  gap: 0.5rem;
+}
+
+.trend-chart__note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Respect reduced-motion / no animations (user story 45). */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* --- 5. Progressive enhancement for wider viewports ----------------------- */
+@media (min-width: 700px) {
+  .tb-main {
+    max-width: var(--tb-content-max);
+  }
+
+  .review {
+    max-width: 720px;
+    padding: var(--tb-space-6);
+  }
+
+  .review h1 {
+    font-size: 1.9rem;
+  }
+
+  .rankings__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .login {
+    max-width: 420px;
+    padding: 2.5rem var(--tb-space-6);
+  }
+
+  /* Wide tables get more room than the reading column. */
+  .tb-main--wide {
+    max-width: var(--tb-content-max-wide);
+  }
+
+  .review.coverage,
+  .review.audit {
+    max-width: 960px;
+  }
+}

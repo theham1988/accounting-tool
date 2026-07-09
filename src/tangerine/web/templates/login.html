@@ -1,13 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="login">
+{% extends "_base.html" %}
+{% set chrome = "bare" %}
+{% block title %}Sign in — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="login">
     <h1>Sign in</h1>
 
     {% if error %}
@@ -33,6 +28,5 @@
       <button type="submit">Sign in</button>
     </form>
     <!--/section:login-form-->
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

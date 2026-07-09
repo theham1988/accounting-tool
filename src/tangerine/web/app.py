@@ -300,6 +300,18 @@ def create_app(
     app = FastAPI(title="Tangerine Phuket — 9am Review", lifespan=lifespan)
     templates = _build_templates()
 
+    # Bottom-nav destinations (Wave 3 foundation chrome, ADR-0006). Registered
+    # as a Jinja global so the shared ``_bottom_nav.html`` partial links each
+    # cell without any route threading them through. REPORTS is anchored on
+    # the app's "today" so it lands on the current calendar month; TODAY, STOCK
+    # and LOG are static entry points.
+    templates.env.globals["nav_urls"] = {
+        "today": "/",
+        "reports": f"/review?mode=month&month={today_date.strftime('%Y-%m')}",
+        "stock": "/skus",
+        "log": "/audit",
+    }
+
     # Mount the packaged static directory so the CSS (and any future HTMX JS)
     # is served at a stable URL. Resolves the directory relative to this module
     # so it works regardless of how the package is installed.

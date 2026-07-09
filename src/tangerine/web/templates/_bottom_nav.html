@@ -1,0 +1,25 @@
+{#
+  Tangerine Books — sticky four-cell bottom nav (shared chrome, ADR-0006).
+
+  TODAY · REPORTS · STOCK · LOG — the app's primary navigation. The current
+  cell is marked active from the `nav_active` a screen sets. Each cell is an
+  ordinary link to its destination; the REPORTS target is anchored on the
+  app's "today" (registered as the `nav_urls` Jinja global in create_app) so
+  it lands on the current month without a route needing to pass it.
+
+  Only rendered on `main` chrome; detail screens drop it for the back arrow.
+#}
+{% set _active = nav_active | default("") %}
+{% set _urls = nav_urls | default({"today": "/", "reports": "/review?mode=trends", "stock": "/skus", "log": "/audit"}) %}
+<!--section:bottom-nav-->
+<nav class="tb-bottomnav" aria-label="Primary">
+  <a class="tb-bottomnav__cell{% if _active == 'today' %} tb-bottomnav__cell--active{% endif %}"
+     href="{{ _urls.today }}"{% if _active == 'today' %} aria-current="page"{% endif %}>Today</a>
+  <a class="tb-bottomnav__cell{% if _active == 'reports' %} tb-bottomnav__cell--active{% endif %}"
+     href="{{ _urls.reports }}"{% if _active == 'reports' %} aria-current="page"{% endif %}>Reports</a>
+  <a class="tb-bottomnav__cell{% if _active == 'stock' %} tb-bottomnav__cell--active{% endif %}"
+     href="{{ _urls.stock }}"{% if _active == 'stock' %} aria-current="page"{% endif %}>Stock</a>
+  <a class="tb-bottomnav__cell{% if _active == 'log' %} tb-bottomnav__cell--active{% endif %}"
+     href="{{ _urls.log }}"{% if _active == 'log' %} aria-current="page"{% endif %}>Log</a>
+</nav>
+<!--/section:bottom-nav-->

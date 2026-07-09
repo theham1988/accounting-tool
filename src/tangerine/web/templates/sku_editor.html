@@ -1,22 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ sku.name }} — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-  <!-- HTMX powers the live recipe-cost and derived-price previews plus the
-       inline SKU create. Same tamper-checked CDN asset the daily review
-       loads (ADR-0002: FastAPI + Jinja2 + HTMX). -->
-  <script
-    src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"
-    integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
-    crossorigin="anonymous"
-    defer
-  ></script>
-</head>
-<body>
-  <main class="review cost-editor">
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/skus" %}
+{% block title %}{{ sku.name }} — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review cost-editor">
     <h1>{{ sku.name }}</h1>
     <p class="day">
       <span class="sku-row__id">{{ sku.sku_id }}</span>
@@ -197,6 +184,5 @@
       </form>
     </section>
     {% endif %}
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

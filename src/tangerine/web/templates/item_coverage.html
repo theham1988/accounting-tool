@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Item coverage — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review coverage">
+{% extends "_base.html" %}
+{% set nav_active = "stock" %}
+{% set wide = true %}
+{% block title %}Item coverage — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review coverage">
     <h1>Item coverage</h1>
     <p class="day">
       Every Loyverse item: mapping status and its SKU's chain health.
@@ -66,6 +62,5 @@
       </table>
     </section>
     {% endif %}
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

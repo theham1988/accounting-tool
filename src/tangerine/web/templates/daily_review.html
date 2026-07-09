@@ -1,34 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Daily 9am review — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-  <!-- HTMX powers the day-navigation date input and the Sync-now button.
-       Loaded from a CDN with a Subresource-Integrity hash so the asset is
-       tamper-checked (ADR-0002: FastAPI + Jinja2 + HTMX). -->
-  <script
-    src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"
-    integrity="sha384-H5SrcfygHmAuTDZphMHqBJLc3FhssKjG7w/CeCpFReSfwBWDTKpkzPP8c+cLsK+V"
-    crossorigin="anonymous"
-    defer
-  ></script>
-</head>
-<body>
-  <main class="review">
+{% extends "_base.html" %}
+{% set nav_active = "today" %}
+{% block title %}Daily 9am review — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review">
     <h1>Daily 9am review</h1>
-
-    {% if signed_in_name %}
-    <!--section:signed-in-as-->
-    <p class="signed-in-as">
-      Signed in as <strong>{{ signed_in_name }}</strong>
-      — <form class="logout-form" method="post" action="/logout" style="display:inline">
-          <button type="submit" class="logout-button">Sign out</button>
-        </form>
-    </p>
-    <!--/section:signed-in-as-->
-    {% endif %}
 
     {% if unreviewed_count %}
     <!--section:config-changes-->
@@ -280,6 +255,5 @@
       <!--/section:goal-->
     </section>
     </div><!-- /#review-body -->
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

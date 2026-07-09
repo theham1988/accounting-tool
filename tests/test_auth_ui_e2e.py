@@ -570,13 +570,13 @@ def test_review_page_shows_signed_in_assignee(tmp_path: Path) -> None:
     response = client.get("/")
 
     assert response.status_code == 200
-    # A "signed in as" row carrying the assignee's name (not their id — the
-    # partner-visible string is the human name from the YAML).
-    signed = _section(response.text, "signed-in-as")
-    assert "Noi" in signed
+    # The app header carries the signed-in partner's name (not their id —
+    # the partner-visible string is the human name from the YAML).
+    header = _section(response.text, "app-header")
+    assert "Noi" in header
     # The OTHER partner's name does not appear in this block — guards
     # against the template hard-coding Daniel.
-    assert "Daniel" not in signed
+    assert "Daniel" not in header
 
 
 def test_review_page_shows_daniel_when_signed_in_as_daniel(
@@ -596,8 +596,8 @@ def test_review_page_shows_daniel_when_signed_in_as_daniel(
     )
 
     response = client.get("/")
-    signed = _section(response.text, "signed-in-as")
-    assert "Daniel" in signed
+    header = _section(response.text, "app-header")
+    assert "Daniel" in header
 
 
 # ---------------------------------------------------------------------------
@@ -734,20 +734,27 @@ def test_create_app_raises_when_signing_secret_empty(
 def test_static_assets_are_reachable_without_authentication(
     tmp_path: Path,
 ) -> None:
-    """The CSS file under ``/static/`` loads without a session cookie.
+    """Brand stylesheets under ``/static/`` load without a session cookie.
 
-    The login page links the stylesheet; if the auth gate intercepted
-    ``/static/...`` requests, the login page itself would render unstyled
-    (or, worse, the browser would follow the redirect to ``/login`` for
-    every asset, looping). Static assets are public by design.
+    The base layout links the vendored tokens, self-hosted fonts, and the
+    component stylesheet; if the auth gate intercepted ``/static/...``
+    requests, the login page itself would render unstyled (or, worse, the
+    browser would follow the redirect to ``/login`` for every asset,
+    looping). Static assets are public by design.
     """
     app = _build_app(tmp_path)
     client = TestClient(app)
 
-    response = client.get("/static/review.css", follow_redirects=False)
-
-    assert response.status_code == 200
-    assert response.text.strip(), "CSS file is empty"
+    for path in (
+        "/static/app.css",
+        "/static/fonts.css",
+        "/static/tokens/colors.css",
+        "/static/fonts/space-mono-400.woff2",
+    ):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 200, path
+        if path.endswith(".css"):
+            assert response.text.strip(), f"{path} is empty"
 
 
 # ---------------------------------------------------------------------------

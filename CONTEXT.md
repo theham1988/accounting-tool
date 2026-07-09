@@ -17,6 +17,24 @@ assignment (slice 12) and the `cashier_id`/`assignee_id` audit trail.
 There is no on-site manager; the tool does the
 segregation-of-duties work a manager would do.
 
+## Brand display names
+
+The UI redesign (Wave 3) dresses the tool in the venue's own brand
+identity. These are **display labels only** — they never rename a domain
+concept, a code identifier, a DB column, or an engine term:
+
+- **Books** ("Tangerine Books") — the product's brand name in the app
+  header. The domain/code term stays the neutral "accounting tool" / the
+  daily review; "Books" is chrome.
+- **Taps** — the customer-facing label for the **bar** segment (shown as
+  "TAPS · NIGHT" beside "CAFE · DAY"). `bar` (`Segment.BAR`, the `bar`
+  DB/engine value, "bar 5pm–10pm" above) remains canonical everywhere
+  except the rendered page. `bar ≡ Taps`; do not "fix" the mismatch by
+  renaming the enum.
+
+_Avoid_: treating "Taps" as a distinct segment from "bar", or "Books" as
+a domain entity.
+
 ## Wave 1 sync surface
 
 The set of Loyverse data the Wave 1 nightly sync pulls: **SALE/REFUND

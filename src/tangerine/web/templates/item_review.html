@@ -1,13 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ perf.name }} — item performance — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review">
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}{{ perf.name }} — item performance — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review">
     <h1>{{ perf.name }}</h1>
 
     {% include "_breadcrumb.html" %}
@@ -83,6 +78,5 @@
     </p>
     <!--/section:edit-recipe-->
     </div><!-- /#review-body -->
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

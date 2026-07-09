@@ -49,7 +49,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 tangerine = ["py.typed"]
 "tangerine.storage.migrations" = ["*.sql"]
-"tangerine.web" = ["templates/*.html", "static/*"]
+"tangerine.web" = [
+    "templates/*.html",
+    "static/*",
+    "static/tokens/*",
+    "static/fonts/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

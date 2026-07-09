@@ -1,0 +1,49 @@
+{#
+  Tangerine Books — sticky app header (shared chrome, ADR-0006).
+
+  Carries the brand wordmark and, on the everyday (main) screens, the
+  signed-in partner. On the Today screen it also shows an OUT logout. On a
+  detail screen it swaps the partner block for a back arrow (and the base
+  layout drops the bottom nav).
+
+  "Books" is display chrome only — the domain/code term stays the neutral
+  "accounting tool" (CONTEXT.md → Brand display names).
+
+  The signed-in partner's name is resolved here from the request context
+  (the auth middleware stamps request.state.assignee_id; the app holds the
+  assignee list) so no route needs to thread it through.
+#}
+{% set _chrome = chrome | default("main") %}
+{% set _partner = namespace(name=none) %}
+{% if request %}
+  {% for _a in (request.app.state.assignees | default([])) %}
+    {% if _a.assignee_id == request.state.assignee_id %}
+      {% set _partner.name = _a.name %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+<!--section:app-header-->
+<header class="tb-header">
+  {% if _chrome == "detail" %}
+  <a class="tb-header__back" href="{{ back_href | default('/') }}"
+     onclick="if (window.history.length > 1) { window.history.back(); return false; }">
+    <span aria-hidden="true">&larr;</span>
+    <span class="tb-header__back-label">Back</span>
+  </a>
+  {% endif %}
+
+  <a class="tb-header__brand" href="/">
+    <span class="tb-header__wordmark">Tangerine Books</span>
+  </a>
+
+  {% if _partner.name and _chrome != "detail" %}
+  <span class="tb-header__partner">{{ _partner.name }}</span>
+  {% endif %}
+
+  {% if nav_active | default("") == "today" %}
+  <form method="post" action="/logout" class="tb-header__logout-form">
+    <button type="submit" class="tb-header__logout">Out</button>
+  </form>
+  {% endif %}
+</header>
+<!--/section:app-header-->

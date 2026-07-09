@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Upload applied — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review upload-applied">
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/skus" %}
+{% block title %}Upload applied — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review upload-applied">
     <h1>Changes applied</h1>
     <p class="upload-applied__summary">
       Applied <strong>{{ mapping_count }}</strong> mapping change(s) and
@@ -19,6 +15,5 @@
       <a href="/items">Item coverage</a> ·
       <a href="/upload">Upload another file</a>
     </p>
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

@@ -1,13 +1,8 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trends — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review">
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Trends — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review">
     <h1>Trends</h1>
 
     {% include "_mode_switcher.html" %}
@@ -51,6 +46,5 @@
     </section>
 
     </div><!-- /#review-body -->
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sold as-is — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review cost-editor">
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/items?item=" ~ item_id %}
+{% block title %}Sold as-is — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review cost-editor">
     <h1>Sold as-is: {{ item_name or item_id }}</h1>
     <p class="day">
       One stroke creates the purchasable SKU (receipt-priced), its serving
@@ -74,6 +70,5 @@
         <button type="submit">Create &amp; map</button>
       </form>
     </section>
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}

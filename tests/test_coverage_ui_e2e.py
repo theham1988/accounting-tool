@@ -200,8 +200,10 @@ mappings:
 # --- AC: mobile-first, consistent with the existing review page CSS --------
 
 
-def test_skus_page_has_viewport_meta_and_linked_review_css(tmp_path: Path) -> None:
-    """The SKU view reuses the review page's mobile-first stylesheet."""
+def test_skus_page_has_viewport_meta_and_linked_brand_stylesheets(
+    tmp_path: Path,
+) -> None:
+    """The SKU view extends the base layout and links the brand stylesheets."""
     app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
     client = _authed_client(app)
 
@@ -210,7 +212,9 @@ def test_skus_page_has_viewport_meta_and_linked_review_css(tmp_path: Path) -> No
     assert response.status_code == 200
     html = response.text
     assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in html
-    assert '/static/review.css' in html
+    assert '/static/tokens/colors.css' in html
+    assert '/static/app.css' in html
+    assert '/static/review.css' not in html
 
 
 # --- AC: `GET /items` is gated behind the existing auth middleware ----------
@@ -291,8 +295,10 @@ def _menu_item(item_id: str, name: str, price: str, segment: Segment = Segment.C
     return MenuItem(item_id=item_id, name=name, sell_price=D(price), segment=segment)
 
 
-def test_items_page_has_viewport_meta_and_linked_review_css(tmp_path: Path) -> None:
-    """The item coverage view reuses the review page's mobile-first stylesheet."""
+def test_items_page_has_viewport_meta_and_linked_brand_stylesheets(
+    tmp_path: Path,
+) -> None:
+    """The item coverage view extends the base layout and links brand CSS."""
     app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
     client = _authed_client(app)
 
@@ -301,4 +307,6 @@ def test_items_page_has_viewport_meta_and_linked_review_css(tmp_path: Path) -> N
     assert response.status_code == 200
     html = response.text
     assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in html
-    assert '/static/review.css' in html
+    assert '/static/tokens/colors.css' in html
+    assert '/static/app.css' in html
+    assert '/static/review.css' not in html

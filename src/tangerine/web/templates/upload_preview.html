@@ -1,13 +1,9 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Upload preview — Tangerine Phuket</title>
-  <link rel="stylesheet" href="/static/review.css">
-</head>
-<body>
-  <main class="review upload-preview">
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/upload" %}
+{% block title %}Upload preview — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review upload-preview">
     <h1>Upload preview</h1>
     <p class="day">
       Nothing has been applied yet. <a href="/upload">&larr; Start over</a>
@@ -93,6 +89,5 @@
       </form>
     </section>
     {% endif %}
-  </main>
-</body>
-</html>
+  </div>
+{% endblock %}
