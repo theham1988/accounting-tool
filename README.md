@@ -129,6 +129,66 @@ The engine is unchanged — Wave 1 builds the spine every later wave sits on. Se
   full runbook in [`DEPLOY.md`](DEPLOY.md). See
   [`docs/issues/wave-1-slice-6.md`](docs/issues/wave-1-slice-6.md).
 
+### Wave 1.5 — The Config Authoring Surface — complete
+
+The in-browser editor that lets a non-coding partner see which Loyverse items
+are mapped and which SKUs are priced, and fix the gaps without touching YAML
+or git. Config moves out of the seed files into SQLite (the YAML becomes
+seed-only), with an audit-and-revert safety net replacing the old code-review
+gate. See [`docs/PRD-WAVE-1.5.md`](docs/PRD-WAVE-1.5.md) and
+[`docs/adr/0003-config-authoring-surface-and-source-of-truth.md`](docs/adr/0003-config-authoring-surface-and-source-of-truth.md).
+
+- **Migration + SQLite config tables** — `skus`, `recipes`,
+  `recipe_ingredients`, `costs`, `mappings`, `audit_log`; the YAML loader
+  becomes a first-run seeder; the engine reads config from SQLite.
+- **SKU view + item coverage view** — mapping health (green/yellow/red),
+  recipe completeness, dangling-SKU detection, and a gap report sorted so
+  unmapped items bubble to the top.
+- **Cost editor + spreadsheet upload** — pack price + quantity +
+  `vat_inclusive` → derived net per-unit cost; bulk CSV/XLSX upload with a
+  pre-filled template and per-row error reporting.
+- **Recipe editor** — `(ingredient, quantity)` rows with an inline
+  "create new ingredient" sub-form, unit-shorthand conversion (`1 tbsp` →
+  15 ml), and a live per-row + total cost preview.
+- **Audit log + revert + daily-review diff link** — every edit records
+  who/when/old/new, with per-change and per-session revert and an "N changes
+  since last review" link on the 9am view.
+- **Recipe-model refinements (issues #34–#38)** — unified decimal yield,
+  SKU roles (purchasable / produced / prep), fully derived costing
+  (recurse into preps, no leaf-price-wins;
+  [`docs/adr/0005-derived-costing.md`](docs/adr/0005-derived-costing.md)),
+  and sold-as-is quick-create. See the "Recipes and per-item cost" and
+  "Sold-as-is quick-create" sections below.
+
+### Wave 2 — The Reporting Surface — complete
+
+The period, monthly, and trend views that turn one day's margin into a
+trustworthy picture of a week, a month, and a trend — on data the tool
+already holds, with no new capture machinery. The monthly/period view runs
+on **recipe-cost COGS** (the daily review's math, aggregated); accrual COGS,
+receipts/OCR, keg/cafe inventory, cash drawer, and anomaly surfaces stay
+built and tested but dormant (ADR-0004). See
+[`docs/PRD-WAVE-2.md`](docs/PRD-WAVE-2.md) and
+[`docs/adr/0004-wave-2-recipe-cost-reporting-no-ocr.md`](docs/adr/0004-wave-2-recipe-cost-reporting-no-ocr.md).
+
+- **Price-as-of-date lookup** — reconstructs a SKU's net price on any past
+  date from the `audit_log`, so the daily, period, and monthly views agree
+  by construction and editing a cost never re-states an old day's margin.
+- **Period engine + Period/Month modes** — `build_period_review` costs every
+  sale at its day's price, splits revenue/COGS by segment, and compares net
+  profit to 10K THB/day × days in range; one report page switches between
+  Day, Period, Month, and Trends via a single mode control.
+- **Fixed costs + net profit** — recurring (defined once, auto-applies each
+  month) and one-off entity-level costs, day-apportioned for sub-month
+  periods with an explicit "estimated" label; edits share the audit-log
+  revert.
+- **Drill-down + breadcrumb + deep links** — period → day → item navigation,
+  each step its own shareable URL, plus an item-performance view and an
+  "edit recipe" jump into Admin.
+- **Trends mode** — server-rendered SVG sparklines and clickable CSS bars
+  (no client JS), a day-of-week breakdown, and the 10K target tracked over
+  weeks and months.
+
 ## Loyverse sync
 
 Sales and menu state are pulled from the Loyverse API (`https://api.loyverse.com/v1.0`)
@@ -177,27 +237,99 @@ result = apply_decision(checked, ReceiptDecision(decision=ReceiptState.APPROVED)
 ## Recipes and per-item cost
 
 Recipes are defined per **SKU** (a formula: inputs + a yield) and Loyverse
-items map to SKUs via a `SkuMapping`. Each ingredient's current cost is
-looked up from the `ApprovalBook` (supplier-agnostic — the latest approved
-price wins), so a re-pricing after the next receipt approval flows straight
-into margin without the recipe changing. The margin engine produces a
-per-item table (cost/unit, margin, margin %, sell volume, target-margin
-flags). Items with no recipe, or whose recipe references an unpriced SKU,
-are flagged and excluded from the daily totals — their COGS is unknown, so
-their revenue is surfaced separately as `flagged_revenue` rather than booked
-as margin.
+items map to SKUs via a `SkuMapping`. The margin engine produces a per-item
+table (cost/unit, margin, margin %, sell volume, target-margin flags). Items
+with no recipe, or whose recipe references an unpriced SKU, are flagged and
+excluded from the daily totals — their COGS is unknown, so their revenue is
+surfaced separately as `flagged_revenue` rather than booked as margin.
 
-See [`tests/test_recipes_e2e.py`](tests/test_recipes_e2e.py) for the
-contract.
+### SKU roles (issue #35)
+
+Every SKU has a **role** derived from its relations, so the model stays
+honest without a redundant type field:
+
+- **purchasable** — no recipe; its cost is a directly-entered price.
+- **produced** — has a recipe; its cost is *derived* from that recipe.
+- **prep** — a produced SKU whose output is usable as an ingredient in other
+  recipes. This is the one stored fact: a boolean `prep` flag on the recipe.
+  Usage is the declaration (a recipe whose output another recipe references
+  is auto-flagged), so the old `prep-` naming convention no longer matters.
+
+The recipe editor's ingredient picker offers only purchasables and preps —
+never sold-only dishes — and recipe save rejects cycles transitively (a prep
+cannot contain itself directly or through other preps), naming the loop.
+
+### Unified yield (issue #34)
+
+A recipe's yield is a single decimal `yield_qty` denominated in the output
+SKU's own unit, with a `yield_estimated` marker. Cost per output unit is
+`batch cost ÷ yield_qty` at every level. **Estimated** yields recompute from
+the sum of the recipe's weight/volume inputs on each row edit (count-unit
+inputs like leaves or eggs are excluded from the sum); **measured** yields
+are fixed until a partner edits them. Zero or negative yields are rejected,
+and yield edits are audited and revertable.
+
+### Derived costing (issues #36 / #37, ADR-0005)
+
+A produced SKU's cost is **always derived from its recipe, never typed
+directly** — one source of truth per role. `CostResolver` resolves a SKU's
+per-unit cost:
+
+- a **purchasable** takes its price from the `CostBook`;
+- a **produced** SKU is `Σ(ingredient qty × unit_cost) ÷ yield_qty`,
+  **recursing through preps down to purchasables**.
+
+Resolution is memoised per costing pass (a sauce used by eight dishes is
+walked once) and cycle-safe. **No leaf-price-wins**: a stale direct price on
+a produced SKU is ignored, not honoured. **Unknown price propagates
+recursively** — a prep with an unpriced leaf makes every dish using it flag
+`unknown_price`. Because the resolver runs against the as-of-date cost book,
+re-pricing a leaf reprices a prep-containing dish for later days only.
+
+Direct-cost entry is rejected for produced SKUs on both cost-entry seams (the
+web cost form returns `400`; a CSV upload row for a produced SKU is a
+per-row error). Their SKU page shows a read-only derived cost plus a
+per-ingredient breakdown (`cost_breakdown`, preps shown as single priced
+rows) so a partner can trace a dish's cost down to receipts, or see which
+leaf is unpriced. Deleting a recipe flips its SKU back to purchasable and
+restores the cost-entry form (audited, revertable). The offline cost
+spreadsheet (`scripts/build_cost_spreadsheet.py`) imports the same
+`CostResolver`, so the offline and running tools can never disagree.
+
+See [`tests/test_recipes_e2e.py`](tests/test_recipes_e2e.py) and
+[`docs/adr/0005-derived-costing.md`](docs/adr/0005-derived-costing.md) for
+the contract and rationale.
 
 ```python
 from tangerine.cost import CostBook
-from tangerine.margin import compute_item_margins
+from tangerine.margin import CostResolver, compute_item_margins
 from tangerine.recipes import RecipeCatalog
 
+recipes = RecipeCatalog(recipes)
 cost = CostBook.from_book(book)
-margins = compute_item_margins(sales=sales, recipes=RecipeCatalog(recipes), cost=cost, day=day)
+
+# Derived per-unit cost, recursing through preps to purchasables:
+resolver = CostResolver(recipes=recipes, cost=cost)
+sauce_cost = resolver.unit_cost("tomato-sauce")     # None if any leaf is unpriced
+
+margins = compute_item_margins(sales=sales, recipes=recipes, cost=cost, day=day)
 ```
+
+## Sold-as-is quick-create (issue #38)
+
+Directly-sold purchasables (beer, wine, soft drinks) cost through the same
+`item → SKU → recipe` path as every dish — there is no second costing path
+in the engine. From an unmapped Loyverse item's row, one action
+(`GET`/`POST /items/{item_id}/sold-as-is`) creates the purchasable SKU
+(receipt-priced), a one-line serving recipe, the produced sold SKU the recipe
+outputs (auto-named `<purchasable>:served`, inheriting the item's segment so
+the contribution-margin view stays honest), and the item mapping.
+
+No migration and no engine change were needed: the existing recipe schema and
+`CostResolver` already model a serving recipe (one ingredient line, yield 1),
+so a bottle (330 ml) and a draught (473 ml of a 30 l keg) both cost through
+the identical path. The generated recipe is editable afterwards, and the
+purchasable is reusable as an ingredient in other recipes.
 
 ## Keg inventory
 
