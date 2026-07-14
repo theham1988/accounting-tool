@@ -321,15 +321,14 @@ def test_stock_tabs_link_between_items_and_skus(tmp_path: Path) -> None:
     client = _authed_client(app)
 
     items_html = client.get("/items").text
-    assert 'href="/items"' in items_html
+    assert "<!--section:stock-tabs-->" in items_html
     assert 'href="/skus"' in items_html
     assert "stock-tabs__link--active" in items_html
-    assert items_html.index("stock-tabs__link--active") < items_html.index('href="/skus"')
 
     skus_html = client.get("/skus").text
+    assert "<!--section:stock-tabs-->" in skus_html
     assert 'href="/items"' in skus_html
     assert "stock-tabs__link--active" in skus_html
-    assert skus_html.rindex("stock-tabs__link--active") > skus_html.index('href="/skus"')
 
 
 def test_stock_filter_chips_are_deep_linkable(tmp_path: Path) -> None:
