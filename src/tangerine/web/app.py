@@ -519,6 +519,7 @@ def create_app(
         item: str | None = None,
         metric: str = "gross_margin",
         span: str = "weeks",
+        rank: str = "margin",
     ) -> HTMLResponse:
         """The one report page, rendered in a mode (Wave 2 slice 2).
 
@@ -531,8 +532,20 @@ def create_app(
         is the trend view (slice 5): the period engine per weekly/monthly
         bucket, rendered as server-side SVG. Malformed or backwards params
         are client errors (400) rather than misleading zero-filled reports.
+
+        In Day mode ``?rank=margin|volume`` (issue #45) selects which
+        TOP & BOTTOM pair the page shows; the default is ``margin``.
         """
         if mode == "day":
+            # The TOP & BOTTOM toggle's query param (issue #45). The two
+            # values map to the ranking pair the page shows; anything else is
+            # a client error rather than silently falling back to a default
+            # the partner did not ask for.
+            if rank not in ("margin", "volume"):
+                return HTMLResponse(
+                    "Invalid rank (expected margin or volume).",
+                    status_code=400,
+                )
             if day is None:
                 day = (app.state.today - timedelta(days=1)).isoformat()
             try:
@@ -543,7 +556,7 @@ def create_app(
                 return HTMLResponse(
                     "Invalid day (expected YYYY-MM-DD).", status_code=400
                 )
-            return _render_review(request, app, review_date)
+            return _render_review(request, app, review_date, rank=rank)
         if mode == "period":
             if start is None or end is None:
                 return HTMLResponse(
@@ -1883,7 +1896,7 @@ def _render_item_review(
 
 
 def _render_review(
-    request: Request, app: FastAPI, review_date: date
+    request: Request, app: FastAPI, review_date: date, *, rank: str = "margin"
 ) -> HTMLResponse:
     """Build the review for ``review_date`` and render the daily template.
 
@@ -1896,6 +1909,17 @@ def _render_review(
     name on the review pins the AC "the selected role is available to other
     routes" and gives Wave 2 capture flows a working seam in
     ``request.state.assignee_id``.
+
+    ``rank`` is the TOP & BOTTOM toggle's active mode (issue #45): ``margin``
+    shows the top/bottom-by-margin pair, ``volume`` shows top/bottom-by-volume.
+    Both pairs stay in the DOM (their section anchors are sliced across the
+    wider test suite); CSS hides the inactive pair, so no ranking data is lost
+    by the toggle.
+
+    The day navigator's arrows dim at the bounds of the synced range: prev
+    dims once ``review_date`` is at (or before) the earliest day the store has
+    a sale for; next dims once it is at (or after) yesterday (the latest day
+    that can have settled sales — "today" is not yet a reviewable day).
     """
     templates: Jinja2Templates = app.state.templates
     source: StoreSource = app.state.source
@@ -1968,6 +1992,29 @@ def _render_review(
         for e in unreviewed
     )
 
+    # Day-nav bounds (issue #45): the arrows dim at the ends of the synced
+    # range so a partner can feel where the data starts and stops. ``latest``
+    # is the day before "today" — today is not yet a reviewable day (its sales
+    # have not settled), so the next arrow never steps onto it. ``earliest`` is
+    # the first day the store has any sale for; before that there is nothing
+    # to walk back to. An empty store has no bounds, so both arrows dim and
+    # only the date input can move the page.
+    latest_reviewable = app.state.today - timedelta(days=1)
+    sales_dates = [s.timestamp for s in source.sales()]
+    earliest = min(sales_dates) if sales_dates else latest_reviewable
+    prev_day = review_date - timedelta(days=1)
+    next_day = review_date + timedelta(days=1)
+    prev_dimmed = review_date <= earliest
+    next_dimmed = review_date >= latest_reviewable
+
+    # The TOP & BOTTOM toggle's two targets — deep-linkable URLs so the back
+    # button walks the toggle and the choice is shareable. Each carries the
+    # current day so toggling does not also move the page.
+    rank_urls = {
+        "margin": f"/review?mode=day&day={review_date.isoformat()}&rank=margin",
+        "volume": f"/review?mode=day&day={review_date.isoformat()}&rank=volume",
+    }
+
     return templates.TemplateResponse(
         request=request,
         name="daily_review.html",
@@ -1987,6 +2034,12 @@ def _render_review(
             "signed_in_name": signed_in_name,
             "unreviewed_count": len(unreviewed),
             "unreviewed_recent": unreviewed_recent,
+            "prev_day": prev_day,
+            "next_day": next_day,
+            "prev_dimmed": prev_dimmed,
+            "next_dimmed": next_dimmed,
+            "rank_active": rank,
+            "rank_urls": rank_urls,
         },
     )
 
