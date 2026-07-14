@@ -65,6 +65,13 @@ body.tb-body--detail {
 body.tb-body--bare {
   padding-top: 0;
   padding-bottom: 0;
+  background: var(--tb-midnight);
+  color: var(--tb-midnight-ink);
+}
+
+/* Login fills the viewport; don't clamp the bare chrome to the reading column. */
+body.tb-body--bare .tb-main {
+  max-width: none;
 }
 
 a {
@@ -520,65 +527,205 @@ textarea {
   color: var(--muted);
 }
 
-/* Login (legacy plain form; the full-midnight redesign is slice #44). */
+/* Login — full-midnight brand screen (Wave 3 slice #44). */
 .login {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--tb-space-5);
+  box-sizing: border-box;
+  min-height: 100vh;
   max-width: 100%;
   margin: 0 auto;
-  padding: var(--tb-space-5) var(--tb-space-4);
-  background: var(--tb-paper);
+  padding: var(--tb-space-6) var(--tb-space-4);
+  background: var(--tb-midnight);
+  color: var(--tb-midnight-ink);
 }
 
-.login h1 {
+.login__brand {
+  margin: 0;
+  text-align: center;
+}
+
+.login__lockup {
+  margin: 0 0 var(--tb-space-2);
+}
+
+.login__wordmark {
+  font-family: var(--tb-font-display);
   font-size: var(--tb-size-h1);
-  margin: 0 0 var(--tb-space-4);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.02em;
+  line-height: var(--tb-leading-tight);
+  color: var(--tb-midnight-ink);
+}
+
+.login__kicker {
+  margin: 0;
+  font-family: var(--tb-font-accent);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--tb-moon-muted);
 }
 
 .login__error {
-  background: var(--flag-red);
-  color: var(--tb-white);
-  padding: 0.6rem 0.75rem;
-  margin: 0 0 var(--tb-space-4);
+  background: var(--tb-red);
+  color: var(--tb-midnight-ink);
+  padding: var(--tb-space-2) var(--tb-space-3);
+  margin: 0;
+  border: var(--tb-keyline) solid var(--tb-midnight-ink);
+  text-align: center;
 }
 
 .login__form {
+  margin: 0;
+}
+
+.login__panel {
   display: flex;
   flex-direction: column;
   gap: var(--tb-space-4);
+  padding: var(--tb-space-5) var(--tb-space-4);
+  border: var(--tb-keyline) solid var(--tb-midnight-ink);
+  background: var(--tb-midnight);
+}
+
+.login__who {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.login__who-label {
+  padding: 0;
+  margin: 0 0 var(--tb-space-2);
+  float: none;
+  width: 100%;
+  font-family: var(--tb-font-accent);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--tb-moon-muted);
+}
+
+.login__toggle-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--tb-space-2);
+}
+
+.login__toggle {
+  position: relative;
+  cursor: pointer;
+}
+
+.login__toggle input {
+  /* Visually hidden but reachable for assistive tech / focus. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.login__toggle span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px; /* design handoff: 52px partner toggles */
+  padding: var(--tb-space-2);
+  border: var(--tb-keyline) solid var(--tb-midnight-ink);
+  background: var(--tb-midnight);
+  color: var(--tb-midnight-ink);
+  font-size: var(--tb-size-small);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.15em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.login__toggle input:checked + span {
+  background: var(--tb-midnight-ink);
+  color: var(--tb-midnight);
+}
+
+.login__toggle input:focus-visible + span {
+  outline: var(--tb-keyline) solid var(--tb-tango);
+  outline-offset: 2px;
 }
 
 .login__field {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--tb-space-2);
 }
 
-.login__field span {
-  color: var(--muted);
-  font-size: 0.9rem;
+.login__field-label {
+  font-family: var(--tb-font-accent);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--tb-moon-muted);
 }
 
-.login__field input,
-.login__field select {
-  font: inherit;
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--tb-paper-raised);
-}
-
-.login__field input:focus,
-.login__field select:focus {
-  outline: var(--tb-keyline) solid var(--tb-tango);
-  outline-offset: 0;
-}
-
-.login__form button {
+.login__field input {
   font: inherit;
   font-weight: var(--tb-weight-bold);
-  padding: 0.6rem;
-  border: 0;
-  background: var(--tb-ink);
-  color: var(--tb-paper);
+  font-size: var(--tb-size-body);
+  padding: var(--tb-space-3) var(--tb-space-3);
+  border: var(--tb-keyline) solid var(--tb-midnight-ink);
+  background: var(--tb-midnight-deep);
+  color: var(--tb-midnight-ink);
+}
+
+.login__field input::placeholder {
+  color: var(--tb-moon-muted);
+}
+
+.login__field input:focus {
+  outline: none;
+  border-color: var(--tb-tango);
+}
+
+.login__submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-weight: var(--tb-weight-bold);
+  font-size: var(--tb-size-small);
+  letter-spacing: 0.15em;
+  min-height: 52px; /* design handoff / AC: 52px SIGN IN */
+  padding: var(--tb-space-2) var(--tb-space-4);
+  border: var(--tb-keyline) solid var(--tb-tango);
+  background: var(--tb-tango);
+  color: var(--tb-midnight);
   cursor: pointer;
+  text-transform: uppercase;
+}
+
+.login__submit:focus-visible {
+  outline: var(--tb-keyline) solid var(--tb-midnight-ink);
+  outline-offset: 2px;
+}
+
+.login__footer {
+  margin: 0;
+  text-align: center;
+}
+
+.login__footer p {
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  color: var(--tb-moon-muted);
 }
 
 /* Coverage tables (SKU view + item coverage). */
@@ -1303,7 +1450,11 @@ a.trend-bar:hover .trend-bar__fill {
 
   .login {
     max-width: 420px;
-    padding: 2.5rem var(--tb-space-6);
+    padding: var(--tb-space-6);
+  }
+
+  .login__wordmark {
+    font-size: var(--tb-size-hero);
   }
 
   /* Wide tables get more room than the reading column. */

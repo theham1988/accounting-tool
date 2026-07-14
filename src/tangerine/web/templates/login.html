@@ -3,7 +3,12 @@
 {% block title %}Sign in — Tangerine Books{% endblock %}
 {% block content %}
   <div class="login">
-    <h1>Sign in</h1>
+    <header class="login__brand">
+      <p class="login__lockup">
+        <span class="login__wordmark">Tangerine Books</span>
+      </p>
+      <p class="login__kicker">THE BOOKS · PARTNERS ONLY</p>
+    </header>
 
     {% if error %}
       <p class="login__error" role="alert">{{ error }}</p>
@@ -11,22 +16,37 @@
 
     <!--section:login-form-->
     <form class="login__form" method="post" action="/login">
-      <label class="login__field">
-        <span>Passphrase</span>
-        <input type="password" name="passphrase" autocomplete="current-password" required>
-      </label>
+      <div class="login__panel">
+        <fieldset class="login__who">
+          <legend class="login__who-label">WHO'S CHECKING?</legend>
+          <div class="login__toggle-group" role="radiogroup" aria-label="Who's checking?">
+            {% for assignee in assignees %}
+              <label class="login__toggle">
+                <input
+                  type="radio"
+                  name="assignee_id"
+                  value="{{ assignee.assignee_id }}"
+                  {% if loop.first %}checked{% endif %}
+                  required
+                >
+                <span>{{ assignee.name }}</span>
+              </label>
+            {% endfor %}
+          </div>
+        </fieldset>
 
-      <label class="login__field">
-        <span>Who are you?</span>
-        <select name="assignee_id" required>
-          {% for assignee in assignees %}
-            <option value="{{ assignee.assignee_id }}">{{ assignee.name }}</option>
-          {% endfor %}
-        </select>
-      </label>
+        <label class="login__field">
+          <span class="login__field-label">Passphrase</span>
+          <input type="password" name="passphrase" autocomplete="current-password" required>
+        </label>
 
-      <button type="submit">Sign in</button>
+        <button type="submit" class="login__submit">SIGN IN</button>
+      </div>
     </form>
     <!--/section:login-form-->
+
+    <footer class="login__footer">
+      <p>Coffee by day. Taps by night.</p>
+    </footer>
   </div>
 {% endblock %}

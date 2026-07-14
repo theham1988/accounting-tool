@@ -5,9 +5,9 @@ from Slice 2. The genuine external boundary is HTTP (driven through FastAPI's
 ``TestClient``); no internal module is mocked. The signed-cookie / passphrase
 machinery is exercised end-to-end through the routes that use it.
 
-Scope (slice 4 only):
+Scope (slice 4 only; Wave 3 slice #44 updates the login markup/copy):
   - Every route except ``/login`` redirects to ``/login`` when unauthenticated.
-  - ``GET /login`` renders a form with a passphrase field and a role selector
+  - ``GET /login`` renders a form with a passphrase field and a partner toggle
     populated from ``config/assignees.yaml``.
   - Correct passphrase + role sets a signed session cookie and lands on ``/``.
   - Wrong passphrase re-renders login with an error, no hint which field.
@@ -162,23 +162,19 @@ def test_unauthenticated_get_root_redirects_to_login(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC: The login page shows a passphrase field and a role selector from config
+# AC: The login page shows a passphrase field and a partner toggle from config
 # ---------------------------------------------------------------------------
 
 
-def test_get_login_renders_form_with_role_selector_from_config(
+def test_get_login_renders_form_with_partner_toggle_from_config(
     tmp_path: Path,
 ) -> None:
-    """``GET /login`` renders a form with a passphrase field and a role
-    selector populated from ``config/assignees.yaml``.
+    """``GET /login`` renders the midnight login: passphrase + partner toggle.
 
-    The role selector must be data-driven: the page renders one ``<option>``
-    per assignee in the loaded config, valued by ``assignee_id`` and labelled
-    with the partner's name. Adding the future manager is a YAML entry, not a
-    code change (PRD user story 31).
-
-    Asserts on the visible form structure (field names, option values and
-    labels) rather than incidental markup so the test survives CSS changes.
+    The partner picker is data-driven: one radio per assignee in config,
+    valued by ``assignee_id`` and labelled with the partner's name. Wave 3
+    copy (kicker, WHO'S CHECKING?, SIGN IN, footer) is asserted at intent
+    level; CSS classes are not.
     """
     app = _build_app(tmp_path)
     client = TestClient(app)
@@ -186,24 +182,28 @@ def test_get_login_renders_form_with_role_selector_from_config(
     response = client.get("/login")
 
     assert response.status_code == 200
+    assert "THE BOOKS · PARTNERS ONLY" in response.text
+    assert "Coffee by day. Taps by night." in response.text
     form = _section(response.text, "login-form")
-    # Passphrase field is a password input named ``passphrase``.
+    assert "WHO'S CHECKING?" in form
     assert 'type="password"' in form
     assert 'name="passphrase"' in form
-    # Role selector is named ``assignee_id`` and carries one option per
-    # configured assignee.
+    assert 'type="radio"' in form
     assert 'name="assignee_id"' in form
     assert 'value="daniel"' in form
     assert ">Daniel<" in form
     assert 'value="noi"' in form
     assert ">Noi<" in form
+    assert 'method="post"' in form
+    assert 'action="/login"' in form
+    assert "SIGN IN" in form
 
 
-def test_role_selector_reflects_config_changes(tmp_path: Path) -> None:
-    """Adding an assignee to the YAML surfaces them in the selector.
+def test_partner_toggle_reflects_config_changes(tmp_path: Path) -> None:
+    """Adding an assignee to the YAML surfaces them in the partner toggle.
 
     The PRD's future-manager onboarding story (user story 31) rests on this:
-    a config-only change widens the selector. The test seeds a YAML with the
+    a config-only change widens the toggle. The test seeds a YAML with the
     two partners plus a third ("manager") and asserts all three appear.
     """
     three_partners = """
@@ -319,9 +319,8 @@ def test_wrong_passphrase_re_renders_login_with_generic_error(
         # test pins "an error is shown" and "it does not name a field").
         assert "Sign in failed" in resp.text
         # No field-level hint: neither "passphrase" nor "role" / "assignee"
-        # appears in the *error message* itself. The form field labels say
-        # "Passphrase" / "Who are you?" — those are fine; the error message
-        # must not echo them.
+        # appears in the *error message* itself. Form labels (PASSPHRASE /
+        # WHO'S CHECKING?) are fine; the error message must not echo them.
         error_block = _error_block(resp.text)
         assert "passphrase" not in error_block.lower()
         assert "role" not in error_block.lower()

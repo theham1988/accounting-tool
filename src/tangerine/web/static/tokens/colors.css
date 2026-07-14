@@ -32,9 +32,13 @@
   --tb-mustard-wash: #f8eccf;   /* mustard's pale banner wash */
   --tb-red: #b8371f;            /* red — negative CM, below target, "bad" */
 
-  /* Night (Taps / bar) surface */
+  /* Night (Taps / bar) surface — also the full-midnight login ground */
   --tb-midnight: #12233a;       /* midnight — the TAPS · NIGHT segment ground */
-  --tb-midnight-ink: #f4ead2;   /* cream ink on the midnight ground */
+  --tb-midnight-ink: #f4ead2;   /* cream ink / moonlight on the midnight ground */
+  /* Night fills from the design-system handoff (Login / Taps), not in the
+     foundation token set — added so app.css never hard-codes these hexes. */
+  --tb-midnight-deep: #03141f;  /* sunk night fill (passphrase field) */
+  --tb-moon-muted: #9fb6c4;     /* muted caption text on midnight */
 
   /* Health dots (map onto the existing green/yellow/red classification) */
   --tb-health-green: #12796b;
