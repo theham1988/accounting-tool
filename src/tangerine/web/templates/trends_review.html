@@ -2,22 +2,26 @@
 {% set nav_active = "reports" %}
 {% block title %}Trends — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review">
-    <h1>Trends</h1>
+  {# Wave 3 #47 — Trends tab of the Reports screen. MARGIN / REVENUE / COGS
+     chip row (plus the deeper metrics still deep-linkable), a server-
+     rendered SVG line chart with a dashed goal line when in range, clickable
+     bucket bars that drill into Period/Month, and a BY WEEKDAY horizontal
+     bar list. No client JavaScript (ADR-0002 / ADR-0004). #}
 
-    {% include "_mode_switcher.html" %}
+  <div class="review reports reports--trends">
+    {% include "_reports_tabs.html" %}
 
     <!--section:metric-switcher-->
-    <nav class="trend-picker" aria-label="Trend metric">
+    <nav class="trend-picker trend-picker--chips" aria-label="Trend metric">
       {% for link in metric_links %}
-      <a class="trend-picker__link{% if link.active %} trend-picker__link--active{% endif %}"
+      <a class="trend-picker__link{% if link.active %} trend-picker__link--active{% endif %}{% if link.primary %} trend-picker__link--primary{% endif %}"
          href="{{ link.href }}">{{ link.label }}</a>
       {% endfor %}
     </nav>
     <!--/section:metric-switcher-->
 
     <!--section:span-switcher-->
-    <nav class="trend-picker" aria-label="Trend span">
+    <nav class="trend-picker trend-picker--span" aria-label="Trend span">
       {% for link in span_links %}
       <a class="trend-picker__link{% if link.active %} trend-picker__link--active{% endif %}"
          href="{{ link.href }}">{{ link.label }}</a>
@@ -29,7 +33,10 @@
 
     {% for chart in charts %}
     <section class="trend-chart">
-      <h2>{{ chart.title }}</h2>
+      <div class="trend-chart__head">
+        <h2 class="trend-chart__title">{{ chart.title }}</h2>
+        <span class="trend-chart__span">{{ span_label }}</span>
+      </div>
       <!--section:trend-chart-{{ chart.key }}-->
       {{ chart.svg | safe }}
       {{ chart.bars | safe }}
@@ -39,9 +46,25 @@
     {% endfor %}
 
     <section class="trend-chart trend-chart--weekday">
-      <h2>{{ weekday_chart.title }}</h2>
+      <div class="trend-chart__head">
+        <h2 class="trend-chart__title">By weekday</h2>
+        <span class="trend-chart__span">{{ weekday_chart.subtitle }}</span>
+      </div>
       <!--section:weekday-breakdown-->
-      {{ weekday_chart.bars | safe }}
+      <ul class="weekday-bars">
+        {% for row in weekday_chart.rows %}
+        <li class="weekday-bars__row">
+          <span class="weekday-bars__day">{{ row.label }}</span>
+          <span class="weekday-bars__track" aria-hidden="true">
+            <span class="weekday-bars__fill" style="width: {{ row.pct }}%;"></span>
+          </span>
+          <span class="weekday-bars__value">{{ row.display }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {# Keep a trend-bar hook in the markup so the no-JS seam still finds
+         navigational bars from the metric charts above; weekday rows are
+         comparative (not drill-in). #}
       <!--/section:weekday-breakdown-->
     </section>
 

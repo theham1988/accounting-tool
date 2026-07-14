@@ -1,66 +1,147 @@
 {% extends "_base.html" %}
 {% set nav_active = "reports" %}
-{% block title %}{% if mode == 'month' %}Month{% else %}Period{% endif %} review — Tangerine Books{% endblock %}
+{% block title %}{% if mode == 'month' %}Month{% else %}Period{% endif %} — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review">
-    <h1>{% if mode == 'month' %}Month review{% else %}Period review{% endif %}</h1>
+  {# Wave 3 #47 — Period / Month share one Reports headline layout: range
+     navigator (arrows dim at synced bounds), GROSS MARGIN hero with
+     REVENUE / COGS / DAYS + FIXED / NET PROFIT (net in teal) + goal bar,
+     BY SEGMENT cards, a Fixed Costs row-link, and NEEDS A FIX when needed.
+     Sub-month ranges label fixed costs FIXED (EST · APPORTIONED) and net
+     (ESTIMATE); a full calendar month shows exact figures. Engines and
+     routes are unchanged — presentation only. #}
 
+  {% set ns = namespace(goal_pct=0) %}
+  {% if review.goal.target == 0 %}
+    {% set ns.goal_pct = 100 if review.goal.actual > 0 else 0 %}
+  {% else %}
+    {% set ns.goal_pct = (review.goal.actual / review.goal.target * 100) | int %}
+  {% endif %}
+  {% if ns.goal_pct < 0 %}{% set ns.goal_pct = 0 %}{% endif %}
+  {% if ns.goal_pct > 100 %}{% set ns.goal_pct = 100 %}{% endif %}
+
+  <div class="review reports">
     {% include "_breadcrumb.html" %}
-
-    {% include "_mode_switcher.html" %}
+    {% include "_reports_tabs.html" %}
 
     <!--section:range-nav-->
-    <section class="range-nav">
-      {% if mode == 'month' %}
-      <form class="range-nav__form" method="get" action="/review">
-        <input type="hidden" name="mode" value="month">
-        <label class="range-nav__label">
-          <span>Month</span>
-          <input class="range-nav__input" type="month" name="month"
-                 value="{{ review.start.strftime('%Y-%m') }}">
-        </label>
-        <button type="submit" class="range-nav__apply">Show</button>
-      </form>
-      {% else %}
-      <form class="range-nav__form" method="get" action="/review">
-        <input type="hidden" name="mode" value="period">
-        <label class="range-nav__label">
-          <span>From</span>
-          <input class="range-nav__input" type="date" name="start"
-                 value="{{ review.start.isoformat() }}">
-        </label>
-        <label class="range-nav__label">
-          <span>To</span>
-          <input class="range-nav__input" type="date" name="end"
-                 value="{{ review.end.isoformat() }}">
-        </label>
-        <button type="submit" class="range-nav__apply">Show</button>
-      </form>
-      {% endif %}
+    <section class="range-nav range-nav--arrows" aria-label="Report range">
+      <a
+        class="range-nav__arrow range-nav__arrow--prev{% if prev_dimmed %} range-nav__arrow--dimmed{% endif %}"
+        {% if not prev_dimmed %}href="{{ prev_range_url }}"{% else %}aria-disabled="true"{% endif %}
+        title="Previous {% if mode == 'month' %}month{% else %}period{% endif %}"
+      >&larr;</a>
+
+      <div class="range-nav__label-block">
+        <div class="range-nav__kicker">{% if mode == 'month' %}Month{% else %}Period{% endif %}</div>
+        <div class="range-nav__label">{{ range_label }}</div>
+        {% if mode == 'month' %}
+        <form class="range-nav__jump" method="get" action="/review">
+          <input type="hidden" name="mode" value="month">
+          <label class="range-nav__jump-label">
+            <span class="visually-hidden">Jump to month</span>
+            <input class="range-nav__input" type="month" name="month"
+                   value="{{ review.start.strftime('%Y-%m') }}"
+                   aria-label="Jump to month">
+          </label>
+          <button type="submit" class="range-nav__apply">Show</button>
+        </form>
+        {% else %}
+        <form class="range-nav__jump" method="get" action="/review">
+          <input type="hidden" name="mode" value="period">
+          <label class="range-nav__jump-label">
+            <span class="visually-hidden">From</span>
+            <input class="range-nav__input" type="date" name="start"
+                   value="{{ review.start.isoformat() }}"
+                   aria-label="Period start">
+          </label>
+          <label class="range-nav__jump-label">
+            <span class="visually-hidden">To</span>
+            <input class="range-nav__input" type="date" name="end"
+                   value="{{ review.end.isoformat() }}"
+                   aria-label="Period end">
+          </label>
+          <button type="submit" class="range-nav__apply">Show</button>
+        </form>
+        {% endif %}
+      </div>
+
+      <a
+        class="range-nav__arrow range-nav__arrow--next{% if next_dimmed %} range-nav__arrow--dimmed{% endif %}"
+        {% if not next_dimmed %}href="{{ next_range_url }}"{% else %}aria-disabled="true"{% endif %}
+        title="Next {% if mode == 'month' %}month{% else %}period{% endif %}"
+      >&rarr;</a>
     </section>
     <!--/section:range-nav-->
 
     <div id="review-body">
-    <p class="day">For {{ review.start.isoformat() }} to {{ review.end.isoformat() }}
+    <p class="day visually-hidden">For {{ review.start.isoformat() }} to {{ review.end.isoformat() }}
       ({{ review.goal.days_in_range }} day{{ "" if review.goal.days_in_range == 1 else "s" }})</p>
 
-    <section class="headline">
-      <h2>Headline</h2>
-      <dl>
-        <dt>Revenue</dt><dd>{{ review.revenue | money }} THB</dd>
-        <dt>COGS (recipe cost)</dt><dd>{{ review.cogs | money }} THB</dd>
-        <dt>Gross margin</dt><dd>{{ review.gross_margin | money }} THB</dd>
-        <dt>Fixed costs{% if review.fixed_costs.estimated %} (estimated, apportioned){% endif %}</dt>
-        <dd>{{ review.fixed_costs.total | money }} THB</dd>
-        <dt>Net profit{% if review.fixed_costs.estimated %} (estimate){% endif %}</dt>
-        <dd class="headline__net-profit">{{ review.net_profit | money }} THB</dd>
+    <!--section:headline-->
+    <section class="headline headline--card">
+      <p class="headline__hero-label">Gross margin</p>
+      <p class="headline__hero">
+        <span class="headline__hero-value">{{ review.gross_margin | money }}</span>
+        <span class="headline__hero-unit">THB</span>
+      </p>
+      <dl class="headline__row">
+        <div class="headline__stat">
+          <dt>Revenue</dt>
+          <dd>{{ review.revenue | money }} THB</dd>
+        </div>
+        <div class="headline__stat">
+          <dt>COGS</dt>
+          <dd>{{ review.cogs | money }} THB</dd>
+        </div>
+        <div class="headline__stat">
+          <dt>Days</dt>
+          <dd>{{ review.goal.days_in_range }}</dd>
+        </div>
       </dl>
+      <dl class="headline__row headline__row--net">
+        <div class="headline__stat">
+          <dt>{% if review.fixed_costs.estimated %}Fixed (est · apportioned){% else %}Fixed costs{% endif %}</dt>
+          <dd>&minus;{{ review.fixed_costs.total | money }} THB</dd>
+        </div>
+        <div class="headline__stat headline__stat--end">
+          <dt>{% if review.fixed_costs.estimated %}Net profit (estimate){% else %}Net profit{% endif %}</dt>
+          <dd class="headline__net-profit">{{ review.net_profit | money }} THB</dd>
+        </div>
+      </dl>
+
+      <div class="headline__goal">
+        <div class="headline__goal-meta">
+          <span>Vs goal {{ review.goal.target | money }}</span>
+          <span>{% if review.goal.target == 0 %}—{% else %}{{ ((review.goal.actual / review.goal.target) * 100) | int }}%{% endif %}</span>
+        </div>
+        <div class="headline__goal-bar" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ns.goal_pct }}"
+             aria-label="Net profit toward the {{ review.goal.target | money }} THB target">
+          <span class="headline__goal-fill{% if review.goal.met %} headline__goal-fill--met{% endif %}" style="width: {{ ns.goal_pct }}%;"></span>
+        </div>
+        <p class="headline__goal-status{% if review.goal.met %} headline__goal-status--met{% endif %}">
+          {% if review.goal.met %}
+          <strong>Met</strong> — on net profit: gross margin minus fixed costs.{% if review.fixed_costs.estimated %} Sub-month range, so fixed costs are day-apportioned — an estimate; the exact number lives on the Month view.{% endif %}
+          {% else %}
+          <strong>Missing</strong> — on net profit: gross margin minus fixed costs.{% if review.fixed_costs.estimated %} Sub-month range, so fixed costs are day-apportioned — an estimate; the exact number lives on the Month view.{% endif %}
+          {% endif %}
+        </p>
+      </div>
     </section>
+    <!--/section:headline-->
 
     {% include "_segment_cm.html" %}
+    <p class="segment-cm__note">
+      Fixed costs are never split across segments — they come off the whole venue.
+    </p>
+
+    <a class="row-link-card" href="/admin/fixed-costs">
+      <span class="row-link-card__label">Fixed costs</span>
+      <span class="row-link-card__meta">{{ fixed_costs_summary }} &rarr;</span>
+    </a>
 
     <section class="fixed-costs-block">
-      <h2>{% if review.fixed_costs.estimated %}Estimated fixed costs (apportioned){% else %}Fixed costs{% endif %}</h2>
+      <h2 class="visually-hidden">{% if review.fixed_costs.estimated %}Estimated fixed costs (apportioned){% else %}Fixed costs{% endif %}</h2>
       <!--section:fixed-costs-->
       {% if review.fixed_costs.lines %}
       {% if review.fixed_costs.estimated %}
@@ -85,12 +166,12 @@
       </p>
       <p class="fixed-costs-block__entity-note">
         Entity-level — never allocated to a segment.
-        <a href="/admin/fixed-costs">Edit in Admin &rarr;</a>
+        <a href="/admin/fixed-costs">Edit fixed costs &rarr;</a>
       </p>
       {% else %}
       <p class="fixed-costs-block__empty">
         No fixed costs apply to this range.
-        <a href="/admin/fixed-costs">Enter them in Admin &rarr;</a>
+        <a href="/admin/fixed-costs">Enter them in Fixed costs &rarr;</a>
       </p>
       {% endif %}
       <!--/section:fixed-costs-->
@@ -126,8 +207,8 @@
     </section>
 
     {% if review.needs_attention %}
-    <section class="needs-attention">
-      <h2>Needs attention</h2>
+    <section class="needs-attention needs-attention--card">
+      <h2>Needs a fix · {{ review.needs_attention | length }}</h2>
       <!--section:needs-attention-->
       <p class="needs-attention__note">
         These items sold in the period but their cost could not be computed, so
@@ -136,13 +217,16 @@
       <ul class="needs-attention__list">
         {% for row in review.needs_attention %}
         <li>
-          <span class="needs-attention__name">{{ row.name }}</span>
-          —
-          {% if row.unmapped %}<span class="needs-attention__reason">unmapped</span> (no recipe mapping){% endif %}
-          {% if row.unknown_price %}<span class="needs-attention__reason">unknown price</span> (an ingredient has no cost entry){% endif %}
-          — {{ row.units_sold }} unit{{ "" if row.units_sold == 1 else "s" }}
-          — {{ row.revenue | money }} THB
-          — <a class="needs-attention__link" href="/items?item={{ row.item_id }}">Fix in item coverage &rarr;</a>
+          <a class="needs-attention__row" href="/items?item={{ row.item_id }}">
+            <span class="needs-attention__name">{{ row.name }}</span>
+            <span class="needs-attention__detail">
+              {{ row.units_sold }} unit{{ "" if row.units_sold == 1 else "s" }} this period
+            </span>
+            <span class="needs-attention__amount">{{ row.revenue | money }} THB</span>
+            {% if row.unmapped %}<span class="needs-attention__reason">unmapped</span>{% endif %}
+            {% if row.unknown_price %}<span class="needs-attention__reason">unknown price</span>{% endif %}
+            <span class="needs-attention__link" aria-hidden="true">&rarr;</span>
+          </a>
         </li>
         {% endfor %}
       </ul>
@@ -150,7 +234,7 @@
     </section>
     {% endif %}
 
-    <section class="goal">
+    <section class="goal visually-hidden">
       <h2>Goal progress</h2>
       <!--section:goal-->
       <dl class="goal__stats">

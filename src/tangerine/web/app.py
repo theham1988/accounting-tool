@@ -1757,16 +1757,122 @@ def _mode_switcher_urls(anchor: date) -> dict[str, str]:
 
 #: The trend metrics the partner can plot, in display order. Each maps its
 #: query-param value to a human title (issue #32 AC: revenue, COGS, gross
-#: margin, and segment CM week-over-week / month-over-month).
+#: margin, and segment CM week-over-week / month-over-month). Wave 3 #47
+#: shortens the primary chip labels (MARGIN / REVENUE / COGS); the chart
+#: titles below stay the longer partner-readable form.
 _TREND_METRICS: dict[str, str] = {
-    "revenue": "Revenue",
-    "cogs": "COGS (recipe cost)",
     "gross_margin": "Gross margin",
-    "segment_cm": "Segment contribution margin",
-    "goal": "Goal vs 10,000 THB/day",
+    "revenue": "Revenue",
+    "cogs": "COGS",
+    "segment_cm": "Segment CM",
+    "goal": "Goal",
 }
 
+#: Chip labels on the Trends tab (Wave 3 #47). Primary chips match the
+#: design handoff; segment_cm and goal stay deep-linkable secondary chips.
+_TREND_METRIC_CHIPS: dict[str, str] = {
+    "gross_margin": "Margin",
+    "revenue": "Revenue",
+    "cogs": "COGS",
+    "segment_cm": "Segment CM",
+    "goal": "Goal",
+}
+
+_TREND_PRIMARY_METRICS = frozenset({"gross_margin", "revenue", "cogs"})
+
 _TREND_SPANS: dict[str, str] = {"weeks": "Weekly", "months": "Monthly"}
+
+#: 10,000 THB/day goal — used for the dashed reference line on margin
+#: trends. Weekly buckets compare against a full-week target; monthly
+#: against a 30-day nominal month (exact month targets vary; the line is
+#: a guide, not the attainment math which lives on ``metric=goal``).
+_GOAL_PER_DAY = Decimal("10000")
+_GOAL_WEEK = _GOAL_PER_DAY * 7
+_GOAL_MONTH_NOMINAL = _GOAL_PER_DAY * 30
+
+
+def _review_date_bounds(app: FastAPI) -> tuple[date, date]:
+    """Earliest synced sale day and latest reviewable day (yesterday).
+
+    View-layer only — the same bound rule Today (#45) uses for day-nav
+    arrows. An empty store collapses both ends to yesterday so arrows dim.
+    """
+    latest_reviewable = app.state.today - timedelta(days=1)
+    sales_dates = [s.timestamp for s in app.state.source.sales()]
+    earliest = min(sales_dates) if sales_dates else latest_reviewable
+    return earliest, latest_reviewable
+
+
+def _shift_month(day: date, *, months: int) -> date:
+    """First day of the calendar month ``months`` away from ``day``'s month."""
+    year = day.year + (day.month - 1 + months) // 12
+    month = (day.month - 1 + months) % 12 + 1
+    return date(year, month, 1)
+
+
+def _period_range_nav(
+    app: FastAPI, start: date, end: date, *, mode: str
+) -> dict[str, Any]:
+    """Prev/next URLs and dimming for the Period/Month range navigator.
+
+    Period slides the window by its length; Month steps calendar months.
+    Arrows dim at the synced sales bounds (view-layer, not engine).
+    """
+    earliest, latest = _review_date_bounds(app)
+    if mode == "month":
+        prev_month = _shift_month(start, months=-1)
+        next_month = _shift_month(start, months=1)
+        prev_days = calendar.monthrange(prev_month.year, prev_month.month)[1]
+        next_days = calendar.monthrange(next_month.year, next_month.month)[1]
+        prev_end = prev_month.replace(day=prev_days)
+        next_end = next_month.replace(day=next_days)
+        prev_dimmed = prev_end < earliest
+        next_dimmed = next_month > latest
+        return {
+            "prev_dimmed": prev_dimmed,
+            "next_dimmed": next_dimmed,
+            "prev_range_url": (
+                f"/review?mode=month&month={prev_month.strftime('%Y-%m')}"
+            ),
+            "next_range_url": (
+                f"/review?mode=month&month={next_month.strftime('%Y-%m')}"
+            ),
+            "range_label": (
+                f"{start.isoformat()} — {end.isoformat()}"
+            ),
+        }
+
+    length = (end - start).days + 1
+    prev_start = start - timedelta(days=length)
+    prev_end = end - timedelta(days=length)
+    next_start = start + timedelta(days=length)
+    next_end = end + timedelta(days=length)
+    return {
+        "prev_dimmed": start <= earliest,
+        "next_dimmed": end >= latest,
+        "prev_range_url": (
+            f"/review?mode=period&start={prev_start.isoformat()}"
+            f"&end={prev_end.isoformat()}"
+        ),
+        "next_range_url": (
+            f"/review?mode=period&start={next_start.isoformat()}"
+            f"&end={next_end.isoformat()}"
+        ),
+        "range_label": f"{start.isoformat()} — {end.isoformat()}",
+    }
+
+
+def _fixed_costs_summary(review: Any) -> str:
+    """Short meta line for the Fixed Costs row-link card."""
+    lines = review.fixed_costs.lines
+    if not lines:
+        return "None entered"
+    n = len(lines)
+    total = _money(review.fixed_costs.total)
+    unit = "line" if n == 1 else "lines"
+    if review.fixed_costs.estimated:
+        return f"{n} {unit} · {total} THB (est)"
+    return f"{n} {unit} · {total} THB"
 
 
 def _render_trends(
@@ -1811,8 +1917,14 @@ def _render_trends(
     bucket_noun = "month" if span == "months" else "week"
 
     def _chart(
-        key: str, title: str, values: list, *, display: Any = None, note: str = ""
-    ) -> dict[str, str]:  # type: ignore[type-arg]
+        key: str,
+        title: str,
+        values: list[Any],
+        *,
+        display: Any = None,
+        note: str = "",
+        reference_value: Decimal | None = None,
+    ) -> dict[str, str]:
         fmt = display if display is not None else _money
         points = [
             ChartPoint(
@@ -1826,7 +1938,7 @@ def _render_trends(
         return {
             "key": key,
             "title": title,
-            "svg": sparkline_svg(points),
+            "svg": sparkline_svg(points, reference_value=reference_value),
             "bars": bar_row(points),
             "note": note,
         }
@@ -1870,14 +1982,22 @@ def _render_trends(
                     "Compared on gross margin — fixed costs are not yet "
                     "entered, so this is not a net-profit number."
                 ),
+                reference_value=Decimal("100"),
             )
         ]
     else:
+        reference: Decimal | None = None
+        note = ""
+        if metric == "gross_margin":
+            reference = _GOAL_WEEK if span == "weeks" else _GOAL_MONTH_NOMINAL
+            note = "Dashed line = the 10,000 THB/day goal (full bucket)."
         charts = [
             _chart(
                 metric,
                 f"{_TREND_METRICS[metric]} by {bucket_noun}",
                 [getattr(bucket.review, metric) for bucket in report.buckets],
+                note=note,
+                reference_value=reference,
             )
         ]
 
@@ -1890,28 +2010,38 @@ def _render_trends(
         total: Decimal = getattr(agg, weekday_metric)
         return total / agg.day_count if agg.day_count else Decimal("0")
 
-    weekday_points = [
-        ChartPoint(
-            label=agg.label,
-            value=_weekday_average(agg),
-            display=_money(_weekday_average(agg)),
+    weekday_avgs = [_weekday_average(agg) for agg in report.weekdays]
+    weekday_max = max(weekday_avgs) if weekday_avgs else Decimal("0")
+    weekday_rows = []
+    for agg, avg in zip(report.weekdays, weekday_avgs):
+        pct = int(avg / weekday_max * 100) if weekday_max else 0
+        weekday_rows.append(
+            {
+                "label": agg.label,
+                "display": _money(avg),
+                "pct": pct,
+            }
         )
-        for agg in report.weekdays
-    ]
     weekday_chart = {
         "title": (
             f"By day of week (average {_TREND_METRICS[weekday_metric].lower()}"
             " per day across the span)"
         ),
-        "bars": bar_row(weekday_points, css_class="trend-bars trend-bars--weekday"),
+        "subtitle": f"Avg {_TREND_METRICS[weekday_metric].lower()}",
+        "rows": weekday_rows,
     }
 
     def _trends_url(m: str, s: str) -> str:
         return f"/review?mode=trends&metric={m}&span={s}"
 
     metric_links = [
-        {"label": title, "href": _trends_url(m, span), "active": m == metric}
-        for m, title in _TREND_METRICS.items()
+        {
+            "label": _TREND_METRIC_CHIPS[m],
+            "href": _trends_url(m, span),
+            "active": m == metric,
+            "primary": m in _TREND_PRIMARY_METRICS,
+        }
+        for m in _TREND_METRICS
     ]
     span_links = [
         {"label": label, "href": _trends_url(metric, s), "active": s == span}
@@ -1928,6 +2058,7 @@ def _render_trends(
             "weekday_chart": weekday_chart,
             "metric_links": metric_links,
             "span_links": span_links,
+            "span_label": _TREND_SPANS[span],
             "switcher": _mode_switcher_urls(anchor),
         },
     )
@@ -1957,6 +2088,7 @@ def _render_period_review(
     review = build_period_review(
         source=source, start=start, end=end, fixed_costs=cfg.fixed_costs()
     )
+    range_nav = _period_range_nav(app, start, end, mode=mode)
     return templates.TemplateResponse(
         request=request,
         name="period_review.html",
@@ -1969,6 +2101,8 @@ def _render_period_review(
             "segment_margins": review.segment_margins,
             "switcher": _mode_switcher_urls(end),
             "breadcrumb": _period_crumbs(start, end, mode),
+            "fixed_costs_summary": _fixed_costs_summary(review),
+            **range_nav,
         },
     )
 
