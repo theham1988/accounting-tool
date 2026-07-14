@@ -1532,11 +1532,21 @@ def create_app(
         )
 
     @app.get("/upload", response_class=HTMLResponse)
-    def upload_page(request: Request) -> HTMLResponse:
-        """The bulk-upload surface: template download + file-upload form."""
+    def upload_page(
+        request: Request, applied: int | None = None
+    ) -> HTMLResponse:
+        """The bulk-upload surface: three progressive step cards.
+
+        ``applied`` carries the in-place confirmation signal (issue #49): the
+        confirm POST redirects with ``?applied=N`` and the template renders
+        the teal "APPLIED — N changes live" banner (SKU editor's ``?saved=``
+        pattern).
+        """
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
-            request=request, name="upload.html", context={"request": request}
+            request=request,
+            name="upload.html",
+            context={"request": request, "applied": applied},
         )
 
     @app.get("/upload/template")
@@ -1561,25 +1571,28 @@ def create_app(
             },
         )
 
-    @app.post("/upload", response_class=HTMLResponse)
+    @app.post("/upload", response_model=None)
     def upload_submit(
         request: Request,
         file: UploadFile | None = None,
         csv_text: str = Form(""),
         confirm: str | None = Form(None),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | RedirectResponse:
         """Parse an uploaded CSV and preview what will change.
 
-        Two-step, stateless: the first POST carries the file and renders a
-        preview with the CSV embedded in the confirm form; the confirm POST
-        re-submits that text with ``confirm=1`` and the changes are re-derived
-        and applied. Re-parsing on confirm means nothing needs to be held in
-        a server-side session between the two steps.
+        Two-step, stateless: the first POST carries the file and re-renders
+        the progressive upload page with step 3 open (CSV embedded in the
+        confirm form); the confirm POST re-submits that text with
+        ``confirm=1``, re-derives the changes, applies them, and redirects
+        to ``GET /upload?applied=N``. Re-parsing on confirm means nothing
+        needs to be held in a server-side session between the two steps.
         """
         cfg: SqliteConfigStore = app.state.config_store
-        if file is not None:
+        filename: str | None = None
+        if file is not None and file.filename:
             # ``utf-8-sig`` strips the BOM Excel prepends when saving CSV.
             text = file.file.read().decode("utf-8-sig")
+            filename = file.filename
         else:
             text = csv_text
         preview = parse_upload(
@@ -1594,10 +1607,22 @@ def create_app(
         )
         t: Jinja2Templates = app.state.templates
         if confirm is None or preview.errors or not preview.has_changes:
+            # Data rows only (header excluded) — the partner-facing count
+            # beside the filename in step 2.
+            data_lines = [ln for ln in text.splitlines() if ln.strip()]
+            rows_parsed = max(0, len(data_lines) - 1) if data_lines else 0
             return t.TemplateResponse(
                 request=request,
-                name="upload_preview.html",
-                context={"request": request, "preview": preview, "csv_text": text},
+                name="upload.html",
+                context={
+                    "request": request,
+                    "preview": preview,
+                    "csv_text": text,
+                    "filename": filename or "uploaded.csv",
+                    "rows_parsed": rows_parsed,
+                    "error_count": len(preview.errors),
+                    "applied": None,
+                },
             )
 
         actor: str = request.state.assignee_id
@@ -1619,14 +1644,9 @@ def create_app(
                 updated_on=app.state.today,
                 session_id=session_id,
             )
-        return t.TemplateResponse(
-            request=request,
-            name="upload_applied.html",
-            context={
-                "request": request,
-                "mapping_count": len(preview.mapping_changes),
-                "cost_count": len(preview.cost_changes),
-            },
+        applied_count = len(preview.mapping_changes) + len(preview.cost_changes)
+        return RedirectResponse(
+            url=f"/upload?applied={applied_count}", status_code=303
         )
 
     @app.post("/sync", response_class=HTMLResponse)
