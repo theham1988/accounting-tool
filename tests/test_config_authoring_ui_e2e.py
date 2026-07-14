@@ -507,8 +507,8 @@ def test_upload_errors_are_reported_per_row_and_block_apply(tmp_path: Path) -> N
     assert 'name="confirm"' not in html
     # ...and the valid row 3 did not land either.
     items_html = client.get("/items", params={"item": "i-croissant"}).text
-    assert ">croissant<" in items_html or "croissant</a>" in items_html
-    assert "soda</a>" not in items_html
+    assert "croissant" in items_html
+    assert ">soda<" not in items_html
 
 
 def test_upload_with_missing_column_names_the_column(tmp_path: Path) -> None:
