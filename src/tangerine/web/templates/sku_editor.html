@@ -1,15 +1,55 @@
+{#
+  SKU editor — Wave 3 redesign (issue #48).
+
+  A detail screen (back arrow, no bottom nav): the brand header carries the
+  SKU's name, a unit/segment micro-line, and its health dot; the body is the
+  RECIPE card plus, for a produced SKU, the read-only derived breakdown
+  (issue #37), or for a purchasable SKU, a NEW COST card with a current-cost
+  footer. A `?saved=recipe|cost` query param signals a just-landed save and
+  renders the in-place "SAVED — logged to the audit log" confirmation —
+  server-side, no client JS (ADR-0002).
+
+  The structural seams the UI e2e tests pin against are preserved verbatim
+  (id="recipe-rows" <ol>, class="yield-field" <label>, recipe-row__{add,
+  remove,up,down}, cost-breakdown__row--unpriced, the "Derived cost" /
+  "Enter a new cost" / "Current cost" headings, every POST/preview target).
+#}
 {% extends "_base.html" %}
 {% set chrome = "detail" %}
 {% set back_href = "/skus" %}
 {% block title %}{{ sku.name }} — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review cost-editor">
-    <h1>{{ sku.name }}</h1>
-    <p class="day">
-      <span class="sku-row__id">{{ sku.sku_id }}</span>
-      {% if sku.unit %} · priced per <strong>{{ sku.unit }}</strong>{% endif %}
-      — <a href="/skus">&larr; SKU view</a>
+  <div class="review sku-editor">
+    <!--section:sku-header-->
+    <header class="sku-editor__header">
+      <h1>
+        <span class="health-dot health-dot--{{ health.value }}" title="{{ health.value }}"></span>{{ sku.name }}
+      </h1>
+      <p class="day sku-editor__meta">
+        <span class="sku-row__id">{{ sku.sku_id }}</span>
+        {% if is_produced %}
+         · made{% if sku.segment %} · {{ 'Taps' if sku.segment.value == 'bar' else sku.segment.value | capitalize }}{% endif %}
+        {% else %}
+         · bought{% if sku.unit %} · priced per <strong>{{ sku.unit }}</strong>{% endif %}
+        {% endif %}
+      </p>
+    </header>
+    <!--/section:sku-header-->
+
+    {% if saved == "recipe" %}
+    <!--section:recipe-saved-->
+    <p class="sku-editor__saved" role="status">
+      <strong>SAVED</strong> — logged to the <a href="/audit">audit log</a>.
     </p>
+    <!--/section:recipe-saved-->
+    {% endif %}
+    {% if saved == "cost" %}
+    <!--section:cost-saved-->
+    <p class="sku-editor__saved" role="status">
+      <strong>SAVED</strong> — new cost is live; logged to the <a href="/audit">audit log</a>.
+    </p>
+    <!--/section:cost-saved-->
+    {% endif %}
 
     {% if is_produced %}
     <section class="cost-derived">
@@ -20,7 +60,7 @@
         of truth per role.
       </p>
       {% if breakdown.per_unit is not none %}
-      <p>
+      <p class="cost-derived__head">
         <strong class="cost-derived__net">{{ breakdown.per_unit | money }}</strong>
         THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net per unit
         {% if breakdown.yield_qty != 1 %}
@@ -71,29 +111,36 @@
 
     {% macro recipe_row(ing_sku_id, quantity) -%}
     <li class="recipe-row">
-      {{ ingredient_picker(sku.sku_id, all_skus, ing_sku_id) }}
+      <span class="recipe-row__picker">
+        {{ ingredient_picker(sku.sku_id, all_skus, ing_sku_id) }}
+      </span>
       <input type="text" name="quantity" value="{{ quantity }}"
+             class="recipe-row__qty"
              placeholder="e.g. 18 or 1 tbsp"
+             aria-label="Quantity"
              hx-get="/skus/{{ sku.sku_id }}/recipe-preview"
              hx-trigger="input changed delay:200ms"
              hx-target="#recipe-preview"
              hx-include="closest form">
       <button type="button" class="recipe-row__up" title="Move up"
+              aria-label="Move ingredient up"
               onclick="var li = this.closest('.recipe-row'); if (li.previousElementSibling) li.parentNode.insertBefore(li, li.previousElementSibling);">&uarr;</button>
       <button type="button" class="recipe-row__down" title="Move down"
+              aria-label="Move ingredient down"
               onclick="var li = this.closest('.recipe-row'); if (li.nextElementSibling) li.parentNode.insertBefore(li.nextElementSibling, li);">&darr;</button>
       <button type="button" class="recipe-row__remove" title="Remove ingredient"
+              aria-label="Remove ingredient"
               onclick="this.closest('.recipe-row').remove();">&times;</button>
     </li>
     {%- endmacro %}
 
+    <!--section:recipe-editor-->
     <section class="recipe-editor">
       <h2>Recipe</h2>
-      <p class="cost-form__hint">
-        One row per ingredient. Quantities are in the ingredient's own unit
-        (g / ml / unit) — or type a measure like <em>1 tbsp</em>, <em>1 tsp</em>,
-        <em>1 pinch</em>, <em>1 knob</em>, <em>1 pepper grind</em> and it is
-        converted for you.
+      <p class="cost-form__hint recipe-editor__shorthand">
+        Quantities are in the ingredient's own unit (g / ml / unit) — or type
+        a measure like <em>1 tbsp</em>, <em>1 tsp</em>, <em>1 pinch</em>,
+        <em>1 knob</em>, <em>1 pepper grind</em> and it is converted for you.
       </p>
       <form method="post" action="/skus/{{ sku.sku_id }}/recipe">
         <ol class="recipe-rows" id="recipe-rows">
@@ -115,12 +162,12 @@
           unit. Leave it estimated until you weigh a batch — typing a value
           marks it measured.
         </p>
-        <label>
+        <label class="target-field">
           Target gross margin (%)
           <input type="number" name="target_gross_margin_pct" step="any" min="0"
                  value="{{ recipe.target_gross_margin_pct if recipe and recipe.target_gross_margin_pct is not none else '' }}">
         </label>
-        <label>
+        <label class="prep-field">
           <input type="checkbox" name="prep" value="1"
                  {% if recipe and recipe.prep %}checked{% endif %}>
           Usable as an ingredient in other recipes (prep)
@@ -131,7 +178,7 @@
                 onclick="var rows = document.getElementById('recipe-rows'); rows.appendChild(document.getElementById('recipe-row-template').content.cloneNode(true)); if (window.htmx) htmx.process(rows);">
           + Add ingredient
         </button>
-        <button type="submit">Save recipe</button>
+        <button type="submit" class="recipe-editor__save">Save recipe</button>
       </form>
       {% if recipe %}
       <form method="post" action="/skus/{{ sku.sku_id }}/recipe/delete"
@@ -145,8 +192,10 @@
       </form>
       {% endif %}
     </section>
+    <!--/section:recipe-editor-->
 
     {% if not is_produced %}
+    <!--section:cost-form-->
     <section class="cost-form">
       <h2>Enter a new cost</h2>
       <p class="cost-form__hint">
@@ -183,6 +232,7 @@
         <button type="submit">Save cost</button>
       </form>
     </section>
+    <!--/section:cost-form-->
     {% endif %}
   </div>
 {% endblock %}

@@ -43,7 +43,9 @@ from ..config.loader import load_assignees
 from ..coverage import (
     build_item_coverage,
     build_sku_coverage,
+    classify_sku,
     pickable_ingredient_skus,
+    sku_health,
     sku_role,
 )
 from ..daily_review import DailyReview, build_daily_review
@@ -1063,7 +1065,9 @@ def create_app(
         return RedirectResponse(url=f"/skus/{sold_sku_id}", status_code=303)
 
     @app.get("/skus/{sku_id}", response_class=HTMLResponse)
-    def sku_detail(request: Request, sku_id: str) -> HTMLResponse:
+    def sku_detail(
+        request: Request, sku_id: str, saved: str | None = None
+    ) -> HTMLResponse:
         """The editor page for one SKU: recipe (Slice 4) + cost (Slice 3).
 
         The recipe section renders the ingredient rows in stored order with
@@ -1071,6 +1075,11 @@ def create_app(
         captures what the partner actually sees on a receipt — pack price,
         pack quantity, VAT-inclusive flag — with the current stored (net)
         cost for context.
+
+        ``saved`` carries the in-place confirmation signal (issue #48): the
+        recipe/cost save routes redirect with ``?saved=recipe|cost`` and the
+        template renders a "SAVED — logged to the audit log" banner so the
+        partner knows the edit landed and was audit-logged.
         """
         cfg: SqliteConfigStore = app.state.config_store
         sku = cfg.sku(sku_id)
@@ -1078,10 +1087,6 @@ def create_app(
             return HTMLResponse("Unknown SKU.", status_code=404)
         recipes = cfg.recipes()
         recipe = next((r for r in recipes if r.sku_id == sku_id), None)
-        # One source of truth per role (issue #37): a produced SKU is never
-        # priced directly — its page shows a read-only derived cost and an
-        # ingredient breakdown instead of the cost-entry form. Purchasables
-        # keep the cost editor.
         role = sku_role(recipe)
         breakdown = None
         if role is not SkuRole.PURCHASABLE:
@@ -1091,6 +1096,15 @@ def create_app(
                 cost=cfg.cost_book(),
                 name_of={s.sku_id: s.name for s in cfg.skus()},
             )
+        classification = classify_sku(
+            sku_id, recipes=recipes, mappings=cfg.mappings()
+        )
+        health = sku_health(
+            sku_id,
+            recipe=recipe,
+            cost=cfg.cost_book(),
+            classification=classification,
+        )
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
@@ -1103,8 +1117,8 @@ def create_app(
                 "role": role,
                 "is_produced": role is not SkuRole.PURCHASABLE,
                 "breakdown": breakdown,
-                # The picker offers only what can honestly be an ingredient:
-                # purchasables + preps, never sold-only dishes (issue #35).
+                "health": health,
+                "saved": saved,
                 "all_skus": pickable_ingredient_skus(cfg.skus(), recipes),
             },
         )
@@ -1194,7 +1208,9 @@ def create_app(
             updated_on=app.state.today,
             session_id=request.state.session_id,
         )
-        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+        return RedirectResponse(
+            url=f"/skus/{sku_id}?saved=cost", status_code=303
+        )
 
     @app.get("/skus/{sku_id}/recipe-preview", response_class=HTMLResponse)
     def recipe_preview(
@@ -1356,7 +1372,9 @@ def create_app(
             updated_by=request.state.assignee_id,
             session_id=request.state.session_id,
         )
-        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+        return RedirectResponse(
+            url=f"/skus/{sku_id}?saved=recipe", status_code=303
+        )
 
     @app.post("/skus/{sku_id}/recipe/delete", response_model=None)
     def delete_recipe(
