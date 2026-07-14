@@ -139,10 +139,8 @@ def test_get_skus_renders_one_row_per_sku_with_full_coverage_picture(tmp_path: P
     assert "Espresso Latte" in html
     assert "beans-arabica" in html
     assert "orphan-sku" in html
-    # Classification labels are visible.
-    assert "active" in html.lower()
-    assert "prep-internal" in html.lower() or "prep_internal" in html.lower()
-    assert "dangling" in html.lower()
+    # Status badges surface the worst problems at a glance.
+    assert "Dangling" in html or "dangling" in html.lower()
     # Health colour hooks are present as data (not asserting exact CSS).
     assert "sku-row--green" in html
     assert "sku-row--red" in html
@@ -185,7 +183,7 @@ mappings:
     html = client.get("/skus").text
 
     def row_for(sku_id: str) -> str:
-        return html.split(f'href="/skus/{sku_id}"')[1].split("</tr>")[0]
+        return html.split(f'href="/skus/{sku_id}"')[1].split("</li>")[0]
 
     # Role hooks are class-suffixed (like the health dots), so "prep" here
     # cannot be satisfied by the unrelated "prep-internal" classification
@@ -310,3 +308,91 @@ def test_items_page_has_viewport_meta_and_linked_brand_stylesheets(
     assert '/static/tokens/colors.css' in html
     assert '/static/app.css' in html
     assert '/static/review.css' not in html
+
+
+# --- Wave 3 #46: Stock screen redesign (tabs, chips, summary, footer) ------
+
+
+def test_stock_tabs_link_between_items_and_skus(tmp_path: Path) -> None:
+    """MENU ITEMS / INGREDIENT SKUS tabs link between the two routes with the
+    active tab marked on each page.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+
+    items_html = client.get("/items").text
+    assert 'href="/items"' in items_html
+    assert 'href="/skus"' in items_html
+    assert "stock-tabs__link--active" in items_html
+    assert items_html.index("stock-tabs__link--active") < items_html.index('href="/skus"')
+
+    skus_html = client.get("/skus").text
+    assert 'href="/items"' in skus_html
+    assert "stock-tabs__link--active" in skus_html
+    assert skus_html.rindex("stock-tabs__link--active") > skus_html.index('href="/skus"')
+
+
+def test_stock_filter_chips_are_deep_linkable(tmp_path: Path) -> None:
+    """Filter chips ALL / NEEDS WORK / RED / HEALTHY narrow each list via a
+    query param and are deep-linkable from the chip row.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    _seed_menu(
+        app.state.db_path,
+        [
+            _menu_item("i-latte", "Espresso Latte", "120"),
+            _menu_item("i-mystery", "Mystery Soda", "60"),
+        ],
+    )
+    client = _authed_client(app)
+
+    items_html = client.get("/items").text
+    assert 'href="/items?filter=needs-work"' in items_html
+    assert 'href="/items?filter=red"' in items_html
+    assert 'href="/items?filter=healthy"' in items_html
+    assert 'href="/skus/new"' in items_html
+
+    filtered = client.get("/items", params={"filter": "healthy"}).text
+    assert "Espresso Latte" in filtered
+    assert "Mystery Soda" not in filtered
+    assert "stock-chips__link--active" in filtered
+
+
+def test_stock_summary_and_footer_show_counts(tmp_path: Path) -> None:
+    """A summary sentence states coverage; the footer shows bulk-edit and the
+    shown count.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    _seed_menu(
+        app.state.db_path,
+        [
+            _menu_item("i-latte", "Espresso Latte", "120"),
+            _menu_item("i-mystery", "Mystery Soda", "60"),
+        ],
+    )
+    client = _authed_client(app)
+
+    items_html = client.get("/items").text
+    assert "can't be costed" in items_html
+    assert 'href="/upload"' in items_html
+    assert "Showing 2 of 2" in items_html
+
+    skus_html = client.get("/skus").text
+    assert "need work" in skus_html
+    assert "Showing" in skus_html
+
+
+def test_stock_empty_filter_shows_friendly_reset(tmp_path: Path) -> None:
+    """A filter matching nothing shows the friendly empty state with SHOW ALL."""
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    _seed_menu(
+        app.state.db_path,
+        [_menu_item("i-mystery", "Mystery Soda", "60")],
+    )
+    client = _authed_client(app)
+
+    html = client.get("/items", params={"filter": "healthy"}).text
+
+    assert "Nothing matches this filter" in html
+    assert "Show all" in html
+    assert 'href="/items"' in html

@@ -2165,9 +2165,9 @@ def test_sold_as_is_entry_point_links_from_unmapped_item_row(
     # The unmapped bar item's row carries both options; the mapped cafe
     # item's row carries neither. Slice by <tr> so the link's own item id
     # in its href does not split the row short.
-    rows = items_html.split("<tr class=")
+    rows = items_html.split('<li class="stock-row')
     chang_row = next(r for r in rows if "i-chang" in r)
-    latte_row = next(r for r in rows if "i-latte" in r)
+    latte_row = next(r for r in rows if "Cafe Latte" in r)
     assert 'href="/items/i-chang/sold-as-is"' in chang_row
     assert "sold as-is" in chang_row.lower()
     # The mapped cafe item (latte is seeded mapped) carries neither option.
