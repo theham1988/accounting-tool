@@ -373,7 +373,7 @@ def test_stock_summary_and_footer_show_counts(tmp_path: Path) -> None:
     client = _authed_client(app)
 
     items_html = client.get("/items").text
-    assert "can't be costed" in items_html
+    assert "can&rsquo;t be costed" in items_html or "can't be costed" in items_html
     assert 'href="/upload"' in items_html
     assert "Showing 2 of 2" in items_html
 

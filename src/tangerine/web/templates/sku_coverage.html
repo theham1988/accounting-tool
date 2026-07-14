@@ -1,59 +1,60 @@
 {% extends "_base.html" %}
 {% set nav_active = "stock" %}
 {% set wide = true %}
-{% block title %}SKU view — Tangerine Books{% endblock %}
+{% block title %}Ingredient SKUs — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review coverage">
-    <h1>SKU view</h1>
-    <p class="day">
-      Every SKU: mapping, recipe, and pricing health at a glance.
-      <a href="/items">Item coverage view &rarr;</a>
-      · <a href="/upload">Bulk upload &rarr;</a>
-      · <a href="/audit">Audit log &rarr;</a>
-      · <a class="new-sku-button" href="/skus/new">+ New SKU</a>
-    </p>
+  <div class="review stock stock--skus">
+    <p class="stock__kicker">Stock</p>
+    <h1>Ingredient SKUs</h1>
 
-    {% if not rows %}
-    <p class="empty-note"><em>No SKUs yet.</em></p>
-    {% else %}
-    <section class="coverage-table">
-      <table>
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>Segment</th>
-            <th>Role</th>
-            <th>Class</th>
-            <th>Mapped items</th>
-            <th>Recipe</th>
-            <th>Ingredients priced</th>
-            <th>Cost/unit</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for row in rows %}
-          <tr class="sku-row sku-row--{{ row.health.value }}">
-            <td class="sku-row__name">
-              <span class="health-dot health-dot--{{ row.health.value }}" title="{{ row.health.value }}"></span>
-              <a href="/skus/{{ row.sku_id }}">{{ row.name }}</a>
-              <span class="sku-row__id">{{ row.sku_id }}</span>
-            </td>
-            <td>{{ row.segment.value | capitalize if row.segment else "—" }}</td>
-            <td class="sku-row__role"><span class="sku-role sku-role--{{ row.role.value }}">{{ row.role.value }}</span></td>
-            <td class="sku-row__class">{{ row.classification.value }}</td>
-            <td>{{ row.mapped_item_count }}</td>
-            <td>
-              {% if row.has_recipe %}{{ row.ingredient_count }} ingredient{{ "" if row.ingredient_count == 1 else "s" }}{% else %}no recipe{% endif %}
-            </td>
-            <td>
-              {% if row.has_recipe %}{{ row.priced_ingredient_count }} / {{ row.ingredient_count }}{% else %}—{% endif %}
-            </td>
-            <td>{{ (row.cost_per_unit | money) if row.cost_per_unit is not none else "—" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+    {% include "_stock_chrome.html" %}
+
+    {% if not rows and filter != "all" %}
+    <!--section:stock-empty-->
+    <section class="stock-empty">
+      <p>Nothing matches this filter — if you were hunting for broken ones, that&rsquo;s good news.</p>
+      <a class="stock-empty__reset" href="{{ filter_urls['all'] }}">Show all</a>
     </section>
+    <!--/section:stock-empty-->
+    {% elif not rows %}
+    <p class="empty-note"><em>No ingredient SKUs yet.</em></p>
+    {% else %}
+    <!--section:stock-list-->
+    <ul class="stock-list">
+      {% for row in rows %}
+      <li class="stock-row sku-row stock-row--{{ row.health.value }} sku-row--{{ row.health.value }}">
+        <span class="health-dot health-dot--{{ row.health.value }}"></span>
+        <div class="stock-row__main">
+          <a class="stock-row__name" href="/skus/{{ row.sku_id }}">{{ row.name }}</a>
+          <span class="stock-row__sub sku-row__id">
+            {{ row.sku_id }}
+            {% if row.segment %} · {{ row.segment.value | capitalize }}{% endif %}
+            · <span class="sku-role sku-role--{{ row.role.value }}">{{ row.role.value }}</span>
+          </span>
+          {% if row.classification.value == 'dangling' %}
+          <span class="stock-row__badge">Dangling</span>
+          {% elif row.classification.value == 'active' and not row.has_recipe %}
+          <span class="stock-row__badge">No recipe</span>
+          {% elif row.health.value == 'red' and not row.has_recipe %}
+          <span class="stock-row__badge">No cost</span>
+          {% endif %}
+        </div>
+        <span class="stock-row__figure">
+          {% if row.cost_per_unit is not none %}{{ row.cost_per_unit | money }} THB/unit
+          {% elif row.has_recipe %}{{ row.priced_ingredient_count }} / {{ row.ingredient_count }} priced
+          {% else %}—{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    <!--/section:stock-list-->
     {% endif %}
+
+    <!--section:stock-footer-->
+    <footer class="stock-footer">
+      <a class="stock-footer__bulk" href="/upload">Bulk edit by spreadsheet &rarr;</a>
+      <span class="stock-footer__count">Showing {{ rows | length }} of {{ total_count }}</span>
+    </footer>
+    <!--/section:stock-footer-->
   </div>
 {% endblock %}
