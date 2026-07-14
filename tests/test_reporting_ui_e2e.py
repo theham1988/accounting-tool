@@ -667,7 +667,8 @@ def test_ending_a_recurring_cost_stops_it_after_its_end_month(
     listing = response.text.split("<!--section:fixed-cost-list-->")[1].split(
         "<!--/section:fixed-cost-list-->"
     )[0]
-    assert "ended 2026-07-16" in listing
+    # The redesigned status label (issue #50): "ENDED <iso-date>".
+    assert "ENDED 2026-07-16" in listing
 
     july = client.get("/review?mode=month&month=2026-07").text
     assert "50000.00" in july.split("<!--section:fixed-costs-->")[1]
@@ -711,6 +712,195 @@ def test_deleting_a_fixed_cost_removes_it_from_every_month(
     assert "Rentt typo" not in listing
     assert "99999.00" not in client.get("/review?mode=month&month=2026-07").text
     assert client.post("/admin/fixed-costs/1/delete").status_code == 404
+
+
+# --- AC: fixed-costs admin redesign (issue #50) --------------------------------
+
+
+def test_fixed_costs_page_is_a_reports_sub_page_with_admin_tag_and_intro(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #50 AC: the page is a Reports sub-page, bottom nav present.
+
+    The header sub-row links back into Reports, names the page "FIXED COSTS",
+    and carries a right-aligned ADMIN tag; the bottom nav renders with REPORTS
+    active; and the intro sentence states these are whole-venue costs never
+    split across cafe/taps.
+    """
+    app = _build_app(tmp_path, today=today, sales=[])
+    client = _authed_client(app)
+
+    html = client.get("/admin/fixed-costs").text
+
+    # Header sub-row: back-to-Reports link, the title, and the ADMIN tag.
+    header = html.split("<!--section:fixed-cost-header-->")[1].split(
+        "<!--/section:fixed-cost-header-->"
+    )[0]
+    assert "/review?mode=month" in header  # back-to-Reports target (nav_urls.reports)
+    assert "Reports" in header
+    assert "FIXED COSTS" in header
+    assert "ADMIN" in header
+
+    # The intro sentence: whole-venue, never split across cafe/taps.
+    assert "whole-venue" in html.lower()
+    assert "never split" in html.lower()
+
+    # Bottom nav present with REPORTS marked active.
+    nav = html.split("<!--section:bottom-nav-->")[1].split(
+        "<!--/section:bottom-nav-->"
+    )[0]
+    assert "tb-bottomnav__cell--active" in nav
+    assert "Reports" in nav
+    assert 'aria-current="page"' in nav
+
+
+def test_add_a_cost_card_has_every_field_and_saves(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #50 AC: the ADD A COST card carries label, category, amount, kind,
+    from-month, and a SAVE; a valid submit stores the entry."""
+    app = _build_app(tmp_path, today=today, sales=[])
+    client = _authed_client(app)
+
+    form_html = client.get("/admin/fixed-costs").text.split(
+        "<!--section:fixed-cost-form-->"
+    )[1].split("<!--/section:fixed-cost-form-->")[0]
+    assert "ADD A COST" in form_html
+    for field in ('name="label"', 'name="category"', 'name="amount"',
+                  'name="kind"', 'name="period"', 'type="submit"'):
+        assert field in form_html
+    assert "LABEL" in form_html
+    assert "CATEGORY" in form_html
+    assert "AMOUNT" in form_html
+    assert "KIND" in form_html
+    assert "FROM MONTH" in form_html
+    assert "SAVE" in form_html
+    # The two kind values the route accepts.
+    assert 'value="recurring"' in form_html
+    assert 'value="oneoff"' in form_html
+
+    response = client.post(
+        "/admin/fixed-costs",
+        data={
+            "label": "Rent",
+            "category": "rent",
+            "amount": "50000",
+            "kind": "recurring",
+            "period": "2026-07",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    listing = response.text.split("<!--section:fixed-cost-list-->")[1].split(
+        "<!--/section:fixed-cost-list-->"
+    )[0]
+    assert "Rent" in listing
+    assert "50000.00" in listing
+
+
+def test_invalid_submit_shows_inline_error_and_saves_nothing(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #50 AC: an invalid submit shows the inline error in place and
+    nothing is saved.
+
+    A POST missing both label and amount re-renders the page (200, not a bare
+    400) with the canonical "Needs a label and an amount — nothing was saved."
+    message inside the ADD A COST card; no row appears in CURRENT and the
+    audit log gains no fixed_costs entry.
+    """
+    app = _build_app(tmp_path, today=today, sales=[])
+    client = _authed_client(app)
+
+    response = client.post(
+        "/admin/fixed-costs",
+        data={"label": "", "amount": "", "kind": "recurring", "period": "2026-07"},
+        follow_redirects=False,
+    )
+
+    # Re-rendered in place — 200, not a 400 error page.
+    assert response.status_code == 200
+    form = response.text.split("<!--section:fixed-cost-form-->")[1].split(
+        "<!--/section:fixed-cost-form-->"
+    )[0]
+    assert "Needs a label and an amount — nothing was saved." in form
+    assert "fixed-cost-form__error" in form
+
+    # Nothing was saved: CURRENT is empty, and the audit log has no entry.
+    listing = response.text.split("<!--section:fixed-cost-list-->")[1].split(
+        "<!--/section:fixed-cost-list-->"
+    )[0]
+    assert "fixed-cost-list__row" not in listing
+    assert "fixed_costs" not in client.get("/audit").text
+
+
+def test_current_list_shows_recurring_total_meta_and_statuses(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #50 AC: CURRENT · N shows the recurring monthly total, per-row
+    meta (category · kind · from month) and status (ACTIVE / ENDED / ONE
+    MONTH ONLY), with END on recurring+active rows and DEL on every row.
+
+    Three costs: a recurring rent (50,000, active), a recurring utilities
+    cost (5,000, ended) and a one-off repair (8,000). The recurring monthly
+    total counts only the active recurring cost → 50,000.00.
+    """
+    app = _build_app(tmp_path, today=today, sales=[])
+    client = _authed_client(app)
+    for data in (
+        {"label": "Rent", "category": "rent", "amount": "50000",
+         "kind": "recurring", "period": "2026-06"},
+        {"label": "Utilities", "category": "utilities", "amount": "5000",
+         "kind": "recurring", "period": "2026-06"},
+        {"label": "Espresso machine repair", "category": "other",
+         "amount": "8000", "kind": "oneoff", "period": "2026-07"},
+    ):
+        client.post("/admin/fixed-costs", data=data, follow_redirects=True)
+
+    # End the Utilities recurring cost (entry_id 2).
+    client.post("/admin/fixed-costs/2/end", follow_redirects=True)
+
+    listing = client.get("/admin/fixed-costs").text.split(
+        "<!--section:fixed-cost-list-->"
+    )[1].split("<!--/section:fixed-cost-list-->")[0]
+
+    assert "CURRENT · 3" in listing
+
+    # The recurring monthly total counts only the active recurring cost
+    # (Rent 50,000 — not the ended 5,000 nor the one-off 8,000). Isolate the
+    # header total so the per-row amounts don't muddy the assertion.
+    total_line = listing.split("THB/mo recurring")[0].rsplit(">", 1)[-1]
+    assert "50000.00" in total_line
+    assert "5000.00" not in total_line
+    assert "8000.00" not in total_line
+
+    # Each row carries its meta line (category · kind · from month) and a
+    # status. The three statuses the design names.
+    assert "ACTIVE" in listing
+    assert "ENDED" in listing
+    assert "ONE MONTH ONLY" in listing
+    assert "rent · recurring · from 2026-06" in listing
+    assert "utilities · recurring · from 2026-06" in listing
+    assert "other · one-off · from 2026-07" in listing
+    assert "/mo" in listing
+    assert "once" in listing
+
+    # END exists only for the active recurring row (Rent, entry_id 1);
+    # DEL exists for every row. The ended recurring (entry 2) and the one-off
+    # (entry 3) carry no END button.
+    assert 'action="/admin/fixed-costs/1/end"' in listing
+    assert 'action="/admin/fixed-costs/2/end"' not in listing
+    assert 'action="/admin/fixed-costs/3/end"' not in listing
+
+    # DEL is on every row.
+    for entry_id in (1, 2, 3):
+        assert f'action="/admin/fixed-costs/{entry_id}/delete"' in listing
+
+    # The footer explains END vs DEL and that both are audit-logged/revertible.
+    assert "END" in listing
+    assert "DEL" in listing
+    assert "audit log" in listing.lower()
+    assert "reverted" in listing.lower()
 
 
 def test_reverting_a_fixed_cost_creation_removes_it_like_any_config_edit(
