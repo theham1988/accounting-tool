@@ -63,7 +63,7 @@ from ..storage.config_store import (
 )
 from ..storage.sqlite_store import SqliteLoyverseStore
 from ..upload import generate_template_csv, parse_upload
-from ..types import Assignee, Segment, SegmentMargin, SkuRole
+from ..types import Assignee, Segment, SegmentMargin, SkuHealth, SkuRole
 from .sparkline import ChartPoint, bar_row, sparkline_svg
 from .auth import (
     AuthConfig,
@@ -128,6 +128,87 @@ STALE_AFTER_SECONDS: int = 24 * 60 * 60
 #: segment-CM rows render in a stable, predictable order regardless of dict
 #: iteration.
 _SEGMENT_ORDER: tuple[Segment, ...] = (Segment.CAFE, Segment.BAR)
+
+
+#: Stock filter chips (Wave 3 #46). View-layer only — maps onto SKU health.
+STOCK_FILTER_NEEDS_WORK = "needs-work"
+STOCK_FILTER_RED = "red"
+STOCK_FILTER_HEALTHY = "healthy"
+_STOCK_FILTERS: tuple[str, ...] = (
+    STOCK_FILTER_NEEDS_WORK,
+    STOCK_FILTER_RED,
+    STOCK_FILTER_HEALTHY,
+)
+
+
+def _normalise_stock_filter(raw: str | None) -> str:
+    if raw is None:
+        return "all"
+    key = raw.strip().lower()
+    return key if key in _STOCK_FILTERS else "all"
+
+
+def _sku_matches_filter(row, filter_key: str) -> bool:  # type: ignore[no-untyped-def]
+    if filter_key == STOCK_FILTER_NEEDS_WORK:
+        return row.health is not SkuHealth.GREEN
+    if filter_key == STOCK_FILTER_RED:
+        return row.health is SkuHealth.RED
+    if filter_key == STOCK_FILTER_HEALTHY:
+        return row.health is SkuHealth.GREEN
+    return True
+
+
+def _item_matches_filter(row, filter_key: str) -> bool:  # type: ignore[no-untyped-def]
+    health = row.sku_health
+    if filter_key == STOCK_FILTER_NEEDS_WORK:
+        return health is not SkuHealth.GREEN
+    if filter_key == STOCK_FILTER_RED:
+        return health is None or health is SkuHealth.RED
+    if filter_key == STOCK_FILTER_HEALTHY:
+        return health is SkuHealth.GREEN
+    return True
+
+
+_SKU_HEALTH_SORT: dict[SkuHealth, int] = {
+    SkuHealth.RED: 0,
+    SkuHealth.YELLOW: 1,
+    SkuHealth.GREEN: 2,
+}
+
+
+def _sort_sku_coverage_rows(rows: list) -> list:  # type: ignore[type-arg,no-untyped-def]
+    return sorted(rows, key=lambda r: (_SKU_HEALTH_SORT[r.health], r.name.lower()))
+
+
+def _stock_filter_query(filter_key: str) -> str:
+    return "" if filter_key == "all" else f"?filter={filter_key}"
+
+
+def _stock_tab_urls(filter_key: str) -> dict[str, str]:
+    q = _stock_filter_query(filter_key)
+    return {"items": f"/items{q}", "skus": f"/skus{q}"}
+
+
+def _stock_filter_urls(tab: str, filter_key: str) -> dict[str, str]:
+    base = f"/{tab}"
+    return {
+        "all": base,
+        STOCK_FILTER_NEEDS_WORK: f"{base}?filter={STOCK_FILTER_NEEDS_WORK}",
+        STOCK_FILTER_RED: f"{base}?filter={STOCK_FILTER_RED}",
+        STOCK_FILTER_HEALTHY: f"{base}?filter={STOCK_FILTER_HEALTHY}",
+    }
+
+
+def _count_uncostable_items(rows: list) -> int:  # type: ignore[type-arg,no-untyped-def]
+    return sum(
+        1
+        for r in rows
+        if r.mapped_sku_id is None or r.sku_health is not SkuHealth.GREEN
+    )
+
+
+def _count_sku_needs_work(rows: list) -> int:  # type: ignore[type-arg,no-untyped-def]
+    return sum(1 for r in rows if r.health is not SkuHealth.GREEN)
 
 
 def _money(value) -> str:  # type: ignore[no-untyped-def]
@@ -731,19 +812,35 @@ def create_app(
         return RedirectResponse(url="/admin/fixed-costs", status_code=303)
 
     @app.get("/skus", response_class=HTMLResponse)
-    def skus_view(request: Request) -> HTMLResponse:
+    def skus_view(request: Request, filter: str | None = Query(default=None)) -> HTMLResponse:
         """The SKU view (Wave 1.5, Slice 2): one row per SKU, mapping/recipe/
         pricing health at a glance. Read-only — no editing yet.
+
+        Stock filter chips (ALL / NEEDS WORK / RED / HEALTHY) arrive as
+        ``?filter=`` query params mapping onto SKU-health classification.
         """
         cfg: SqliteConfigStore = app.state.config_store
-        rows = build_sku_coverage(
+        all_rows = build_sku_coverage(
             skus=cfg.skus(), recipes=cfg.recipes(), mappings=cfg.mappings(), cost=cfg.cost_book()
+        )
+        active_filter = _normalise_stock_filter(filter)
+        rows = _sort_sku_coverage_rows(
+            [r for r in all_rows if _sku_matches_filter(r, active_filter)]
         )
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
             name="sku_coverage.html",
-            context={"request": request, "rows": rows},
+            context={
+                "request": request,
+                "rows": rows,
+                "total_count": len(all_rows),
+                "needs_work_count": _count_sku_needs_work(all_rows),
+                "filter": active_filter,
+                "filter_urls": _stock_filter_urls("skus", active_filter),
+                "tab_urls": _stock_tab_urls(active_filter),
+                "stock_tab": "skus",
+            },
         )
 
     @app.get("/skus/new", response_class=HTMLResponse)
@@ -1374,15 +1471,19 @@ def create_app(
         return RedirectResponse(url="/audit", status_code=303)
 
     @app.get("/items", response_class=HTMLResponse)
-    def items_view(request: Request, item: str | None = None) -> HTMLResponse:
+    def items_view(
+        request: Request,
+        item: str | None = None,
+        filter: str | None = Query(default=None),
+    ) -> HTMLResponse:
         """The item coverage view (Wave 1.5, Slice 2): one row per Loyverse
         item, unmapped/broken items bubbled to the top. ``?item=<id>`` (used
         by the daily review's needs-attention deep link) filters the table
-        down to that single item.
+        down to that single item. Stock filter chips arrive as ``?filter=``.
         """
         cfg: SqliteConfigStore = app.state.config_store
         store: SqliteLoyverseStore = app.state.store
-        rows = build_item_coverage(
+        all_rows = build_item_coverage(
             menu=store.current_menu(),
             skus=cfg.skus(),
             recipes=cfg.recipes(),
@@ -1390,12 +1491,26 @@ def create_app(
             cost=cfg.cost_book(),
         )
         if item:
-            rows = [r for r in rows if r.item_id == item]
+            rows = [r for r in all_rows if r.item_id == item]
+            active_filter = "all"
+        else:
+            active_filter = _normalise_stock_filter(filter)
+            rows = [r for r in all_rows if _item_matches_filter(r, active_filter)]
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
             name="item_coverage.html",
-            context={"request": request, "rows": rows, "filtered_item_id": item},
+            context={
+                "request": request,
+                "rows": rows,
+                "total_count": len(all_rows),
+                "uncostable_count": _count_uncostable_items(all_rows),
+                "filtered_item_id": item,
+                "filter": active_filter,
+                "filter_urls": _stock_filter_urls("items", active_filter),
+                "tab_urls": _stock_tab_urls(active_filter),
+                "stock_tab": "items",
+            },
         )
 
     @app.get("/upload", response_class=HTMLResponse)
