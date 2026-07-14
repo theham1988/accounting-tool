@@ -1100,3 +1100,178 @@ def _extract_css_url(html: str) -> str | None:
         html,
     )
     return m.group(1) if m else None
+
+
+# --- AC (Wave 3 #45): day-nav arrows dim at synced-range bounds -------------
+
+
+def _day_nav_arrow_tag(nav: str, modifier: str) -> str:
+    """Return the opening ``<a>`` tag for a day-nav arrow (``--prev`` or ``--next``)."""
+    import re
+
+    match = re.search(
+        rf'<a[^>]*day-nav__arrow--{modifier}[^>]*>',
+        nav,
+    )
+    assert match is not None, f"no day-nav {modifier} arrow in {nav!r}"
+    return match.group(0)
+
+
+def test_day_nav_prev_arrow_dims_at_earliest_synced_day(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """The prev arrow dims when the review date is the earliest day with sales."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app_seeded(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/review", params={"day": yesterday.isoformat()})
+
+    assert response.status_code == 200
+    prev_tag = _day_nav_arrow_tag(_section(response.text, "day-nav"), "prev")
+    assert "day-nav__arrow--dimmed" in prev_tag
+    assert 'aria-disabled="true"' in prev_tag
+    assert "href=" not in prev_tag
+
+
+def test_day_nav_next_arrow_dims_at_latest_reviewable_day(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """The next arrow dims when the review date is yesterday (latest reviewable)."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app_seeded(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    next_tag = _day_nav_arrow_tag(_section(response.text, "day-nav"), "next")
+    assert "day-nav__arrow--dimmed" in next_tag
+    assert 'aria-disabled="true"' in next_tag
+    assert "href=" not in next_tag
+
+
+def test_day_nav_arrows_link_when_between_bounds(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Prev and next arrows are live links when the day is between the bounds."""
+    three_days_ago = yesterday - timedelta(days=2)
+    two_days_ago = yesterday - timedelta(days=1)
+    sales = [
+        _sale_record(
+            receipt_number="45-a",
+            item_id="chang-draft-500",
+            day=three_days_ago,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="45-b",
+            item_id="chang-draft-500",
+            day=two_days_ago,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="45-c",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app_seeded(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/review", params={"day": two_days_ago.isoformat()})
+
+    assert response.status_code == 200
+    nav = _section(response.text, "day-nav")
+    prev_tag = _day_nav_arrow_tag(nav, "prev")
+    next_tag = _day_nav_arrow_tag(nav, "next")
+    assert "day-nav__arrow--dimmed" not in prev_tag
+    assert "day-nav__arrow--dimmed" not in next_tag
+    assert three_days_ago.isoformat() in prev_tag
+    assert yesterday.isoformat() in next_tag
+
+
+# --- AC (Wave 3 #45): TOP & BOTTOM MARGIN/VOLUME toggle (query param) -------
+
+
+def test_rank_toggle_defaults_to_margin(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """The TOP & BOTTOM section defaults to the margin pair (issue #45)."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app_seeded(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    toggle = _section(response.text, "rank-toggle")
+    assert "rank-toggle__link--active" in toggle
+    assert 'data-rank="margin"' in response.text
+
+
+def test_rank_toggle_volume_query_param_marks_volume_active(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """``?rank=volume`` marks Volume active and sets ``data-rank="volume"``."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app_seeded(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get(
+        "/review",
+        params={"day": yesterday.isoformat(), "rank": "volume"},
+    )
+
+    assert response.status_code == 200
+    toggle = _section(response.text, "rank-toggle")
+    assert "rank-toggle__link--active" in toggle
+    assert 'data-rank="volume"' in response.text
+    for anchor in (
+        "top-by-margin",
+        "bottom-by-margin",
+        "top-by-volume",
+        "bottom-by-volume",
+    ):
+        _section(response.text, anchor)
+
+
+def test_invalid_rank_query_param_returns_400(
+    tmp_path: Path, today: date
+) -> None:
+    """An unknown ``rank`` value is a client error, not a silent fallback."""
+    app = _build_app_with_empty_db(tmp_path, today=today)
+    client = _authed_client(app)
+
+    response = client.get("/review", params={"rank": "revenue"})
+
+    assert response.status_code == 400

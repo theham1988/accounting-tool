@@ -695,6 +695,29 @@ def test_get_root_renders_sync_now_button_posting_to_sync(
     assert "sync-result" in html.lower() or "sync-result" in button
 
 
+def test_sync_now_footer_wires_to_sync_result_target(
+    tmp_path: Path, today: date
+) -> None:
+    """Issue #45: the SYNC NOW footer POSTs to ``/sync`` and targets ``#sync-result``."""
+    stub = StubHttp(
+        routes={
+            "/v1.0/receipts": [_receipts_envelope([], cursor=None)],
+            "/v1.0/items": [_envelope([], cursor=None)],
+        }
+    )
+    app = _build_app(tmp_path, today=today, urlopen=stub)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    footer = _section(html, "sync-control")
+    assert "sync-control--footer" in footer
+    assert 'hx-target="#sync-result"' in footer
+    assert html.count('id="sync-result"') == 1
+
+
 # --- AC: python -m tangerine.sync runs the same sync from the command line ----
 
 
