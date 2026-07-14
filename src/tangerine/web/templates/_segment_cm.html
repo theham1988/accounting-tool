@@ -1,27 +1,79 @@
-{# Per-segment contribution margin table, shared by the Day and Period/Month
-   report bodies (one report shape across modes, ADR-0004 decision 4).
+{# BY SEGMENT cards (Wave 3 #45), shared by the Day and Period/Month report
+   bodies (one report shape across modes, ADR-0004 decision 4).
+
+   Each segment renders as its own card with the brand identity the venue
+   trades under: CAFE is "Coffee by day" on the paper ground, TAPS is
+   "Taps by night" on the midnight ground (CONTEXT.md → Brand display names:
+   ``bar ≡ Taps`` — the canonical ``Segment.BAR`` value is unchanged; only
+   the rendered label dresses in the brand). A segment whose contribution
+   margin is below zero carries the RED chip — failing to cover its own
+   variable costs is an explicit conversation, not a quiet red number.
+
    Expects ``segment_margins`` in context — ``SegmentMargin`` rows in display
-   order. A segment failing to cover its variable costs carries the RED flag. #}
+   order. The ``segment-cm__row`` / ``segment-cm__row--red`` /
+   ``segment-cm__revenue`` class hooks are preserved so the partner-visible
+   numbers stay sliceable by the wider test suite. #}
+
+{# Per-segment brand identity. CAFE is the day side (paper, "CAFE · DAY");
+   TAPS is the night side (midnight, "TAPS · NIGHT"). The canonical segment
+   name (Cafe / Bar) is kept on the row as a sub-label so deep links and
+   existing assertions that walk the row by name keep resolving. #}
+{% macro segment_brand(sm) -%}
+{%- if sm.segment.value == 'cafe' -%}
+CAFE · DAY
+{%- elif sm.segment.value == 'bar' -%}
+TAPS · NIGHT
+{%- else -%}
+{{ sm.segment.value | capitalize }}
+{%- endif -%}
+{%- endmacro %}
+
+{# The plain-language one-liner: what this segment's number means in words a
+   partner reads at 9am. Negative CM is a problem; a thin positive is "covering
+   costs"; a healthy positive is the day's earner. The thresholds stay coarse
+   on purpose — this is a glance, not an analysis. #}
+{% macro segment_one_liner(sm) -%}
+{%- if sm.contribution_margin < 0 -%}
+Selling below cost — losing {{ (sm.variable_costs - sm.revenue) | money }} THB on {{ sm.revenue | money }} THB of sales.
+{%- elif sm.contribution_margin == 0 -%}
+Broke exactly even on the day.
+{%- else -%}
+Covering costs with {{ sm.contribution_margin | money }} THB left after {{ sm.variable_costs | money }} THB of ingredients.
+{%- endif -%}
+{%- endmacro %}
+
 <!--section:segment-cm-->
-<section class="segment-cm">
-  <h2>Segment contribution margin</h2>
-  <table>
-    <thead>
-      <tr><th>Segment</th><th>Revenue</th><th>Variable costs</th><th>Contribution margin</th></tr>
-    </thead>
-    <tbody>
-    {% for sm in segment_margins %}
-      <tr class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}">
-        <td class="segment-cm__name">
-          {{ sm.segment.value | capitalize }}
-          {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
-        </td>
-        <td class="segment-cm__revenue">{{ sm.revenue | money }} THB</td>
-        <td class="segment-cm__costs">{{ sm.variable_costs | money }} THB</td>
-        <td class="segment-cm__cm">{{ sm.contribution_margin | money }} THB</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+<section class="segment-cm" aria-label="By segment">
+  <h2>By segment</h2>
+  <ul class="segment-cm__cards">
+  {% for sm in segment_margins %}
+    {# ``segment-cm__row`` stays the per-row class hook (sliced across the
+       test suite); ``--red`` flags a segment failing to cover its costs. The
+       ``--night`` modifier is the brand hook for the Taps card's midnight
+       ground (dressed when CSS lands). #}
+    <li class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}{% if sm.segment.value == 'bar' %} segment-cm__row--night{% endif %}">
+      <p class="segment-cm__kicker">{{ segment_brand(sm) }}</p>
+      <p class="segment-cm__name">
+        {{ sm.segment.value | capitalize }}
+        {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
+      </p>
+      <dl class="segment-cm__figures">
+        <div class="segment-cm__figure">
+          <dt>Revenue</dt>
+          <dd class="segment-cm__revenue">{{ sm.revenue | money }} THB</dd>
+        </div>
+        <div class="segment-cm__figure">
+          <dt>Variable costs</dt>
+          <dd class="segment-cm__costs">{{ sm.variable_costs | money }} THB</dd>
+        </div>
+        <div class="segment-cm__figure">
+          <dt>Contribution margin</dt>
+          <dd class="segment-cm__cm">{{ sm.contribution_margin | money }} THB</dd>
+        </div>
+      </dl>
+      <p class="segment-cm__one-liner">{{ segment_one_liner(sm) }}</p>
+    </li>
+  {% endfor %}
+  </ul>
 </section>
 <!--/section:segment-cm-->
