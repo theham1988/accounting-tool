@@ -1458,16 +1458,23 @@ def create_app(
 
     @app.get("/audit", response_class=HTMLResponse)
     def audit_log(request: Request) -> HTMLResponse:
-        """The audit log (Wave 1.5, Slice 5): every config edit, newest first.
+        """The change log (Wave 1.5, Slice 5; redesigned Wave 3 Slice 9):
+        every config edit, newest first.
 
         The safety net that replaces the removed code-review gate (ADR-0003
         decision 2): who changed what, when, from what to what. Each entry's
         field-level diff is derived from the whole-row snapshots at render
         time. Entries the signed-in partner has not yet reviewed are
-        highlighted — that is the "diff of what changed" the 9am review's
-        link promises — and a "Mark as reviewed" button (an explicit POST,
-        so merely loading or prefetching this page never moves the mark)
-        clears the nag for them and only them.
+        highlighted with a mustard keyline and a NEW chip — that is the
+        "diff of what changed" the 9am review's link promises — and a
+        "Mark as reviewed" control (an explicit POST, so merely loading or
+        prefetching this page never moves the mark) clears the nag for them
+        and only them.
+
+        ``?reverted=<entry_id>`` is set by the revert route on its redirect;
+        the entry it names renders its REVERT control replaced in place by
+        the teal "REVERTED — change undone" confirmation, so the partner
+        sees the undo landed without a separate toast.
         """
         cfg: SqliteConfigStore = app.state.config_store
         entries = [
@@ -1477,6 +1484,13 @@ def create_app(
         unreviewed_ids = {
             e.entry_id for e in cfg.unreviewed_changes(request.state.assignee_id)
         }
+        reverted_id_raw = request.query_params.get("reverted")
+        reverted_id: int | None = None
+        if reverted_id_raw:
+            try:
+                reverted_id = int(reverted_id_raw)
+            except (TypeError, ValueError):
+                reverted_id = None
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
@@ -1485,6 +1499,7 @@ def create_app(
                 "request": request,
                 "entries": entries,
                 "unreviewed_ids": unreviewed_ids,
+                "reverted_id": reverted_id,
             },
         )
 
@@ -1523,7 +1538,11 @@ def create_app(
         )
         if not reverted:
             return HTMLResponse("Unknown audit entry.", status_code=404)
-        return RedirectResponse(url="/audit", status_code=303)
+        # Carry the just-reverted entry's id back so the change log can
+        # render the in-place "REVERTED — change undone" confirmation on it.
+        return RedirectResponse(
+            url=f"/audit?reverted={entry_id}", status_code=303
+        )
 
     @app.post("/audit/session/{session_id}/revert", response_model=None)
     def revert_audit_session(

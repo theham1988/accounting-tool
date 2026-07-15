@@ -937,8 +937,8 @@ def test_reverting_a_fixed_cost_creation_removes_it_like_any_config_edit(
     listing = client.get("/admin/fixed-costs").text
     assert "Rent" not in listing.split("<!--section:fixed-cost-list-->")[1]
     assert "50000.00" not in client.get("/review?mode=month&month=2026-07").text
-    # The revert is itself on the trail (creation + revert = two rows).
-    assert client.get("/audit").text.count('<tr class="audit-row') == 2
+    # The revert is itself on the trail (creation + revert = two cards).
+    assert client.get("/audit").text.count('<article class="audit-row') == 2
 
 
 def test_issue_30_end_to_end_recurring_rent_plus_oneoff(
@@ -1025,8 +1025,8 @@ def test_issue_30_end_to_end_recurring_rent_plus_oneoff(
 
 
 def _audit_row_for(audit_html: str, entry_id: str) -> str:
-    """The audit table row (as text) whose revert form targets ``entry_id``."""
-    rows = audit_html.split('<tr class="audit-row')
+    """The audit entry card (as text) whose revert form targets ``entry_id``."""
+    rows = audit_html.split('<article class="audit-row')
     return next(
         row for row in rows if f'action="/audit/{entry_id}/revert"' in row
     )
