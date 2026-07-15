@@ -608,3 +608,80 @@ def _review_body(html: str) -> str:
             if depth == 0:
                 return html[start:pos]
     return html[start:]
+
+
+# --- AC (Wave 3 #45): Today screen chrome -------------------------------------
+
+
+def test_today_screen_carries_title_subtitle_and_headline_card(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """The Today redesign surfaces the page title, subtitle, and headline card."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    assert "<h1>Today</h1>" in html
+    assert "Daily 9am review" in html
+    headline = _section(html, "headline")
+    assert "headline__hero" in headline
+    assert "Gross margin" in headline
+    assert "headline__goal-bar" in headline
+
+
+def test_today_screen_segment_cards_carry_brand_kickers(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """BY SEGMENT cards dress cafe as CAFE · DAY and bar as TAPS · NIGHT (#45)."""
+    sales = [
+        _sale_record(
+            receipt_number="45-1",
+            item_id="chang-draft-500",
+            day=yesterday,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="45-2",
+            item_id="espresso-latte",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    segment = _section(response.text, "segment-cm")
+    assert "CAFE · DAY" in segment
+    assert "TAPS · NIGHT" in segment
+
+
+def test_today_screen_footer_places_sync_control_before_last_sync(
+    tmp_path: Path, today: date
+) -> None:
+    """The SYNC NOW footer sits above the last-sync line (issue #45)."""
+    app = _build_app(tmp_path, today=today, sales=None)
+    client = _authed_client(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    sync = _section(html, "sync-control")
+    assert "sync-control--footer" in sync
+    assert html.index("<!--section:sync-control-->") < html.index(
+        "<!--section:last-sync-->"
+    )

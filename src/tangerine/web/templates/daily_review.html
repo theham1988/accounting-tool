@@ -1,9 +1,47 @@
 {% extends "_base.html" %}
 {% set nav_active = "today" %}
-{% block title %}Daily 9am review — Tangerine Books{% endblock %}
+{% block title %}Today — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review">
-    <h1>Daily 9am review</h1>
+  {# Wave 3 #45 — the Today screen. The 9am review recreated as the brand
+     design: a day navigator whose prev/next arrows dim at the ends of the
+     synced range, config-changes + stale-sync banners, a gross-margin
+     headline card (hero + REVENUE/COGS/MARGIN% row + goal progress bar),
+     BY SEGMENT cards (shared partial), a NEEDS A FIX card linking into
+     Stock, a TOP & BOTTOM section with a MARGIN/VOLUME toggle, and the
+     last-sync + SYNC NOW footer. Behaviour is unchanged — the HTMX day
+     swap, the empty-store / no-day-data states, and the section anchors the
+     wider test suite slices all survive. #}
+
+  {# Item-performance deep link (issue #31), shared by the below-target list
+     and the rankings. Defined at the top of the block so both call sites see
+     one definition; anchored on this day, the PRD's worked interaction. #}
+  {% macro item_link(im) -%}
+  <a class="item-performance-link"
+     href="/review?mode=item&amp;item={{ im.item_id }}&amp;start={{ review.day.isoformat() }}&amp;end={{ review.day.isoformat() }}">{{ im.name }}</a>
+  {%- endmacro %}
+
+  {# Headline geometry, computed up front via a namespace so the clamping
+     survives Jinja's block scoping. The goal bar shows the 7-day rolling
+     average as a share of the 10K THB/day target, clamped to [0, 100] for
+     the bar width; a met-or-better goal fills the whole bar. The headline
+     margin % is None when there is no revenue to ratio against. #}
+  {% set ns = namespace(goal_pct=0, margin_pct=none) %}
+  {% if review.goal.target == 0 %}
+    {% set ns.goal_pct = 100 if review.goal.rolling_average > 0 else 0 %}
+  {% else %}
+    {% set ns.goal_pct = (review.goal.rolling_average / review.goal.target * 100) | int %}
+  {% endif %}
+  {% if ns.goal_pct < 0 %}{% set ns.goal_pct = 0 %}{% endif %}
+  {% if ns.goal_pct > 100 %}{% set ns.goal_pct = 100 %}{% endif %}
+  {% if review.revenue != 0 %}
+    {% set ns.margin_pct = (review.gross_margin / review.revenue * 100) | round(1) %}
+  {% endif %}
+
+  <div class="review today">
+    <header class="today__title">
+      <h1>Today</h1>
+      <p class="today__subtitle">Daily 9am review</p>
+    </header>
 
     {% if unreviewed_count %}
     <!--section:config-changes-->
@@ -47,10 +85,20 @@
 
     {% include "_mode_switcher.html" %}
 
+    {# Day navigator: prev/next arrows that dim at the bounds of the synced
+       range plus a date input behind the label for an arbitrary jump. The
+       arrows are ordinary links (deep-linkable, back-button friendly); the
+       date input HTMX-swaps #review-body and re-anchors the mode switcher. #}
     <!--section:day-nav-->
-    <section class="day-nav">
+    <section class="day-nav" aria-label="Review date">
+      <a
+        class="day-nav__arrow day-nav__arrow--prev{% if prev_dimmed %} day-nav__arrow--dimmed{% endif %}"
+        {% if not prev_dimmed %}href="/review?mode=day&amp;day={{ prev_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
+        title="Previous day"
+      >&larr;</a>
+
       <label class="day-nav__label">
-        <span>Review date</span>
+        <span class="day-nav__label-text">{{ review.day.isoformat() }}</span>
         <input
           class="day-nav__input"
           type="date"
@@ -68,42 +116,14 @@
           aria-label="Pick a review date"
         >
       </label>
+
+      <a
+        class="day-nav__arrow day-nav__arrow--next{% if next_dimmed %} day-nav__arrow--dimmed{% endif %}"
+        {% if not next_dimmed %}href="/review?mode=day&amp;day={{ next_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
+        title="Next day"
+      >&rarr;</a>
     </section>
     <!--/section:day-nav-->
-
-    <!--section:sync-control-->
-    <section class="sync-control">
-      <button
-        class="sync-control__button"
-        hx-post="/sync"
-        hx-target="#sync-result"
-        hx-swap="innerHTML"
-        hx-indicator=".sync-control__indicator"
-        hx-disabled-elt="this"
-      >Sync now</button>
-      <span class="sync-control__indicator" hidden>Syncing…</span>
-      <div id="sync-result" class="sync-result"></div>
-    </section>
-    <!--/section:sync-control-->
-
-    <!--section:last-sync-->
-    <p class="last-sync">
-      {% if last_sync %}
-      Last synced:
-      <time datetime="{{ last_sync.isoformat() }}">{{ last_sync.strftime("%Y-%m-%d %H:%M UTC") }}</time>
-      {% else %}
-      Last synced: never
-      {% endif %}
-    </p>
-    <!--/section:last-sync-->
-
-    {# Rankings and the below-target list carry reliable (mapped, priced)
-       rows only, so every name can link to the item-performance drill
-       (issue #31) — anchored on this day, the PRD's worked interaction. #}
-    {% macro item_link(im) -%}
-    <a class="item-performance-link"
-       href="/review?mode=item&amp;item={{ im.item_id }}&amp;start={{ review.day.isoformat() }}&amp;end={{ review.day.isoformat() }}">{{ im.name }}</a>
-    {%- endmacro %}
 
     <div id="review-body">
     <p class="day">For {{ review.day.isoformat() }}</p>
@@ -131,88 +151,60 @@
       <!--section:no-day-data-->
       <p class="empty-note empty-note--day">
         <em>No data for this day.</em>
-        Pick another date, or use “Sync now” above to pull the latest sales.
+        Pick another date, or use “Sync now” below to pull the latest sales.
       </p>
       <!--/section:no-day-data-->
     {% endif %}
 
-    <section class="headline">
-      <h2>Headline</h2>
-      <dl>
-        <dt>Revenue</dt><dd>{{ review.revenue | money }} THB</dd>
-        <dt>COGS</dt><dd>{{ review.cogs | money }} THB</dd>
-        <dt>Gross margin</dt><dd>{{ review.gross_margin | money }} THB</dd>
+    {# Headline card: gross-margin hero + REVENUE/COGS/MARGIN% row + the
+       7-day-avg-vs-goal progress bar with a status line (tango when short
+       of goal, teal when MET). Computed numbers come from the namespace at
+       the top of the block so the bar tracks the same figures the partner
+       reads. #}
+    <!--section:headline-->
+    <section class="headline headline--card">
+      <p class="headline__hero-label">Gross margin</p>
+      <p class="headline__hero">
+        <span class="headline__hero-value">{{ review.gross_margin | money }}</span>
+        <span class="headline__hero-unit">THB</span>
+      </p>
+      <dl class="headline__row">
+        <div class="headline__stat">
+          <dt>Revenue</dt>
+          <dd>{{ review.revenue | money }} THB</dd>
+        </div>
+        <div class="headline__stat">
+          <dt>COGS</dt>
+          <dd>{{ review.cogs | money }} THB</dd>
+        </div>
+        <div class="headline__stat">
+          <dt>Margin%</dt>
+          <dd>{% if ns.margin_pct is not none %}{{ ns.margin_pct }}%{% else %}—{% endif %}</dd>
+        </div>
       </dl>
+
+      <div class="headline__goal">
+        <div class="headline__goal-bar" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ns.goal_pct }}"
+             aria-label="7-day average gross margin toward the 10,000 THB/day target">
+          <span class="headline__goal-fill{% if review.goal.met %} headline__goal-fill--met{% endif %}" style="width: {{ ns.goal_pct }}%;"></span>
+        </div>
+        <p class="headline__goal-status{% if review.goal.met %} headline__goal-status--met{% endif %}">
+          {% if review.goal.met %}
+          MET — 7-day average {{ review.goal.rolling_average | money }} THB/day against {{ review.goal.target | money }} THB/day.
+          {% else %}
+          Short of goal — 7-day average {{ review.goal.rolling_average | money }} THB/day against {{ review.goal.target | money }} THB/day ({{ review.goal.days_in_window }} day{{ "" if review.goal.days_in_window == 1 else "s" }}).
+          {% endif %}
+        </p>
+      </div>
     </section>
+    <!--/section:headline-->
 
     {% include "_segment_cm.html" %}
 
-    <section class="rankings">
-      <h2>Top &amp; bottom items</h2>
-
-      <div class="rankings__grid">
-        <div class="ranking">
-          <h3>Top by margin</h3>
-          <!--section:top-by-margin-->
-          <ol class="ranking__list">
-            {% for im in review.top_by_margin.items %}
-            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
-            {% endfor %}
-          </ol>
-          <!--/section:top-by-margin-->
-        </div>
-
-        <div class="ranking">
-          <h3>Bottom by margin</h3>
-          <!--section:bottom-by-margin-->
-          <ol class="ranking__list">
-            {% for im in review.bottom_by_margin.items %}
-            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
-            {% endfor %}
-          </ol>
-          <!--/section:bottom-by-margin-->
-        </div>
-
-        <div class="ranking">
-          <h3>Top by volume</h3>
-          <!--section:top-by-volume-->
-          <ol class="ranking__list">
-            {% for im in review.top_by_volume.items %}
-            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
-            {% endfor %}
-          </ol>
-          <!--/section:top-by-volume-->
-        </div>
-
-        <div class="ranking">
-          <h3>Bottom by volume</h3>
-          <!--section:bottom-by-volume-->
-          <ol class="ranking__list">
-            {% for im in review.bottom_by_volume.items %}
-            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
-            {% endfor %}
-          </ol>
-          <!--/section:bottom-by-volume-->
-        </div>
-      </div>
-    </section>
-
-    {% if review.below_target_items %}
-    <section class="below-target">
-      <h2>Below target margin</h2>
-      <!--section:below-target-->
-      <ul class="below-target__list">
-        {% for im in review.below_target_items %}
-        <li>{{ item_link(im) }} — actual {{ im.gross_margin_pct }}%</li>
-        {% endfor %}
-      </ul>
-      <!--/section:below-target-->
-    </section>
-    {% endif %}
-
     {% if needs_attention %}
-    <section class="needs-attention">
-      <h2>Needs attention</h2>
+    <section class="needs-attention needs-attention--card">
+      <h2>Needs a fix</h2>
       <!--section:needs-attention-->
       <p class="needs-attention__note">
         These items sold but their cost could not be computed, so their revenue
@@ -237,7 +229,87 @@
     </section>
     {% endif %}
 
-    <section class="goal">
+    {% if review.below_target_items %}
+    <section class="below-target">
+      <h2>Below target margin</h2>
+      <!--section:below-target-->
+      <ul class="below-target__list">
+        {% for im in review.below_target_items %}
+        <li>{{ item_link(im) }} — actual {{ im.gross_margin_pct }}%</li>
+        {% endfor %}
+      </ul>
+      <!--/section:below-target-->
+    </section>
+    {% endif %}
+
+    {# TOP & BOTTOM with a MARGIN/VOLUME toggle (query param). All four
+       ranking sections stay in the DOM (their anchors are sliced across the
+       wider test suite); the active pair is marked and the inactive pair is
+       hidden via the data-rank hook on the grid. #}
+    <section class="rankings rankings--today">
+      <div class="rankings__head">
+        <h2>Top &amp; bottom items</h2>
+        <!--section:rank-toggle-->
+        <nav class="rank-toggle" aria-label="Rank by">
+          <a class="rank-toggle__link{% if rank_active == 'margin' %} rank-toggle__link--active{% endif %}"
+             href="{{ rank_urls.margin }}">Margin</a>
+          <a class="rank-toggle__link{% if rank_active == 'volume' %} rank-toggle__link--active{% endif %}"
+             href="{{ rank_urls.volume }}">Volume</a>
+        </nav>
+        <!--/section:rank-toggle-->
+      </div>
+
+      <div class="rankings__grid rankings__grid--rank-{{ rank_active }}" data-rank="{{ rank_active }}">
+        <div class="ranking ranking--by-margin">
+          <h3>Top by margin</h3>
+          <!--section:top-by-margin-->
+          <ol class="ranking__list">
+            {% for im in review.top_by_margin.items %}
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:top-by-margin-->
+        </div>
+
+        <div class="ranking ranking--by-margin">
+          <h3>Bottom by margin</h3>
+          <!--section:bottom-by-margin-->
+          <ol class="ranking__list">
+            {% for im in review.bottom_by_margin.items %}
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.gross_margin | money }} THB</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:bottom-by-margin-->
+        </div>
+
+        <div class="ranking ranking--by-volume">
+          <h3>Top by volume</h3>
+          <!--section:top-by-volume-->
+          <ol class="ranking__list">
+            {% for im in review.top_by_volume.items %}
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:top-by-volume-->
+        </div>
+
+        <div class="ranking ranking--by-volume">
+          <h3>Bottom by volume</h3>
+          <!--section:bottom-by-volume-->
+          <ol class="ranking__list">
+            {% for im in review.bottom_by_volume.items %}
+            <li>{{ item_link(im) }} <span class="ranking__metric">{{ im.units_sold }} units</span></li>
+            {% endfor %}
+          </ol>
+          <!--/section:bottom-by-volume-->
+        </div>
+      </div>
+    </section>
+
+    {# The legacy goal-progress block stays as the structured source the goal
+       section tests slice. The headline card's goal bar is the glance; this
+       dl is the detail (rolling average, target, status, days in window). #}
+    <section class="goal goal--legacy">
       <h2>Goal progress</h2>
       <!--section:goal-->
       <dl class="goal__stats">
@@ -255,5 +327,36 @@
       <!--/section:goal-->
     </section>
     </div><!-- /#review-body -->
+
+    {# The last-sync + SYNC NOW footer. The button POSTs to /sync and the
+       result swaps into #sync-result; the in-flight indicator toggles via
+       hx-indicator. Kept as its own section so the empty-store state's
+       prominent Sync-now button (above) and this footer button share the
+       same target without duplicate wiring. #}
+    <!--section:sync-control-->
+    <section class="sync-control sync-control--footer">
+      <button
+        class="sync-control__button"
+        hx-post="/sync"
+        hx-target="#sync-result"
+        hx-swap="innerHTML"
+        hx-indicator=".sync-control__indicator"
+        hx-disabled-elt="this"
+      >Sync now</button>
+      <span class="sync-control__indicator" hidden>Syncing…</span>
+      <div id="sync-result" class="sync-result"></div>
+    </section>
+    <!--/section:sync-control-->
+
+    <!--section:last-sync-->
+    <p class="last-sync">
+      {% if last_sync %}
+      Last synced:
+      <time datetime="{{ last_sync.isoformat() }}">{{ last_sync.strftime("%Y-%m-%d %H:%M UTC") }}</time>
+      {% else %}
+      Last synced: never
+      {% endif %}
+    </p>
+    <!--/section:last-sync-->
   </div>
 {% endblock %}
