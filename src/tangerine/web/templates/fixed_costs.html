@@ -2,104 +2,141 @@
 {% set nav_active = "reports" %}
 {% block title %}Fixed costs — Tangerine Books{% endblock %}
 {% block content %}
+  {# Fixed-costs admin is a Reports sub-page: the bottom nav stays (REPORTS
+     active) and a header sub-row points back into Reports, names the page,
+     and tags it ADMIN — the Wave 3 "sub-page of a primary destination"
+     pattern (issue #50, ADR-0006 shared chrome). End/delete semantics are
+     unchanged; this template is presentation only. #}
   <div class="review fixed-costs">
-    <h1>Fixed costs</h1>
-    <p class="fixed-costs__note">
-      Entity-level costs (rent, utilities, shared staff, insurance) — never
-      allocated to a segment. A <strong>recurring</strong> cost is defined
-      once and applies every month until ended; a <strong>one-off</strong>
-      applies to a single month. <a href="/admin">&larr; Admin</a>
+    <!--section:fixed-cost-header-->
+    <header class="fixed-costs__subhead">
+      <a class="fixed-costs__back" href="{{ nav_urls.reports }}">
+        <span aria-hidden="true">&larr;</span>
+        <span class="fixed-costs__back-label">Reports</span>
+      </a>
+      <h1 class="fixed-costs__title">FIXED COSTS</h1>
+      <span class="fixed-costs__admin-tag">ADMIN</span>
+    </header>
+    <!--/section:fixed-cost-header-->
+
+    <p class="fixed-costs__intro">
+      Rent, utilities, staff, insurance — whole-venue costs. Never split
+      across cafe / taps; they come off net profit on the Month view.
     </p>
 
     <!--section:fixed-cost-form-->
     <section class="fixed-cost-form">
-      <h2>Add a fixed cost</h2>
+      <h2 class="fixed-cost-form__heading">ADD A COST</h2>
       <form method="post" action="/admin/fixed-costs">
         <label class="fixed-cost-form__label">
-          <span>Label</span>
-          <input type="text" name="label" required placeholder="Rent">
+          <span>LABEL</span>
+          <input type="text" name="label" placeholder="Rent"
+                 value="{{ form_values.label if form_values else '' }}">
         </label>
-        <label class="fixed-cost-form__label">
-          <span>Category</span>
-          <select name="category">
-            <option value="rent">Rent</option>
-            <option value="utilities">Utilities</option>
-            <option value="staff_salaries">Staff salaries</option>
-            <option value="insurance">Insurance</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
-        <label class="fixed-cost-form__label">
-          <span>Monthly amount (THB)</span>
-          <input type="number" name="amount" min="0" step="0.01" required>
-        </label>
-        <label class="fixed-cost-form__label">
-          <span>Kind</span>
-          <select name="kind">
-            <option value="recurring">Recurring (every month until ended)</option>
-            <option value="oneoff">One-off (a single month)</option>
-          </select>
-        </label>
-        <label class="fixed-cost-form__label">
-          <span>Month (first month for recurring; the month for a one-off)</span>
-          <input type="month" name="period" required>
-        </label>
-        <button type="submit" class="fixed-cost-form__save">Save</button>
+        <div class="fixed-cost-form__row">
+          <label class="fixed-cost-form__label">
+            <span>CATEGORY</span>
+            {% set _selected_category = form_values.category if form_values and form_values.category else 'other' %}
+            <select name="category">
+              <option value="rent"{{ ' selected' if _selected_category == 'rent' else '' }}>Rent</option>
+              <option value="utilities"{{ ' selected' if _selected_category == 'utilities' else '' }}>Utilities</option>
+              <option value="staff_salaries"{{ ' selected' if _selected_category == 'staff_salaries' else '' }}>Staff salaries</option>
+              <option value="insurance"{{ ' selected' if _selected_category == 'insurance' else '' }}>Insurance</option>
+              <option value="other"{{ ' selected' if _selected_category == 'other' else '' }}>Other</option>
+            </select>
+          </label>
+          <label class="fixed-cost-form__label">
+            <span>AMOUNT · THB</span>
+            <input type="number" name="amount" min="0" step="0.01" placeholder="30000"
+                   value="{{ form_values.amount if form_values else '' }}">
+          </label>
+        </div>
+        <div class="fixed-cost-form__row">
+          <label class="fixed-cost-form__label">
+            <span>KIND</span>
+            {% set _selected_kind = form_values.kind if form_values and form_values.kind else 'recurring' %}
+            <select name="kind">
+              <option value="recurring"{{ ' selected' if _selected_kind == 'recurring' else '' }}>Recurring — every month</option>
+              <option value="oneoff"{{ ' selected' if _selected_kind == 'oneoff' else '' }}>One-off — single month</option>
+            </select>
+          </label>
+          <label class="fixed-cost-form__label">
+            <span>FROM MONTH</span>
+            <input type="month" name="period"
+                   value="{{ form_values.period if form_values else '' }}">
+          </label>
+        </div>
+        {% if form_error %}
+        <p class="fixed-cost-form__error" role="alert">{{ form_error }}</p>
+        {% endif %}
+        <button type="submit" class="fixed-cost-form__save">SAVE</button>
       </form>
     </section>
     <!--/section:fixed-cost-form-->
 
+    <!--section:fixed-cost-list-->
     <section class="fixed-cost-list-section">
-      <h2>Current fixed costs</h2>
-      <!--section:fixed-cost-list-->
+      <header class="fixed-cost-list-section__header">
+        <h2 class="fixed-cost-list-section__title">CURRENT · {{ entries | length }}</h2>
+        <p class="fixed-cost-list-section__recurring-total">
+          {{ recurring_monthly_total | money }} THB/mo recurring
+        </p>
+      </header>
+
       {% if entries %}
-      <table class="fixed-cost-list">
-        <thead>
-          <tr>
-            <th>Label</th><th>Category</th><th>Monthly amount</th>
-            <th>Kind</th><th>From</th><th>Status</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for entry in entries %}
-          <tr class="fixed-cost-list__row">
-            <td class="fixed-cost-list__label">{{ entry.label }}</td>
-            <td>{{ entry.category }}</td>
-            <td>{{ entry.amount | money }} THB</td>
-            <td class="fixed-cost-list__kind">{{ entry.kind }}</td>
-            <td>{{ "%04d-%02d" | format(entry.period[0], entry.period[1]) }}</td>
-            <td class="fixed-cost-list__status">
-              {% if entry.kind == 'oneoff' %}
-                one month only
-              {% elif entry.ended_at %}
-                ended {{ entry.ended_at.isoformat() }}
+      <ul class="fixed-cost-list">
+        {% for entry in entries %}
+        {% set _is_ended = entry.ended_at is not none %}
+        {% set _is_oneoff = entry.kind == 'oneoff' %}
+        {% set _kind_label = 'one-off' if _is_oneoff else 'recurring' %}
+        {% set _period = "%04d-%02d" | format(entry.period[0], entry.period[1]) %}
+        <li class="fixed-cost-list__row{{ ' fixed-cost-list__row--ended' if _is_ended else '' }}{{ ' fixed-cost-list__row--oneoff' if _is_oneoff else '' }}">
+          <div class="fixed-cost-list__top">
+            <span class="fixed-cost-list__label">{{ entry.label }}</span>
+            <span class="fixed-cost-list__amount">
+              {{ entry.amount | money }}
+              <span class="fixed-cost-list__per">{% if _is_oneoff %}once{% else %}/mo{% endif %}</span>
+            </span>
+          </div>
+          <div class="fixed-cost-list__bottom">
+            <span class="fixed-cost-list__meta">
+              {{ entry.category }} · {{ _kind_label }} · from {{ _period }}
+            </span>
+            <span class="fixed-cost-list__actions">
+              {% if _is_oneoff %}
+              <span class="fixed-cost-list__status fixed-cost-list__status--muted">ONE MONTH ONLY</span>
+              {% elif _is_ended %}
+              <span class="fixed-cost-list__status fixed-cost-list__status--muted">ENDED {{ entry.ended_at.isoformat() }}</span>
               {% else %}
-                active
+              <span class="fixed-cost-list__status fixed-cost-list__status--active">ACTIVE</span>
               {% endif %}
-            </td>
-            <td class="fixed-cost-list__actions">
-              {% if entry.kind == 'recurring' and not entry.ended_at %}
-              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/end" style="display:inline">
+              {% if entry.kind == 'recurring' and not _is_ended %}
+              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/end">
                 <button type="submit" class="fixed-cost-list__end"
-                        title="Stops applying after this month; past months keep it">End</button>
+                        title="Stops after this month; past months keep it">END</button>
               </form>
               {% endif %}
-              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/delete" style="display:inline">
+              <form method="post" action="/admin/fixed-costs/{{ entry.entry_id }}/delete">
                 <button type="submit" class="fixed-cost-list__delete"
-                        title="Removes it from every month (for typos/duplicates)">Delete</button>
+                        title="Removes it from every month (typos)">DEL</button>
               </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+            </span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
       {% else %}
       <p class="fixed-cost-list fixed-cost-list--empty">
         No fixed costs entered yet. Until they are, the Month view's net
         profit equals its gross margin.
       </p>
       {% endif %}
-      <!--/section:fixed-cost-list-->
+      <p class="fixed-cost-list-section__footer">
+        END stops a recurring cost after the current month — a month already
+        owed stays charged. DEL removes it from every month (for typos). Both
+        land in the audit log and can be reverted there.
+      </p>
     </section>
+    <!--/section:fixed-cost-list-->
   </div>
 {% endblock %}

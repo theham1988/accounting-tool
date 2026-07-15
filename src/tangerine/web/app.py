@@ -714,20 +714,46 @@ def create_app(
             request=request, name="admin.html", context={"request": request}
         )
 
+    def _fixed_costs_page_context(
+        request: Request,
+        *,
+        form_error: str | None = None,
+        form_values: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the fixed-costs admin page.
+
+        Computes the active recurring monthly total the CURRENT card header
+        shows. Presentation-only — end/delete semantics live in the store.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        entries = cfg.fixed_costs()
+        recurring_monthly_total = sum(
+            (entry.amount for entry in entries
+             if entry.kind == "recurring" and entry.ended_at is None),
+            Decimal("0"),
+        )
+        return {
+            "request": request,
+            "entries": entries,
+            "recurring_monthly_total": recurring_monthly_total,
+            "form_error": form_error,
+            "form_values": form_values,
+        }
+
     @app.get("/admin/fixed-costs", response_class=HTMLResponse)
     def fixed_costs_page(request: Request) -> HTMLResponse:
-        """The fixed-cost entry surface (Wave 2 slice 3).
+        """The fixed-cost entry surface (Wave 3 Reports sub-page).
 
         One page: the add form plus the current entries with end/delete
         actions. Fixed costs are entity-level — the page never asks for a
-        segment (ADR-0004 decision 3: never allocated).
+        segment (ADR-0004 decision 3: never allocated). Bottom nav stays
+        with REPORTS active (issue #50).
         """
-        cfg: SqliteConfigStore = app.state.config_store
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
             request=request,
             name="fixed_costs.html",
-            context={"request": request, "entries": cfg.fixed_costs()},
+            context=_fixed_costs_page_context(request),
         )
 
     @app.post("/admin/fixed-costs", response_model=None)
@@ -746,26 +772,59 @@ def create_app(
         applies from. The redirect lands back on the list, which re-reads
         the DB — what the partner sees after saving is what the next Month
         view will subtract.
+
+        On a validation failure the page re-renders (200) with the inline
+        error in the ADD A COST card and the partner's submitted values
+        echoed back into the form — never a bare 400, never a silent save
+        (issue #50 AC). Nothing is written on a failed submit.
         """
         cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
         label = label.strip()
-        if not label:
-            return HTMLResponse("Label is required.", status_code=400)
+        amount_stripped = amount.strip()
+
+        def _rerender_with_error(message: str) -> HTMLResponse:
+            return t.TemplateResponse(
+                request=request,
+                name="fixed_costs.html",
+                context=_fixed_costs_page_context(
+                    request,
+                    form_error=message,
+                    form_values={
+                        "label": label,
+                        "category": category,
+                        "amount": amount_stripped,
+                        "kind": kind,
+                        "period": period.strip(),
+                    },
+                ),
+            )
+
+        # A missing label or amount is the common mistake — the canonical
+        # "nothing was saved" message the design specifies.
+        if not label or not amount_stripped:
+            return _rerender_with_error(
+                "Needs a label and an amount — nothing was saved."
+            )
         if kind not in ("recurring", "oneoff"):
-            return HTMLResponse(
-                "Kind must be recurring or oneoff.", status_code=400
+            return _rerender_with_error(
+                "Kind must be recurring or one-off — nothing was saved."
             )
         try:
-            amount_value = Decimal(amount.strip())
+            amount_value = Decimal(amount_stripped)
         except InvalidOperation:
-            return HTMLResponse("Amount must be a number.", status_code=400)
+            return _rerender_with_error(
+                "Amount must be a number — nothing was saved."
+            )
         if amount_value < 0:
-            return HTMLResponse("Amount must be ≥ 0.", status_code=400)
+            return _rerender_with_error(
+                "Amount must be 0 or more — nothing was saved."
+            )
         try:
             first_day = date.fromisoformat(f"{period}-01")
-        except ValueError:
-            return HTMLResponse(
-                "Month must be YYYY-MM.", status_code=400
+        except (ValueError, TypeError):
+            return _rerender_with_error(
+                "Pick a from-month — nothing was saved."
             )
         cfg.create_fixed_cost(
             label=label,
