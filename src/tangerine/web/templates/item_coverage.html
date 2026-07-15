@@ -1,66 +1,60 @@
 {% extends "_base.html" %}
 {% set nav_active = "stock" %}
 {% set wide = true %}
-{% block title %}Item coverage — Tangerine Books{% endblock %}
+{% block title %}Menu items — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review coverage">
-    <h1>Item coverage</h1>
-    <p class="day">
-      Every Loyverse item: mapping status and its SKU's chain health.
-      <a href="/skus">SKU view &rarr;</a>
-    </p>
+  <div class="review stock stock--items">
+    <p class="stock__kicker">Stock</p>
+    <h1>Menu items</h1>
 
-    {% if filtered_item_id %}
-    <p class="coverage-filter">
-      Showing only <strong>{{ filtered_item_id }}</strong> —
-      <a href="/items">clear filter</a>
-    </p>
-    {% endif %}
+    {% include "_stock_chrome.html" %}
 
-    {% if not rows %}
-    <p class="empty-note"><em>No items to show.</em></p>
-    {% else %}
-    <section class="coverage-table">
-      <table>
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Sell price</th>
-            <th>Mapped to</th>
-            <th>Health</th>
-            <th>Cost/unit</th>
-            <th>Margin</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for row in rows %}
-          <tr class="item-row {% if row.mapped_sku_id %}item-row--{{ row.sku_health.value }}{% else %}item-row--unmapped{% endif %}">
-            <td class="item-row__name">{{ row.name }}<span class="item-row__id">{{ row.item_id }}</span></td>
-            <td>{{ row.sell_price | money }} THB</td>
-            <td>
-              {% if row.mapped_sku_id %}
-                <a href="/skus">{{ row.mapped_sku_id }}</a>
-              {% else %}
-                <span class="item-row__unmapped-label">unmapped</span>
-                — <a href="/skus/new?item_id={{ row.item_id }}">create new SKU&hellip;</a>
-                — <a href="/items/{{ row.item_id }}/sold-as-is">sold as-is&hellip;</a>
-              {% endif %}
-            </td>
-            <td>
-              {% if row.sku_health %}
-                <span class="health-dot health-dot--{{ row.sku_health.value }}" title="{{ row.sku_health.value }}"></span>
-                {{ row.sku_health.value }}
-              {% else %}
-                —
-              {% endif %}
-            </td>
-            <td>{{ (row.cost_per_unit | money) if row.cost_per_unit is not none else "—" }}</td>
-            <td>{{ (row.gross_margin | money) if row.gross_margin is not none else "—" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+    {% if not rows and not filtered_item_id and filter != "all" %}
+    <!--section:stock-empty-->
+    <section class="stock-empty">
+      <p>Nothing matches this filter — if you were hunting for broken ones, that&rsquo;s good news.</p>
+      <a class="stock-empty__reset" href="{{ filter_urls['all'] }}">Show all</a>
     </section>
+    <!--/section:stock-empty-->
+    {% elif not rows %}
+    <p class="empty-note"><em>No menu items to show.</em></p>
+    {% else %}
+    <!--section:stock-list-->
+    <ul class="stock-list">
+      {% for row in rows %}
+      <li class="stock-row item-row {% if row.mapped_sku_id %}stock-row--{{ row.sku_health.value }} item-row--{{ row.sku_health.value }}{% else %}stock-row--unmapped item-row--unmapped{% endif %}">
+        <span class="health-dot {% if row.sku_health %}health-dot--{{ row.sku_health.value }}{% else %}health-dot--red{% endif %}"></span>
+        <div class="stock-row__main">
+          <a class="stock-row__name" href="/items?item={{ row.item_id }}">{{ row.name }}</a>
+          <span class="stock-row__sub item-row__id">
+            {% if row.mapped_sku_id %}{{ row.mapped_sku_id }} · {{ row.sell_price | money }} THB sell{% else %}{{ row.item_id }} · unmapped{% endif %}
+          </span>
+          {% if not row.mapped_sku_id %}
+          <span class="stock-row__badge item-row__unmapped-label">Unmapped</span>
+          {% elif row.sku_health and row.sku_health.value == 'red' and row.cost_per_unit is none %}
+          <span class="stock-row__badge">No cost</span>
+          {% endif %}
+        </div>
+        <span class="stock-row__figure">
+          {% if row.gross_margin is not none %}{{ row.gross_margin | money }} THB margin{% else %}{{ row.sell_price | money }} THB{% endif %}
+        </span>
+        {% if not row.mapped_sku_id %}
+        <p class="stock-row__actions">
+          <a href="/skus/new?item_id={{ row.item_id }}">Create new SKU&hellip;</a>
+          — <a href="/items/{{ row.item_id }}/sold-as-is">Sold as-is&hellip;</a>
+        </p>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <!--/section:stock-list-->
     {% endif %}
+
+    <!--section:stock-footer-->
+    <footer class="stock-footer">
+      <a class="stock-footer__bulk" href="/upload">Bulk edit by spreadsheet &rarr;</a>
+      <span class="stock-footer__count">Showing {{ rows | length }} of {{ total_count }}</span>
+    </footer>
+    <!--/section:stock-footer-->
   </div>
 {% endblock %}
