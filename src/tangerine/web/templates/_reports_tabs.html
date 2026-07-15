@@ -1,0 +1,17 @@
+{# Reports header tabs (Wave 3 #47) — PERIOD / MONTH / TRENDS.
+
+   The mode switcher minus Day, restyled as the Reports screen's tab row.
+   Ordinary links to the existing mode URLs (ADR-0004): deep-linkable, no
+   client JavaScript. Reuses the ``mode-switcher`` section seam and the
+   ``mode-switcher__link--active`` hook so the wider test suite keeps
+   slicing the active tab. Expects ``mode`` and ``switcher`` in context. #}
+<!--section:mode-switcher-->
+<nav id="mode-switcher" class="mode-switcher mode-switcher--reports" aria-label="Report mode">
+  <a class="mode-switcher__link{% if mode == 'period' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.period }}">Period</a>
+  <a class="mode-switcher__link{% if mode == 'month' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.month }}">Month</a>
+  <a class="mode-switcher__link{% if mode == 'trends' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.trends }}">Trends</a>
+</nav>
+<!--/section:mode-switcher-->

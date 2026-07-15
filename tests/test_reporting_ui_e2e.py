@@ -435,11 +435,11 @@ def test_period_mode_excludes_unmapped_revenue_and_surfaces_it(
 def test_period_and_month_pages_carry_the_switcher_anchored_on_their_range(
     tmp_path: Path, yesterday: date, today: date
 ) -> None:
-    """Switching modes from a period/month page keeps the partner's context.
+    """Reports tabs switch Period / Month / Trends via deep-linkable URLs.
 
-    On a period page ending at E, the switcher's Day link goes to E's day
-    review and Month to E's month — moving between modes feels like zooming
-    the same report (PRD user story 5), and every step is a URL.
+    On a period page ending at E, Month offers E's month and Trends is
+    reachable — moving between report modes feels like one screen with tabs
+    (Wave 3 #47), and every step is a URL (ADR-0004).
     """
     app = _build_app(tmp_path, today=today, sales=[])
     client = _authed_client(app)
@@ -451,14 +451,25 @@ def test_period_and_month_pages_carry_the_switcher_anchored_on_their_range(
     switcher = period_html.split("<!--section:mode-switcher-->")[1].split(
         "<!--/section:mode-switcher-->"
     )[0]
-    assert f"/review?mode=day&amp;day={yesterday.isoformat()}" in switcher
+    assert "Period" in switcher
+    assert "Month" in switcher
+    assert "Trends" in switcher
+    assert "mode-switcher__link--active" in switcher
     assert "/review?mode=month&amp;month=2026-07" in switcher
+    assert "/review?mode=trends" in switcher
+    # Day is the Today surface now — not a Reports tab.
+    assert "mode=day" not in switcher
 
     month_html = client.get("/review?mode=month&month=2026-07").text
     month_switcher = month_html.split("<!--section:mode-switcher-->")[1].split(
         "<!--/section:mode-switcher-->"
     )[0]
-    assert "/review?mode=day&amp;day=2026-07-31" in month_switcher
+    week_start = (date(2026, 7, 31) - timedelta(days=6)).isoformat()
+    assert (
+        f"/review?mode=period&amp;start={week_start}&amp;end=2026-07-31"
+        in month_switcher
+    )
+    assert "mode-switcher__link--active" in month_switcher
 
 
 def test_period_mode_flags_a_segment_with_negative_cm_red(
@@ -519,10 +530,11 @@ def test_admin_destination_gathers_the_config_surfaces(
 def test_review_pages_link_to_the_admin_destination(
     tmp_path: Path, yesterday: date, today: date
 ) -> None:
-    """Both report shapes carry the Admin link — two top-level destinations.
+    """Today keeps the Admin entry; Reports jumps into Fixed Costs.
 
-    ADR-0004 decision 4: Review and Admin are the app's only two top-level
-    destinations, so each review mode must offer the way into Admin.
+    Wave 3 moves Admin off the Reports chrome — the Fixed Costs row-link
+    card is the way into entity-level costs from where the partner notices
+    them (#47). Day mode still offers Admin via the mode switcher.
     """
     app = _build_app(tmp_path, today=today, sales=[])
     client = _authed_client(app)
@@ -531,7 +543,7 @@ def test_review_pages_link_to_the_admin_destination(
     month_html = client.get("/review?mode=month&month=2026-07").text
 
     assert 'href="/admin"' in day_html
-    assert 'href="/admin"' in month_html
+    assert 'href="/admin/fixed-costs"' in month_html
 
 
 # --- AC: fixed-cost entry (create / end / delete), audit-logged -----------------
@@ -619,7 +631,7 @@ def test_sub_month_period_shows_the_apportioned_estimate_labelled(
     assert "11290.32" in fixed
     assert "apportioned" in fixed.lower()
     lowered = html.lower()
-    assert "estimated fixed costs (apportioned)" in lowered
+    assert "fixed (est · apportioned)" in lowered
     assert "net profit (estimate)" in lowered
     # Net profit estimate: latte GM 75 − 11,290.32.
     assert "-11215.32" in html
@@ -802,7 +814,8 @@ def test_issue_30_end_to_end_recurring_rent_plus_oneoff(
     assert "1806.45" in fixed
     assert "13096.77" in week
     assert "-13021.77" in week
-    assert "estimated fixed costs (apportioned)" in week.lower()
+    assert "fixed (est · apportioned)" in week.lower()
+    assert "net profit (estimate)" in week.lower()
 
     # Both edits are on the trail; reverting the repair's creation undoes it.
     audit_html = client.get("/audit").text
@@ -1174,3 +1187,94 @@ def test_period_mode_rejects_a_malformed_or_backwards_range(
         ).status_code
         == 400
     )
+
+
+def test_period_range_nav_dims_at_the_bounds_of_synced_sales(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Period prev/next arrows dim when the range hits the synced bounds.
+
+    Earliest sale day and yesterday (latest reviewable) are the ends — the
+    same bound rule the Today day-nav uses (#45), applied to a sliding
+    period window (#47). A mid-range window offers live arrows both ways.
+    """
+    earliest = date(2026, 6, 1)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=earliest,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="espresso-latte",
+            day=yesterday,
+            price="120",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    # Mid-range 7-day window: both arrows are live links that slide by 7 days.
+    mid_end = yesterday - timedelta(days=7)
+    mid_start = mid_end - timedelta(days=6)
+    mid = client.get(
+        f"/review?mode=period&start={mid_start.isoformat()}&end={mid_end.isoformat()}"
+    ).text
+    mid_nav = mid.split("<!--section:range-nav-->")[1].split(
+        "<!--/section:range-nav-->"
+    )[0]
+    assert "range-nav__arrow--dimmed" not in mid_nav
+    prev_start = (mid_start - timedelta(days=7)).isoformat()
+    prev_end = (mid_end - timedelta(days=7)).isoformat()
+    next_start = (mid_start + timedelta(days=7)).isoformat()
+    next_end = (mid_end + timedelta(days=7)).isoformat()
+    assert (
+        f'href="/review?mode=period&amp;start={prev_start}&amp;end={prev_end}"'
+        in mid_nav
+    )
+    assert (
+        f'href="/review?mode=period&amp;start={next_start}&amp;end={next_end}"'
+        in mid_nav
+    )
+
+    # Window ending on yesterday: next dims (cannot step into today).
+    at_end = client.get(
+        f"/review?mode=period"
+        f"&start={(yesterday - timedelta(days=6)).isoformat()}"
+        f"&end={yesterday.isoformat()}"
+    ).text
+    end_nav = at_end.split("<!--section:range-nav-->")[1].split(
+        "<!--/section:range-nav-->"
+    )[0]
+    assert "range-nav__arrow--next range-nav__arrow--dimmed" in end_nav or (
+        "range-nav__arrow--dimmed" in end_nav
+        and 'aria-disabled="true"' in end_nav
+    )
+
+
+def test_reports_pages_mark_bottom_nav_reports_active(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Period / Month / Trends light the REPORTS bottom-nav cell (#47)."""
+    app = _build_app(tmp_path, today=today, sales=[])
+    client = _authed_client(app)
+    start = yesterday - timedelta(days=6)
+
+    for url in (
+        f"/review?mode=period&start={start.isoformat()}&end={yesterday.isoformat()}",
+        "/review?mode=month&month=2026-07",
+        "/review?mode=trends",
+    ):
+        html = client.get(url).text
+        nav = html.split("<!--section:bottom-nav-->")[1].split(
+            "<!--/section:bottom-nav-->"
+        )[0]
+        assert "tb-bottomnav__cell--active" in nav
+        assert "Reports" in nav
+        # The active cell is the Reports one (tangerine), not Today.
+        reports_cell = [
+            cell for cell in nav.split("<a ") if "Reports" in cell
+        ][0]
+        assert "tb-bottomnav__cell--active" in reports_cell

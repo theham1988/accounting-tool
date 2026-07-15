@@ -1,5 +1,5 @@
-{# BY SEGMENT cards (Wave 3 #45), shared by the Day and Period/Month report
-   bodies (one report shape across modes, ADR-0004 decision 4).
+{# BY SEGMENT cards (Wave 3 #45 / #47), shared by Day and Period/Month
+   (one report shape across modes, ADR-0004 decision 4).
 
    Each segment renders as its own card with the brand identity the venue
    trades under: CAFE is "Coffee by day" on the paper ground, TAPS is
@@ -36,7 +36,7 @@ TAPS · NIGHT
 {%- if sm.contribution_margin < 0 -%}
 Selling below cost — losing {{ (sm.variable_costs - sm.revenue) | money }} THB on {{ sm.revenue | money }} THB of sales.
 {%- elif sm.contribution_margin == 0 -%}
-Broke exactly even on the day.
+Broke exactly even.
 {%- else -%}
 Covering costs with {{ sm.contribution_margin | money }} THB left after {{ sm.variable_costs | money }} THB of ingredients.
 {%- endif -%}
@@ -50,25 +50,22 @@ Covering costs with {{ sm.contribution_margin | money }} THB left after {{ sm.va
     {# ``segment-cm__row`` stays the per-row class hook (sliced across the
        test suite); ``--red`` flags a segment failing to cover its costs. The
        ``--night`` modifier is the brand hook for the Taps card's midnight
-       ground (dressed when CSS lands). #}
+       ground. Big CM sits above the rev/costs micro-row (#47). #}
     <li class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}{% if sm.segment.value == 'bar' %} segment-cm__row--night{% endif %}">
       <p class="segment-cm__kicker">{{ segment_brand(sm) }}</p>
       <p class="segment-cm__name">
         {{ sm.segment.value | capitalize }}
         {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
       </p>
+      <p class="segment-cm__cm">{% if sm.contribution_margin > 0 %}+{% endif %}{{ sm.contribution_margin | money }}</p>
       <dl class="segment-cm__figures">
         <div class="segment-cm__figure">
-          <dt>Revenue</dt>
+          <dt>rev</dt>
           <dd class="segment-cm__revenue">{{ sm.revenue | money }} THB</dd>
         </div>
         <div class="segment-cm__figure">
-          <dt>Variable costs</dt>
+          <dt>costs</dt>
           <dd class="segment-cm__costs">{{ sm.variable_costs | money }} THB</dd>
-        </div>
-        <div class="segment-cm__figure">
-          <dt>Contribution margin</dt>
-          <dd class="segment-cm__cm">{{ sm.contribution_margin | money }} THB</dd>
         </div>
       </dl>
       <p class="segment-cm__one-liner">{{ segment_one_liner(sm) }}</p>

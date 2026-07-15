@@ -54,8 +54,18 @@ def _scale(values: list[Decimal]) -> tuple[Decimal, Decimal]:
     return lo, hi
 
 
-def sparkline_svg(points: list[ChartPoint], *, css_class: str = "trend-sparkline") -> str:
-    """An inline ``<svg>`` polyline through the points, evenly spaced."""
+def sparkline_svg(
+    points: list[ChartPoint],
+    *,
+    css_class: str = "trend-sparkline",
+    reference_value: Decimal | None = None,
+) -> str:
+    """An inline ``<svg>`` polyline through the points, evenly spaced.
+
+    When ``reference_value`` falls inside the chart's value range (inclusive
+    of the zero baseline), a dashed horizontal line is drawn at that level
+    — used for the 10K THB/day goal on the margin trend (Wave 3 #47).
+    """
     if not points:
         return ""
     lo, hi = _scale([p.value for p in points])
@@ -68,12 +78,20 @@ def sparkline_svg(points: list[ChartPoint], *, css_class: str = "trend-sparkline
         )
         y = Decimal(_PAD) + inner_h * (hi - p.value) / span
         coords.append(f"{x:.1f},{y:.1f}")
-    return (
+    parts = [
         f'<svg class="{escape(css_class)}" viewBox="0 0 {SVG_WIDTH} {SVG_HEIGHT}"'
         ' role="img" preserveAspectRatio="none">'
-        f'<polyline fill="none" points="{" ".join(coords)}" />'
-        "</svg>"
-    )
+    ]
+    if reference_value is not None and lo <= reference_value <= hi:
+        y_ref = Decimal(_PAD) + inner_h * (hi - reference_value) / span
+        parts.append(
+            f'<line class="trend-sparkline__goal" x1="{_PAD}" y1="{y_ref:.1f}" '
+            f'x2="{SVG_WIDTH - _PAD}" y2="{y_ref:.1f}" '
+            'stroke-dasharray="4 4" />'
+        )
+    parts.append(f'<polyline fill="none" points="{" ".join(coords)}" />')
+    parts.append("</svg>")
+    return "".join(parts)
 
 
 def bar_row(points: list[ChartPoint], *, css_class: str = "trend-bars") -> str:

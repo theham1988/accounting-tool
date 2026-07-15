@@ -166,17 +166,18 @@ def test_trends_mode_renders_an_inline_svg_sparkline_and_joins_the_switcher(
     # The chart arrives as inline SVG in the HTML itself.
     assert "<svg" in html
     assert "<polyline" in html
-    # Trends is a switcher tab, active on this page; the other three modes
-    # are reachable from it.
+    # Trends is a Reports tab, active on this page; Period and Month are
+    # reachable from it (Day lives on the Today surface now — #47).
     switcher = html.split("<!--section:mode-switcher-->")[1].split(
         "<!--/section:mode-switcher-->"
     )[0]
     assert "Trends" in switcher
     assert "mode-switcher__link--active" in switcher
-    assert "/review?mode=day" in switcher
+    assert "/review?mode=period" in switcher
     assert "/review?mode=month" in switcher
+    assert "mode=day" not in switcher
 
-    # And Trends is reachable from the other modes' switcher too.
+    # And Trends is still reachable from Today's mode switcher.
     day_html = client.get(f"/review?mode=day&day={yesterday.isoformat()}").text
     day_switcher = day_html.split("<!--section:mode-switcher-->")[1].split(
         "<!--/section:mode-switcher-->"
@@ -329,12 +330,13 @@ def test_metric_param_selects_revenue_or_cogs_and_the_page_offers_both(
 
     revenue_html = client.get("/review?mode=trends&metric=revenue&span=weeks").text
     assert "120.00" in revenue_html
-    assert "Revenue" in revenue_html
+    assert "REVENUE" in revenue_html.upper()
 
     cogs_html = client.get("/review?mode=trends&metric=cogs&span=months").text
     assert "45.00" in cogs_html
 
-    # The metric control: links carrying metric + span params.
+    # The metric control: links carrying metric + span params. Primary chips
+    # are MARGIN / REVENUE / COGS; segment_cm and goal stay deep-linkable.
     picker = revenue_html.split("<!--section:metric-switcher-->")[1].split(
         "<!--/section:metric-switcher-->"
     )[0]
@@ -454,10 +456,11 @@ def test_day_of_week_breakdown_compares_weekdays_across_the_span(
     breakdown = html.split("<!--section:weekday-breakdown-->")[1].split(
         "<!--/section:weekday-breakdown-->"
     )[0]
-    # All seven weekdays render, Monday first.
+    # All seven weekdays render, Monday first (short labels MON..SUN ok).
     for label in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
-        assert label in breakdown
-    assert breakdown.index("Mon") < breakdown.index("Tue") < breakdown.index("Sun")
+        assert label.lower() in breakdown.lower()
+    lowered = breakdown.lower()
+    assert lowered.index("mon") < lowered.index("tue") < lowered.index("sun")
     # The averages: 150 over 12 Mondays, 75 over 12 Tuesdays.
     assert "12.50" in breakdown
     assert "6.25" in breakdown
