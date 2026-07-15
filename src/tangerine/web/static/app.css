@@ -819,7 +819,6 @@ textarea {
   color: var(--muted);
 }
 
-
 /* Stock screen (Wave 3 #46). */
 .stock__kicker {
   margin: 0 0 var(--tb-space-1);
@@ -1010,9 +1009,8 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-/* Cost editor + bulk upload forms. */
-.cost-form form,
-.upload-form form {
+/* Cost editor forms. */
+.cost-form form {
   display: flex;
   flex-direction: column;
   gap: var(--tb-space-3);
@@ -1028,8 +1026,7 @@ textarea {
 }
 
 .cost-form input[type="number"],
-.cost-form input[type="text"],
-.upload-form input[type="file"] {
+.cost-form input[type="text"] {
   font: inherit;
   padding: var(--tb-space-2);
   border: var(--tb-keyline-thin) solid var(--rule);
@@ -1042,9 +1039,7 @@ textarea {
   gap: 0.5rem;
 }
 
-.cost-form button,
-.upload-form button,
-.upload-confirm button {
+.cost-form button {
   font: inherit;
   font-weight: var(--tb-weight-bold);
   padding: 0.6rem;
@@ -1064,15 +1059,232 @@ textarea {
   font-size: 1.1rem;
 }
 
-.cost-form__hint,
-.upload-template p,
-.upload-form p {
+.cost-form__hint {
   color: var(--muted);
   font-size: 0.9rem;
 }
 
+/* Bulk upload — progressive three-step detail screen (issue #49). */
+.upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-4);
+}
+
+.upload__header {
+  margin: 0;
+}
+
+.upload__title {
+  margin: 0;
+  font-size: var(--tb-size-h1);
+  line-height: var(--tb-leading-tight);
+}
+
+.upload__kicker {
+  margin: 0.25rem 0 0;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.upload-applied {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--tb-space-3);
+  padding: 0.75rem 0.9rem;
+  border: var(--tb-keyline) solid var(--tb-teal);
+  background: var(--tb-paper-raised);
+}
+
+.upload-applied__label {
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.1em;
+  color: var(--tb-teal);
+}
+
+.upload-applied__log {
+  font-size: var(--tb-size-small);
+  text-underline-offset: 3px;
+}
+
+.upload-step {
+  background: var(--tb-paper-raised);
+  border: var(--tb-keyline) solid var(--tb-ink);
+  padding: 0.9rem;
+}
+
+.upload-step__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  margin-bottom: 0.4rem;
+}
+
+.upload-step__numeral {
+  font-family: var(--tb-font-display);
+  font-size: 1.65rem;
+  line-height: 1;
+  color: var(--tb-terracotta);
+}
+
+.upload-step__label {
+  margin: 0;
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.upload-step__copy {
+  margin: 0 0 0.75rem;
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+}
+
+.upload-dropzone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 5.5rem;
+  padding: 0.75rem;
+  border: var(--tb-keyline-thin) dashed var(--tb-ink);
+  background: var(--tb-paper);
+  cursor: pointer;
+  text-align: center;
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+}
+
+.upload-dropzone__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.upload-dropzone__filename {
+  color: var(--tb-ink);
+}
+
+.upload-dropzone__meta {
+  color: var(--muted);
+}
+
+.upload-step--gated {
+  border-style: dashed;
+  background: transparent;
+}
+
+.upload-step-placeholder__copy {
+  margin: 0;
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+  text-align: center;
+}
+
+.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: var(--tb-keyline) solid var(--tb-ink);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.upload-btn--primary {
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+}
+
+.upload-btn--secondary {
+  background: var(--tb-paper-raised);
+  color: var(--tb-ink);
+}
+
+.upload-section-label {
+  margin: 0.65rem 0 0.25rem;
+  font-family: var(--tb-font-body);
+  font-size: 0.7rem;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--tb-teal);
+}
+
+.upload-section-label--errors {
+  color: var(--tb-red);
+}
+
+.upload-diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.upload-diff {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: var(--tb-size-small);
+  padding: 0.5rem 0;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.upload-diff__name {
+  min-width: 0;
+}
+
+.upload-diff__pack {
+  color: var(--muted);
+}
+
+.upload-diff__values {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.upload-diff__old {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.upload-diff__new {
+  color: var(--tb-ink);
+}
+
 .upload-error__message {
   white-space: normal;
+  text-align: right;
+  color: var(--tb-red);
+}
+
+.upload-confirm {
+  margin-top: 0.75rem;
 }
 
 /* Recipe editor. */

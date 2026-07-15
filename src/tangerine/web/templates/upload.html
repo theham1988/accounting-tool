@@ -1,33 +1,186 @@
+{#
+  Bulk upload — Wave 3 redesign (issue #49).
+
+  One progressive detail screen (back arrow → Stock, no bottom nav) with
+  three numbered step cards: download template → choose file → preview &
+  apply. Stateless two-step POST flow is unchanged — the first POST embeds
+  ``csv_text`` in the confirm form; confirm re-parses and applies. A
+  ``?applied=N`` query param (SKU editor's ``?saved=`` pattern) signals a
+  just-landed apply and renders the teal in-place confirmation.
+
+  ``parse_upload`` / ``generate_template_csv`` are untouched (ADR-0006:
+  presentation + view layer only).
+#}
 {% extends "_base.html" %}
 {% set chrome = "detail" %}
 {% set back_href = "/skus" %}
-{% block title %}Bulk upload — Tangerine Books{% endblock %}
+{% block title %}Bulk edit — Tangerine Books{% endblock %}
 {% block content %}
+  {% set change_count = (preview.mapping_changes | length) + (preview.cost_changes | length) if preview else 0 %}
   <div class="review upload">
-    <h1>Bulk upload</h1>
-    <p class="day">
-      Mappings and costs by spreadsheet — download, fill in the blanks in
-      Excel, upload. <a href="/skus">&larr; SKU view</a>
-    </p>
+    <header class="upload__header">
+      <h1 class="upload__title">Bulk edit</h1>
+      <p class="upload__kicker">Mappings + costs by spreadsheet</p>
+    </header>
 
-    <section class="upload-template">
-      <h2>1. Download the template</h2>
-      <p>
-        Pre-filled with every Loyverse item (mapping rows) and every known
-        SKU (cost rows). Fill in the blank <code>sku_id</code> cells to map
-        items; fill in <code>pack_price</code> / <code>pack_quantity</code>
-        to set costs. Leave a row untouched to leave it unchanged.
+    {% if applied is not none %}
+    <!--section:upload-applied-->
+    <div class="upload-applied" role="status">
+      <span class="upload-applied__label">APPLIED — {{ applied }} changes live</span>
+      <a class="upload-applied__log" href="/audit">See in log &rarr;</a>
+    </div>
+    <!--/section:upload-applied-->
+    {% endif %}
+
+    <section class="upload-step">
+      <div class="upload-step__head">
+        <span class="upload-step__numeral">1</span>
+        <h2 class="upload-step__label">Download the template</h2>
+      </div>
+      <p class="upload-step__copy">
+        Pre-filled with every menu item and every SKU. Fill blank
+        <code>sku_id</code> cells to map items; fill <code>pack_price</code> /
+        <code>pack_quantity</code> to set costs. Untouched rows stay unchanged.
       </p>
-      <p><a href="/upload/template" class="upload-template__link">Download template (CSV)</a></p>
+      <a href="/upload/template" class="upload-btn upload-btn--secondary">DOWNLOAD CSV</a>
     </section>
 
-    <section class="upload-form">
-      <h2>2. Upload the filled spreadsheet</h2>
-      <p>Nothing is applied yet — you'll see a preview of every change first.</p>
-      <form method="post" action="/upload" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".csv,text/csv" required>
-        <button type="submit">Preview changes</button>
+    <section class="upload-step">
+      <div class="upload-step__head">
+        <span class="upload-step__numeral">2</span>
+        <h2 class="upload-step__label">Upload it back</h2>
+      </div>
+      <p class="upload-step__copy">
+        Nothing is applied yet — you'll preview every change first. One bad row blocks the whole file, so a typo can't slip through.
+      </p>
+      <form method="post" action="/upload" enctype="multipart/form-data" class="upload-form">
+        <label class="upload-dropzone" id="upload-dropzone">
+          <span class="upload-dropzone__chosen" id="upload-dropzone-chosen"
+                {% if not filename %}hidden{% endif %}>
+            <strong class="upload-dropzone__filename" id="upload-dropzone-filename">{{ filename or "" }}</strong><br>
+            <span class="upload-dropzone__meta" id="upload-dropzone-meta">
+              {% if filename %}
+              {{ rows_parsed }} rows parsed · {{ error_count }} errors — preview below
+              {% endif %}
+            </span>
+          </span>
+          <span class="upload-dropzone__prompt" id="upload-dropzone-prompt"
+                {% if filename %}hidden{% endif %}>
+            TAP TO CHOOSE THE FILLED CSV<br>(or drop it here)
+          </span>
+          <input type="file" name="file" accept=".csv,text/csv" required
+                 class="upload-dropzone__input" id="upload-file-input"
+                 aria-label="Choose the filled CSV">
+        </label>
+        <button type="submit" class="upload-btn upload-btn--primary">PREVIEW CHANGES</button>
       </form>
     </section>
+
+    <section class="upload-step{% if not preview %} upload-step--gated{% endif %}">
+      <div class="upload-step__head">
+        <span class="upload-step__numeral">3</span>
+        <h2 class="upload-step__label">Preview, then apply</h2>
+      </div>
+
+      {% if preview %}
+        {% if preview.errors %}
+        <section class="upload-errors">
+          <h3 class="upload-section-label upload-section-label--errors">
+            Fix these rows · {{ preview.errors | length }}
+          </h3>
+          <p class="upload-step__copy">
+            Errors block the whole upload — nothing is applied until every row
+            parses, so a typo cannot silently corrupt the cost book.
+          </p>
+          <ul class="upload-diff-list">
+            {% for error in preview.errors %}
+            <li class="upload-diff upload-error">
+              <span class="upload-diff__name">Row <span class="upload-error__row">{{ error.row_number }}</span></span>
+              <span class="upload-error__message">{{ error.message }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+
+        {% if preview.mapping_changes %}
+        <h3 class="upload-section-label">MAPPINGS · {{ preview.mapping_changes | length }}</h3>
+        <ul class="upload-diff-list">
+          {% for change in preview.mapping_changes %}
+          <li class="upload-diff upload-mapping-change">
+            <span class="upload-diff__name">{{ change.item_id }}</span>
+            <span class="upload-diff__values">
+              <span class="upload-diff__old">{{ change.old_sku_id or "unmapped" }}</span>
+              &rarr;
+              <strong class="upload-diff__new">{{ change.new_sku_id }}</strong>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if preview.cost_changes %}
+        <h3 class="upload-section-label">COSTS · {{ preview.cost_changes | length }}</h3>
+        <ul class="upload-diff-list">
+          {% for change in preview.cost_changes %}
+          <li class="upload-diff upload-cost-change">
+            <span class="upload-diff__name">
+              {{ change.sku_id }}
+              <span class="upload-diff__pack">{{ change.pack_price }} THB / {{ change.pack_quantity }}</span>
+            </span>
+            <span class="upload-diff__values">
+              <span class="upload-diff__old">{{ (change.old_net | money) if change.old_net is not none else "—" }}</span>
+              &rarr;
+              <strong class="upload-diff__new">{{ change.new_net }}</strong>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if not preview.errors and not preview.has_changes %}
+        <p class="empty-note"><em>The file matches current state — nothing to apply.</em></p>
+        {% endif %}
+
+        {% if preview.has_changes and not preview.errors %}
+        <form method="post" action="/upload" class="upload-confirm">
+          <input type="hidden" name="csv_text" value="{{ csv_text }}">
+          <button type="submit" name="confirm" value="1" class="upload-btn upload-btn--primary">
+            APPLY {{ change_count }} CHANGES
+          </button>
+        </form>
+        {% endif %}
+      {% else %}
+        <p class="upload-step-placeholder__copy">
+          Step 3 appears here once a file is chosen — nothing touches the books before you approve the preview.
+        </p>
+      {% endif %}
+    </section>
   </div>
+  <script>
+    (function () {
+      var input = document.getElementById("upload-file-input");
+      if (!input) return;
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        var prompt = document.getElementById("upload-dropzone-prompt");
+        var chosen = document.getElementById("upload-dropzone-chosen");
+        var nameEl = document.getElementById("upload-dropzone-filename");
+        var meta = document.getElementById("upload-dropzone-meta");
+        if (!file) {
+          if (prompt) prompt.hidden = false;
+          if (chosen) chosen.hidden = true;
+          return;
+        }
+        if (nameEl) nameEl.textContent = file.name;
+        if (meta) {
+          // Row/error counts come from the server after PREVIEW; until then
+          // show the filename so step 2 reflects the chosen file.
+          meta.textContent = "Ready to preview";
+        }
+        if (prompt) prompt.hidden = true;
+        if (chosen) chosen.hidden = false;
+      });
+    })();
+  </script>
 {% endblock %}

@@ -285,8 +285,9 @@ def test_cost_preview_with_incomplete_input_stays_calm(tmp_path: Path) -> None:
 
 
 def test_upload_page_requires_auth_and_offers_template_and_form(tmp_path: Path) -> None:
-    """``GET /upload`` is gated like everything else; once signed in it
-    offers the template download and the file-upload form.
+    """``GET /upload`` is gated like everything else; once signed in it is a
+    detail screen with three numbered step cards — template download, file
+    upload with safety copy, and a gated step-3 placeholder.
     """
     app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
 
@@ -297,9 +298,26 @@ def test_upload_page_requires_auth_and_offers_template_and_form(tmp_path: Path) 
     response = _authed_client(app).get("/upload")
     assert response.status_code == 200
     html = response.text
+    # Detail chrome: back to Stock, no bottom nav (foundation e2e also
+    # pins the chrome; here we pin the Stock target the redesign wants).
+    assert 'href="/skus"' in html
+    assert "<!--section:bottom-nav-->" not in html
+    # Three numbered step cards with terracotta Hobo numerals.
+    assert 'upload-step__numeral">1<' in html
+    assert 'upload-step__numeral">2<' in html
+    assert 'upload-step__numeral">3<' in html
+    assert "DOWNLOAD CSV" in html
     assert 'href="/upload/template"' in html
+    assert "Nothing is applied yet" in html
+    assert "One bad row blocks the whole file" in html
     assert 'enctype="multipart/form-data"' in html
     assert 'action="/upload"' in html
+    assert "PREVIEW CHANGES" in html
+    # Step 3 stays gated until a file has been previewed.
+    assert "Step 3 appears here once a file is chosen" in html
+    assert "upload-step--gated" in html
+    assert "APPLY" not in html
+    assert "APPLIED" not in html
 
 
 def test_template_csv_prefills_every_item_and_every_sku(tmp_path: Path) -> None:
@@ -402,10 +420,9 @@ def _upload_app(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 def test_upload_previews_changes_without_applying(tmp_path: Path) -> None:
-    """Uploading a filled spreadsheet shows what will change — the mystery
-    soda gaining a mapping, butter's cost moving from 0.20 to 0.177570 —
-    but nothing lands until the partner confirms: the item stays unmapped
-    and the old cost stays current.
+    """Uploading a filled spreadsheet opens step 3 on the same progressive
+    page — filename + rows/errors, MAPPINGS/COSTS diffs (old struck → new
+    bold), APPLY N CHANGES — but nothing lands until confirm.
     """
     app = _upload_app(tmp_path)
     client = _authed_client(app)
@@ -416,14 +433,27 @@ def test_upload_previews_changes_without_applying(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     html = response.text
-    # The preview names both pending changes, with old and new values.
+    # Still one progressive page (steps 1–3), not a separate preview URL.
+    assert 'upload-step__numeral">1<' in html
+    assert 'upload-step__numeral">3<' in html
+    assert "filled.csv" in html
+    assert "2 rows parsed" in html
+    assert "0 errors" in html
+    # Diff lists: section labels + old struck-through / new bold.
+    assert "MAPPINGS" in html
+    assert "COSTS" in html
     assert "i-mystery" in html
     assert "soda" in html
     assert "butter" in html
     assert "0.177570" in html  # the new derived net
     assert "0.20" in html  # the old stored net
-    # A confirm control is offered.
+    assert "upload-diff__old" in html
+    assert "upload-diff__new" in html
+    # A confirm control is offered; step-3 gate is gone.
     assert 'name="confirm"' in html
+    assert "APPLY 2 CHANGES" in html
+    assert "upload-step--gated" not in html
+    assert "Step 3 appears here once a file is chosen" not in html
     # ...but nothing has been applied yet.
     items_html = client.get("/items", params={"item": "i-mystery"}).text
     assert "unmapped" in items_html.lower()
@@ -432,9 +462,8 @@ def test_upload_previews_changes_without_applying(tmp_path: Path) -> None:
 
 
 def test_upload_confirm_applies_mappings_and_costs(tmp_path: Path) -> None:
-    """Confirming the preview lands both kinds of change: the mystery soda
-    is mapped to the soda SKU (visible in item coverage) and butter's new
-    net cost flows into the croissant's margin on the next review.
+    """Confirming the preview lands both kinds of change and redirects back
+    to the progressive page with a teal APPLIED confirmation + log link.
     """
     app = _upload_app(tmp_path)
     _seed_sale(app.state.db_path, item_id="i-croissant", day=date(2026, 7, 2), price="95")
@@ -444,12 +473,20 @@ def test_upload_confirm_applies_mappings_and_costs(tmp_path: Path) -> None:
     ).text
     assert 'name="confirm"' in preview_html
 
-    response = client.post(
-        "/upload", data={"csv_text": _FILLED_CSV, "confirm": "1"}
+    redirect = client.post(
+        "/upload",
+        data={"csv_text": _FILLED_CSV, "confirm": "1"},
+        follow_redirects=False,
     )
+    assert redirect.status_code == 303
+    assert redirect.headers["location"] == "/upload?applied=2"
 
+    response = client.get("/upload", params={"applied": "2"})
     assert response.status_code == 200
-    assert "applied" in response.text.lower()
+    html = response.text
+    assert "APPLIED — 2 changes live" in html
+    assert "See in log" in html
+    assert 'href="/audit"' in html
     # The mapping landed: the mystery soda now resolves to the soda SKU.
     items_html = client.get("/items", params={"item": "i-mystery"}).text
     assert "soda" in items_html
