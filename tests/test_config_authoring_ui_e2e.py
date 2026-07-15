@@ -213,9 +213,11 @@ def test_saving_a_cost_updates_db_and_the_next_review(tmp_path: Path) -> None:
         follow_redirects=False,
     )
 
-    # Saving lands back on the editor, which now shows the derived net cost.
+    # Saving lands back on the editor (now carrying ?saved=cost so the
+    # in-place "SAVED — logged to the audit log" banner renders — issue #48),
+    # which shows the derived net cost.
     assert response.status_code == 303
-    assert response.headers["location"] == "/skus/butter"
+    assert response.headers["location"] == "/skus/butter?saved=cost"
     editor_html = client.get("/skus/butter").text
     assert "0.18" in editor_html  # 0.177570 rendered at 2 dp
 
@@ -904,9 +906,11 @@ def test_saving_a_recipe_updates_db_and_the_next_review(tmp_path: Path) -> None:
         follow_redirects=False,
     )
 
-    # Saving lands back on the editor, which now shows the new quantity.
+    # Saving lands back on the editor (now carrying ?saved=recipe so the
+    # in-place "SAVED — logged to the audit log" banner renders — issue #48),
+    # which shows the new quantity.
     assert response.status_code == 303
-    assert response.headers["location"] == "/skus/latte"
+    assert response.headers["location"] == "/skus/latte?saved=recipe"
     editor_html = client.get("/skus/latte").text
     assert 'value="20"' in editor_html
 
@@ -2236,7 +2240,7 @@ def test_serving_recipe_is_visible_and_editable_in_the_editor(
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/skus/beer-chang:served"
+    assert response.headers["location"] == "/skus/beer-chang:served?saved=recipe"
     reloaded = client.get("/skus/beer-chang:served").text
     assert 'value="320"' in reloaded
     assert 'value="330"' not in reloaded
@@ -2629,3 +2633,130 @@ def test_deleting_a_recipe_flips_the_sku_back_to_purchasable(tmp_path: Path) -> 
 
     # The deletion is audited.
     assert "latte" in client.get("/audit").text
+
+
+# =============================================================================
+# Wave 3 SKU editor redesign — detail screen chrome, RECIPE card, NEW COST
+# card, produced-SKU read-only breakdown (issue #48)
+# =============================================================================
+
+
+def _section(html: str, anchor: str) -> str:
+    """Return the HTML slice for a ``<!--section:NAME-->`` anchor pair."""
+    start = f"<!--section:{anchor}-->"
+    end = f"<!--/section:{anchor}-->"
+    return html.split(start, 1)[1].split(end, 1)[0]
+
+
+def test_sku_editor_detail_chrome_has_back_arrow_and_no_bottom_nav(
+    tmp_path: Path,
+) -> None:
+    """The SKU editor is a detail screen: back arrow in the header, no bottom
+    nav — the partner stays focused on one SKU until they go back to Stock.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+
+    html = client.get("/skus/butter").text
+
+    header = _section(html, "app-header")
+    assert "tb-header__back" in header
+    assert "tb-header__partner" not in header
+    assert "<!--section:bottom-nav-->" not in html
+
+
+def test_sku_editor_header_shows_name_health_dot_and_meta_line(
+    tmp_path: Path,
+) -> None:
+    """The editor header carries the SKU name, a health dot, and a micro-line
+    describing how it is costed — bought · priced per unit for purchasables,
+    made · segment for produced SKUs.
+    """
+    butter_client = _authed_client(
+        _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    )
+
+    butter = _section(butter_client.get("/skus/butter").text, "sku-header")
+    assert "butter" in butter.lower()
+    assert "health-dot--" in butter
+    assert "bought" in butter
+    assert "priced per" in butter
+    assert ">g<" in butter
+
+    recipe_tmp = tmp_path / "recipe-editor"
+    recipe_tmp.mkdir()
+    recipe_client = _authed_client(_recipe_app(recipe_tmp))
+    latte = _section(recipe_client.get("/skus/latte").text, "sku-header")
+    assert "Cafe Latte" in latte
+    assert "health-dot--" in latte
+    assert "made" in latte
+    assert "Cafe" in latte
+
+
+def test_saving_recipe_shows_in_place_confirmation_banner(
+    tmp_path: Path,
+) -> None:
+    """Saving a recipe redirects with ``?saved=recipe`` and the editor renders
+    the in-place "SAVED — logged to the audit log" confirmation.
+    """
+    app = _recipe_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/latte/recipe",
+        data={"ingredient_sku_id": ["beans", "milk"], "quantity": ["18", "200"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/latte?saved=recipe"
+    banner = _section(client.get("/skus/latte?saved=recipe").text, "recipe-saved")
+    assert "SAVED" in banner
+    assert "/audit" in banner
+
+
+def test_saving_cost_shows_in_place_confirmation_banner(
+    tmp_path: Path,
+) -> None:
+    """Saving a cost redirects with ``?saved=cost`` and the editor renders the
+    in-place confirmation that the new price is live and audit-logged.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+
+    response = client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "380", "pack_quantity": "2000", "vat_inclusive": "1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/skus/butter?saved=cost"
+    banner = _section(client.get("/skus/butter?saved=cost").text, "cost-saved")
+    assert "SAVED" in banner
+    assert "/audit" in banner
+
+
+def test_sku_editor_recipe_and_cost_sections_are_pinned(
+    tmp_path: Path,
+) -> None:
+    """The RECIPE card and NEW COST card are pinned by section anchors so
+    future redesigns cannot drift the partner-visible structure silently.
+    """
+    app = _build_app(tmp_path, recipes_yaml=_RECIPES_YAML, costs_yaml=_COSTS_YAML)
+    client = _authed_client(app)
+
+    html = client.get("/skus/butter").text
+
+    recipe = _section(html, "recipe-editor")
+    assert 'id="recipe-rows"' in recipe
+    assert "recipe-row__add" in recipe
+    assert 'name="target_gross_margin_pct"' in recipe
+    assert "Save recipe" in recipe
+
+    cost = _section(html, "cost-form")
+    assert 'name="pack_price"' in cost
+    assert 'name="pack_quantity"' in cost
+    assert 'name="vat_inclusive"' in cost
+    assert "Save cost" in cost
+    assert "Current cost" in html.split("<!--section:cost-form-->")[0]

@@ -1,14 +1,6 @@
 {#
   The recipe editor's ingredient picker + its inline "Create new SKU…"
-  sub-form. Lives in its own template because two callers render it: the
-  editor page (one per recipe row) and the ``POST /skus`` HTMX fragment
-  (which swaps a fresh picker — new SKU selected — back into the row after
-  an inline create, so the partner never leaves the page).
-
-  The sub-form is a <span>, not a nested <form> (invalid HTML inside the
-  recipe form); HTMX posts its inputs via hx-include scoped to this row's
-  picker-wrap. Its field names (sku_id, name, unit, price) are ignored by
-  the recipe-save route if they ride along on a full-form submit.
+  sub-form (Wave 3 redesign, issue #48).
 #}
 {% macro ingredient_picker(recipe_sku_id, all_skus, selected_sku_id) -%}
 <span class="picker-wrap">
@@ -27,14 +19,14 @@
   </select>
   <span class="sku-create" hidden>
     <input type="hidden" name="recipe_sku_id" value="{{ recipe_sku_id }}">
-    <input type="text" name="sku_id" placeholder="sku_id (e.g. oat-milk)">
-    <input type="text" name="name" placeholder="Name">
-    <select name="unit">
+    <input type="text" name="sku_id" placeholder="sku_id (e.g. oat-milk)" aria-label="New SKU id">
+    <input type="text" name="name" placeholder="Name" aria-label="New SKU name">
+    <select name="unit" aria-label="New SKU unit">
       <option value="g">g</option>
       <option value="ml">ml</option>
       <option value="unit">unit</option>
     </select>
-    <input type="number" name="price" step="any" min="0" placeholder="Price/unit (THB, net)">
+    <input type="number" name="price" step="any" min="0" placeholder="Price/unit (THB, net)" aria-label="New SKU price">
     <button type="button" class="sku-create__submit"
             hx-post="/skus"
             hx-include="closest .picker-wrap"
