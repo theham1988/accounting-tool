@@ -84,7 +84,13 @@ draught pint = 473 ml of the keg SKU. Serving recipes exist so
 directly-sold purchasables (beer, wine, soft drinks) cost through the
 same item → SKU → recipe path as dishes — there is no second costing
 path. "Beers don't have recipes" is therefore false in this model; they
-have *uninteresting* ones.
+have *uninteresting* ones. Creating one from an unmapped Loyverse item
+creates a purchasable SKU (receipt-priced), a produced sold SKU the
+recipe outputs, the serving recipe itself (one ingredient line, yield
+1), and the item → sold-SKU mapping.
+
+_Avoid_: "sold-as-is" as a domain entity — that is the Books UI label for
+the quick-create of a serving recipe setup, not a distinct concept.
 
 An **ingredient** is not a kind of SKU; it is a role a SKU plays inside
 one recipe: an (SKU, quantity) line. Purchasable SKUs and preps may play
@@ -194,6 +200,23 @@ upgraded to a banner when any unreviewed change is under 24 hours old.
 The trade-off this accepts (wrong numbers ship instantly and are caught
 the next morning by the diff, not before shipping by a reviewer) is
 recorded in ADR-0003.
+
+**Atomic authoring strokes (prefactor, landed).** The store exposes
+`SqliteConfigStore.batch()`, a context manager that runs several audited
+writes in one lock + one SQLite transaction. A multi-write stroke —
+the sold-as-is quick-create (a purchasable SKU + its cost + a sold SKU +
+a serving recipe + a mapping), or a serving-recipe setup — lands as
+all-or-nothing: a mid-stroke failure rolls back every write *and* its
+audit row, so `/audit` never records a half-stroke to confuse tomorrow's
+diff. Audit semantics are unchanged — each write still records its own
+audit row, all stamped with the same `session_id`; per-session revert
+and "N changes since last review" behave exactly as they would have for
+N sequential saves. The sold-as-is route now opts in: its stroke lives in
+the `create_serving_recipe_setup` domain module (the sibling of
+`create_sku`), which runs the five writes inside one `batch()`. The other
+multi-write authoring routes (e.g. create-SKU-with-mapping) still call
+each write sequentially, which is bit-for-bit equivalent in the audit
+trail — only the atomicity is new once a route opts in.
 
 ## VAT model
 

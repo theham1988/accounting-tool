@@ -720,7 +720,7 @@ def test_get_root_resolves_sale_through_recipes_yaml_mapping(
     """A sold Loyverse item resolves through ``config/recipes.yaml``'s
     ``mappings:`` block all the way to the rendered headline revenue.
 
-    Regression test: ``compute_daily_margin``/``compute_period_segment_margins``
+    Regression test: ``compute_daily_margin``/``build_period_review``
     once rebuilt their ``RecipeCatalog`` from only the recipe list, silently
     dropping the loaded ``mappings:`` — so a mapping-only YAML edit (exactly
     what the recipe re-key was) had zero effect on the running app, and every

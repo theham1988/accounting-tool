@@ -94,14 +94,63 @@ a dish's cost.
   who relied on pricing a produced SKU as bought. The team judged this
   acceptable given the evidence (0 of 13 preps are priced that way today)
   and the simplicity win (one source of truth per SKU).
-- `recipe_input_cost`, `recipe_cost_per_unit`, and `has_unknown_price` keep
-  their Wave 1 (non-recursive) shapes as the slice-04 primitives for
-  callers that hold one recipe plus a cost book but no catalog. The
-  recursive behaviour lives in `CostResolver`, used by
-  `compute_item_margins` and `unit_cost`. Future callers wanting recursion
-  build a `CostResolver`; callers wanting the slice-04 primitive use the
-  bare helpers.
+- `CostResolver` is the **single public recipe-cost face**. The Wave 1
+  slice-04 bare helpers (`recipe_input_cost`, `recipe_cost`,
+  `recipe_cost_per_unit`, and the module-level `has_unknown_price`) have
+  been retired — see the 2026-07-16 amendment below. Any caller wanting a
+  recipe's cost builds a `CostResolver` (or the `unit_cost` one-shot that
+  wraps one) and calls its `unit_cost` / `cost_per_unit` /
+  `has_unknown_price`. There is no second, non-recursive entry point to
+  disagree with the recursive one.
 - Cycle detection at save time (issue #35's `find_recipe_cycle`) is the
   primary defense against infinite recursion. The runtime `seen`-stack
   guard is the fallback for cycles that slip past save-time (a bad
   migration, a hand-edited YAML seed, a future import path).
+
+## Amendment — 2026-07-16: one public costing face
+
+**Retires the "keep slice-04 primitives" carve-out recorded above.** The
+bare helpers `recipe_input_cost`, `recipe_cost`, `recipe_cost_per_unit`,
+and the module-level `has_unknown_price` are deleted from
+`tangerine.margin`. `CostResolver.has_unknown_price` stays.
+
+### Why
+
+The carve-out assumed the bare helpers and the resolver would "never
+disagree" because each was honest *within its own scope*. They were not.
+The bare helpers could not recurse into prep recipes, so any caller that
+reached for one against a dish containing a prep got a number that
+silently dropped the prep's own input cost — the exact understatement this
+ADR was written to end. The two honest surfaces the ADR promised (SKU
+coverage and the daily review costing a prep-containing dish the same way)
+had already moved off the bare helpers onto `CostResolver`; the only
+remaining callers were worked-example tests. Keeping a public entry point
+that could silently mis-cost the recipe shape the ADR exists for was a
+latent footgun, not a primitive worth defending.
+
+### Decision
+
+- **One public recipe-cost face:** `CostResolver` (and the `unit_cost`
+  one-shot that wraps one). Callers wanting a recipe's cost build a
+  resolver and call `unit_cost` / `cost_per_unit` / `has_unknown_price`.
+  There is no non-recursive alternative to reach for by mistake.
+- The worked-example tests in `tests/test_recipes_e2e.py` were retargeted
+  to `CostResolver`; no production call site used the bare helpers
+  (coverage and the daily review already went through the resolver).
+
+### Reaffirmed (unchanged)
+
+The four decisions at the heart of this ADR stand as written:
+
+1. **Recurse into prep recipes** — a produced SKU is costed from its
+   recipe, down to purchasables.
+2. **No leaf-price-wins** — a produced SKU's cost is always derived, never
+   typed directly; the cost book is consulted only for purchasables.
+3. **Unknown-price propagates recursively** — an unpriced leaf anywhere
+   under a recipe makes every dish using it flag `unknown_price`.
+4. **As-of-date pricing composes by construction** — the resolver runs
+   against each day's cost book; a prep's per-gram cost is recomputed per
+   day, never stored.
+
+The offline-spreadsheet decision (5) is also unchanged: the spreadsheet
+imports `tangerine.margin.CostResolver` and shares the one resolver.

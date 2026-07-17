@@ -13,7 +13,7 @@ no I/O, no storage imports.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 from .fixed_costs import (
@@ -22,7 +22,11 @@ from .fixed_costs import (
     fixed_costs_for_period,
 )
 from .ingestion import Source
-from .margin import compute_item_margins, gross_margin_pct, segment_margins_from_items
+from .margin import (
+    gross_margin_pct,
+    margins_over_range,
+    segment_margins_from_items,
+)
 from .recipes import RecipeCatalog
 from .types import (
     DAILY_PROFIT_TARGET_THB,
@@ -145,32 +149,27 @@ def build_period_review(
 ) -> PeriodReview:
     """Build the period review for the inclusive ``[start, end]`` range.
 
-    Runs the per-item margin engine one day at a time, each day costed at
-    that day's prices (``cost_book_as_of``, ADR-0004 decision 2), and sums
-    the reliable rows into the period headline. ``fixed_costs`` are the
-    stored entity-level entries (Wave 2 slice 3); the ones applying to the
-    range turn the gross margin into ``net_profit``, which is what the goal
-    compares against 10K THB/day × days.
+    Projects over the single as-of range pass (``margins_over_range``): one
+    loop owns the multi-day costing — the catalog is built once and each day
+    is costed at that day's prices (``cost_book_as_of``, ADR-0004 decision
+    2). The per-day ``DayMargins`` slices are rolled up here into the
+    period's reliable-rows headline and per-day drilldown rows.
+    ``fixed_costs`` are the stored entity-level entries (Wave 2 slice 3);
+    the ones applying to the range turn the gross margin into ``net_profit``,
+    which is what the goal compares against 10K THB/day × days.
     """
     if end < start:
         raise ValueError(
             f"period end {end} precedes start {start}; range must be inclusive"
         )
 
-    sales = source.sales()
-    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
+    slices = margins_over_range(source, start, end)
 
     counted_rows: list[ItemMargin] = []
     flagged_rows: list[ItemMargin] = []
     days: list[PeriodDay] = []
-    current = start
-    while current <= end:
-        rows = compute_item_margins(
-            sales=sales,
-            recipes=recipes,
-            cost=source.cost_book_as_of(current),
-            day=current,
-        )
+    for slice_ in slices:
+        rows = slice_.item_margins
         counted = [im for im in rows if not im.excluded_from_totals]
         counted_rows.extend(counted)
         flagged_rows.extend(im for im in rows if im.excluded_from_totals)
@@ -178,13 +177,12 @@ def build_period_review(
         day_cogs = sum((im.cogs for im in counted), Money("0"))
         days.append(
             PeriodDay(
-                day=current,
+                day=slice_.day,
                 revenue=day_revenue,
                 cogs=day_cogs,
                 gross_margin=day_revenue - day_cogs,
             )
         )
-        current += timedelta(days=1)
 
     revenue = sum((im.revenue for im in counted_rows), Money("0"))
     cogs = sum((im.cogs for im in counted_rows), Money("0"))
@@ -259,11 +257,12 @@ def build_item_performance(
 ) -> ItemPerformance | None:
     """Build one item's performance view, or None when it cannot be costed.
 
-    Runs the same per-day margin engine as ``build_period_review`` — shared
-    as-of-date pricing, so the item's period numbers agree with the period
-    and day views by construction — and keeps only ``item_id``'s reliable
-    rows. Returns None for an unmapped item (no recipe, so no recipe-cost to
-    show; its fix path is the needs-attention link, per issue #31).
+    Projects over the single as-of range pass (``margins_over_range``), the
+    same pass ``build_period_review`` uses — so the item's period numbers
+    agree with the period and day views by construction (shared as-of-date
+    pricing) — and keeps only ``item_id``'s reliable rows. Returns None for
+    an unmapped item (no recipe, so no recipe-cost to show; its fix path is
+    the needs-attention link, per issue #31).
     """
     if end < start:
         raise ValueError(
@@ -275,30 +274,22 @@ def build_item_performance(
     if recipe is None:
         return None
 
-    sales = source.sales()
     day_rows: list[ItemDay] = []
-    current = start
-    while current <= end:
-        rows = compute_item_margins(
-            sales=sales,
-            recipes=recipes,
-            cost=source.cost_book_as_of(current),
-            day=current,
+    for slice_ in margins_over_range(source, start, end):
+        row = next(
+            (im for im in slice_.item_margins if im.item_id == item_id), None
         )
-        row = next((im for im in rows if im.item_id == item_id), None)
         if row is None or row.excluded_from_totals:
-            current += timedelta(days=1)
             continue
         day_rows.append(
             ItemDay(
-                day=current,
+                day=slice_.day,
                 units_sold=row.units_sold,
                 revenue=row.revenue,
                 cogs=row.cogs,
                 gross_margin=row.gross_margin,
             )
         )
-        current += timedelta(days=1)
 
     revenue = sum((d.revenue for d in day_rows), Money("0"))
     cogs = sum((d.cogs for d in day_rows), Money("0"))

@@ -41,7 +41,7 @@ from decimal import Decimal
 
 from .anomaly import AnomalyConfig, detect_anomalies
 from .ingestion import Source
-from .margin import compute_daily_margin
+from .margin import compute_daily_margin, margins_over_range
 from .types import (
     AnomalyFlag,
     DailyMargin,
@@ -282,6 +282,11 @@ def _compute_goal_progress(source: Source, review_date: date) -> GoalProgress:
     venue with one day of sales reports that one day's gross margin as its
     rolling average; this is the honest number, not a fabricated six zeros
     that would under-state progress for the first week.
+
+    Projects over the single as-of range pass (``margins_over_range``): one
+    loop owns the trailing window's costing, the same path the daily view
+    and period review take, so the goal agrees with the per-day gross
+    margins by construction.
     """
     sales = source.sales()
     if not sales:
@@ -294,14 +299,25 @@ def _compute_goal_progress(source: Source, review_date: date) -> GoalProgress:
     earliest = min(s.timestamp for s in sales)
     window_start = max(earliest, review_date - timedelta(days=ROLLING_AVERAGE_DAYS - 1))
 
+    # ``review_date`` may sit before the earliest sale (the "empty day" a
+    # partner navigates to): the window is empty, the old per-day loop
+    # simply never iterated. Guard the range pass the same way rather than
+    # calling it with ``end < start``.
+    if window_start > review_date:
+        return GoalProgress(
+            rolling_average=Money("0"),
+            target=DAILY_PROFIT_TARGET_THB,
+            days_in_window=0,
+        )
+
+    slices = margins_over_range(source, window_start, review_date)
     total = Money("0")
     days_seen = 0
-    current = window_start
-    while current <= review_date:
-        daily = compute_daily_margin(source, current)
-        total += daily.total_gross_margin
+    for slice_ in slices:
+        rows = slice_.item_margins
+        counted = [im for im in rows if not im.excluded_from_totals]
+        total += sum((im.gross_margin for im in counted), Money("0"))
         days_seen += 1
-        current += timedelta(days=1)
 
     average = (
         Money(total / Decimal(days_seen))

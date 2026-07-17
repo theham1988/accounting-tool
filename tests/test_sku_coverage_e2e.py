@@ -17,6 +17,8 @@ from tangerine.cost import CostBook
 from tangerine.coverage import build_item_coverage, build_sku_coverage, classify_sku, sku_health
 from tangerine.loyverse.parser import parse_items_snapshot
 from tangerine.loyverse.store import MenuItem
+from tangerine.margin import CostResolver
+from tangerine.recipes import RecipeCatalog
 from tangerine.types import (
     Recipe,
     RecipeIngredient,
@@ -40,6 +42,11 @@ def _recipe(sku_id: str, *ingredient_sku_ids: str) -> Recipe:
             RecipeIngredient(sku_id=ing, quantity=D("1")) for ing in ingredient_sku_ids
         ),
     )
+
+
+def _resolver(recipes: list[Recipe], cost: CostBook) -> CostResolver:
+    """The recursive margin face — the one the coverage engine now uses."""
+    return CostResolver(RecipeCatalog(recipes), cost)
 
 
 # --- AC: SKU view distinguishes active / prep-internal / dangling SKUs ------
@@ -124,7 +131,7 @@ def test_dangling_sku_is_always_red() -> None:
         sku_health(
             "orphan-sku",
             recipe=None,
-            cost=CostBook(),
+            resolver=_resolver([], CostBook()),
             classification=SkuClassification.DANGLING,
         )
         == SkuHealth.RED
@@ -141,7 +148,10 @@ def test_recipe_with_every_ingredient_priced_is_green() -> None:
 
     assert (
         sku_health(
-            "espresso-latte", recipe=recipe, cost=cost, classification=SkuClassification.ACTIVE
+            "espresso-latte",
+            recipe=recipe,
+            resolver=_resolver([recipe], cost),
+            classification=SkuClassification.ACTIVE,
         )
         == SkuHealth.GREEN
     )
@@ -156,7 +166,10 @@ def test_recipe_with_one_unpriced_ingredient_is_yellow() -> None:
 
     assert (
         sku_health(
-            "espresso-latte", recipe=recipe, cost=cost, classification=SkuClassification.ACTIVE
+            "espresso-latte",
+            recipe=recipe,
+            resolver=_resolver([recipe], cost),
+            classification=SkuClassification.ACTIVE,
         )
         == SkuHealth.YELLOW
     )
@@ -171,7 +184,10 @@ def test_recipe_with_no_ingredient_priced_is_yellow_not_red() -> None:
 
     assert (
         sku_health(
-            "espresso-latte", recipe=recipe, cost=CostBook(), classification=SkuClassification.ACTIVE
+            "espresso-latte",
+            recipe=recipe,
+            resolver=_resolver([recipe], CostBook()),
+            classification=SkuClassification.ACTIVE,
         )
         == SkuHealth.YELLOW
     )
@@ -183,7 +199,10 @@ def test_recipe_with_zero_ingredients_is_red() -> None:
 
     assert (
         sku_health(
-            "mystery-item", recipe=recipe, cost=CostBook(), classification=SkuClassification.ACTIVE
+            "mystery-item",
+            recipe=recipe,
+            resolver=_resolver([recipe], CostBook()),
+            classification=SkuClassification.ACTIVE,
         )
         == SkuHealth.RED
     )
@@ -199,7 +218,10 @@ def test_leaf_ingredient_with_a_price_is_green() -> None:
 
     assert (
         sku_health(
-            "beans-arabica", recipe=None, cost=cost, classification=SkuClassification.PREP_INTERNAL
+            "beans-arabica",
+            recipe=None,
+            resolver=_resolver([], cost),
+            classification=SkuClassification.PREP_INTERNAL,
         )
         == SkuHealth.GREEN
     )
@@ -211,7 +233,10 @@ def test_leaf_ingredient_with_no_price_is_red() -> None:
     """
     assert (
         sku_health(
-            "unpriced-leaf", recipe=None, cost=CostBook(), classification=SkuClassification.PREP_INTERNAL
+            "unpriced-leaf",
+            recipe=None,
+            resolver=_resolver([], CostBook()),
+            classification=SkuClassification.PREP_INTERNAL,
         )
         == SkuHealth.RED
     )
@@ -223,10 +248,149 @@ def test_active_sku_with_no_recipe_at_all_is_red() -> None:
     """
     assert (
         sku_health(
-            "phantom-sku", recipe=None, cost=CostBook(), classification=SkuClassification.ACTIVE
+            "phantom-sku",
+            recipe=None,
+            resolver=_resolver([], CostBook()),
+            classification=SkuClassification.ACTIVE,
         )
         == SkuHealth.RED
     )
+
+
+# --- AC: prep-containing dishes agree with the recursive margin engine -------
+#
+# ADR-0005: a dish whose direct ingredient is a prep is costed by recursing
+# into the prep's own recipe. The prep output is never priced as a leaf — its
+# cost is *always* derived. So the coverage health must be GREEN the moment
+# the prep's recipe is fully priced, even though the prep output has no
+# cost-book entry of its own. Under the old leaf-priced-only check this dish
+# showed YELLOW while the daily review costed it GREEN.
+
+
+def test_dish_using_a_prep_is_green_when_the_preps_recipe_is_priced() -> None:
+    """A dish that consumes a prep is GREEN once the prep's own recipe is
+    fully priced, even though the prep output is unpriced as a leaf.
+
+    This is the ticket's core case: ``/skus`` and ``/items`` must show the
+    same recipe-cost truth as the daily review. Worked example:
+
+      - ``soy``              purchasable, 0.10 THB/g
+      - ``oba-sauce``        prep: 60 g soy, yields 60 g -> 0.10 THB/g
+                             (no cost-book entry of its own)
+      - ``espresso-latte``   dish: 200 ml milk + 10 g oba-sauce -> 6.00 THB
+
+    Under the leaf-only check the latte would be YELLOW (oba-sauce unpriced
+    as a leaf); under the recursive resolver it is GREEN, matching the
+    margin engine. Its derived ``cost_per_unit`` must equal what
+    ``CostResolver.unit_cost`` returns directly.
+    """
+    soy = RecipeIngredient(sku_id="soy", quantity=D("60"))
+    oba_recipe = Recipe(
+        sku_id="oba-sauce",
+        name="Oba Sauce",
+        segment=Segment.CAFE,
+        ingredients=(soy,),
+        yield_qty=D("60"),
+        prep=True,
+    )
+    latte_recipe = Recipe(
+        sku_id="espresso-latte",
+        name="Espresso Latte",
+        segment=Segment.CAFE,
+        ingredients=(
+            RecipeIngredient(sku_id="milk-fresh", quantity=D("200")),
+            RecipeIngredient(sku_id="oba-sauce", quantity=D("10")),
+        ),
+    )
+    recipes = [oba_recipe, latte_recipe]
+    cost = CostBook({"soy": (D("0.10"), _DAY), "milk-fresh": (D("0.025"), _DAY)})
+
+    # The prep output deliberately has NO cost-book entry.
+    assert cost.price("oba-sauce") is None
+
+    # The latte is GREEN — its prep's recipe is fully priced, so the
+    # recursive resolver derives a cost (the daily-review truth).
+    assert (
+        sku_health(
+            "espresso-latte",
+            recipe=latte_recipe,
+            resolver=_resolver(recipes, cost),
+            classification=SkuClassification.ACTIVE,
+        )
+        == SkuHealth.GREEN
+    )
+
+    # The prep's own row is GREEN too — its recipe is fully costable.
+    assert (
+        sku_health(
+            "oba-sauce",
+            recipe=oba_recipe,
+            resolver=_resolver(recipes, cost),
+            classification=SkuClassification.PREP_INTERNAL,
+        )
+        == SkuHealth.GREEN
+    )
+
+
+def test_prep_containing_dish_coverage_cost_matches_cost_resolver() -> None:
+    """``build_sku_coverage`` derives the dish's cost from the same
+    ``CostResolver`` the margin engine uses, so the number on the row equals
+    ``CostResolver.unit_cost(dish)`` exactly — never a leaf-price-wins figure
+    and never None when the prep resolves.
+
+    Worked example: the latte from the GREEN test above, plus an explicit
+    equality against a freshly-built resolver.
+    """
+    recipes = [
+        Recipe(
+            sku_id="oba-sauce",
+            name="Oba Sauce",
+            segment=Segment.CAFE,
+            ingredients=(RecipeIngredient(sku_id="soy", quantity=D("60")),),
+            yield_qty=D("60"),
+            prep=True,
+        ),
+        Recipe(
+            sku_id="espresso-latte",
+            name="Espresso Latte",
+            segment=Segment.CAFE,
+            ingredients=(
+                RecipeIngredient(sku_id="milk-fresh", quantity=D("200")),
+                RecipeIngredient(sku_id="oba-sauce", quantity=D("10")),
+            ),
+        ),
+    ]
+    skus = [
+        SkuRecord(sku_id="espresso-latte", name="Espresso Latte", segment=Segment.CAFE, unit=None),
+        SkuRecord(sku_id="oba-sauce", name="Oba Sauce", segment=None, unit="g"),
+        SkuRecord(sku_id="milk-fresh", name="milk-fresh", segment=None, unit="ml"),
+        SkuRecord(sku_id="soy", name="soy", segment=None, unit="ml"),
+    ]
+    mappings = [SkuMapping(item_id="i-latte", sku_id="espresso-latte")]
+    cost = CostBook({"soy": (D("0.10"), _DAY), "milk-fresh": (D("0.025"), _DAY)})
+
+    rows = build_sku_coverage(skus=skus, recipes=recipes, mappings=mappings, cost=cost)
+    by_id = {r.sku_id: r for r in rows}
+
+    expected_resolver = CostResolver(RecipeCatalog(recipes, mappings), cost)
+    expected_dish_cost = expected_resolver.unit_cost("espresso-latte")
+    assert expected_dish_cost is not None  # sanity: the dish resolves
+
+    latte = by_id["espresso-latte"]
+    assert latte.health is SkuHealth.GREEN
+    # 200 ml milk (5.00) + 10 g oba-sauce at 0.10/g (1.00) = 6.00.
+    assert latte.cost_per_unit == D("6.00")
+    assert latte.cost_per_unit == expected_dish_cost
+
+    # The prep counts as a priced direct ingredient: the resolver can derive
+    # its cost even though it has no leaf price of its own.
+    assert latte.ingredient_count == 2
+    assert latte.priced_ingredient_count == 2
+
+    # The prep's own row carries its derived per-gram cost, not a leaf price.
+    oba = by_id["oba-sauce"]
+    assert oba.health is SkuHealth.GREEN
+    assert oba.cost_per_unit == expected_resolver.unit_cost("oba-sauce") == D("0.10")
 
 
 # --- AC: `GET /skus` renders one row per SKU with the full coverage picture -

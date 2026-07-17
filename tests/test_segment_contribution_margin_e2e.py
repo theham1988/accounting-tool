@@ -30,7 +30,8 @@ from decimal import Decimal
 import pytest
 
 from tangerine.cost import CostBook
-from tangerine.margin import compute_daily_margin, compute_period_segment_margins
+from tangerine.margin import compute_daily_margin
+from tangerine.period_review import build_period_review
 from tangerine.seeded import SeededSource
 from tangerine.segments import segment_for_timestamp, segment_of_sale
 from tangerine.types import Recipe, RecipeIngredient, Sale, Segment
@@ -417,8 +418,10 @@ def test_period_segment_margins_span_multiple_days() -> None:
     """Per-segment revenue/CM over a multi-day period (issue 07: 'for any
     period').
 
-    Two days, each with 1 Chang (bar) + 1 Latte (cafe). Over the period:
-    Bar CM = 85 * 2 = 170, Cafe CM = 75 * 2 = 150.
+    The period's segment CMs come off ``PeriodReview.segment_margins`` —
+    the same projection the period view renders, which itself projects over
+    the single as-of range pass. Two days, each with 1 Chang (bar) + 1
+    Latte (cafe). Over the period: Bar CM = 85 * 2 = 170, Cafe CM = 75 * 2 = 150.
     """
     day1 = date(2026, 6, 24)
     day2 = date(2026, 6, 25)
@@ -432,9 +435,9 @@ def test_period_segment_margins_span_multiple_days() -> None:
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()
     )
 
-    margins = compute_period_segment_margins(source, start=day1, end=day2)
+    review = build_period_review(source=source, start=day1, end=day2)
 
-    by_seg = {sm.segment: sm for sm in margins}
+    by_seg = {sm.segment: sm for sm in review.segment_margins}
     assert by_seg[Segment.BAR].revenue == D("240")
     assert by_seg[Segment.BAR].variable_costs == D("70")
     assert by_seg[Segment.BAR].contribution_margin == D("170")
@@ -455,9 +458,9 @@ def test_period_segment_margins_exclude_outside_days() -> None:
         sales=sales, recipes=[_chang_recipe()], cost=_cost()
     )
 
-    margins = compute_period_segment_margins(source, start=day1, end=day2)
+    review = build_period_review(source=source, start=day1, end=day2)
 
-    by_seg = {sm.segment: sm for sm in margins}
+    by_seg = {sm.segment: sm for sm in review.segment_margins}
     assert by_seg[Segment.BAR].revenue == D("120")  # only day1, day3 excluded
 
 
