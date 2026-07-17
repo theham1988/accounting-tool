@@ -423,14 +423,17 @@ See [`tests/test_segment_contribution_margin_e2e.py`](tests/test_segment_contrib
 for the contract.
 
 ```python
-from tangerine.margin import compute_daily_margin, compute_period_segment_margins
+from tangerine.margin import compute_daily_margin
+from tangerine.period_review import build_period_review
 
 daily = compute_daily_margin(source, day)
 for sm in daily.segment_margins:
     print(sm.segment, sm.contribution_margin, sm.is_red)
 
 # Any inclusive period (issue 07: "for any period"):
-period = compute_period_segment_margins(source, start=day1, end=day2)
+review = build_period_review(source=source, start=day1, end=day2)
+for sm in review.segment_margins:
+    print(sm.segment, sm.contribution_margin, sm.is_red)
 ```
 
 ## Fixed costs and monthly accrual P&L

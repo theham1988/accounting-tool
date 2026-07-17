@@ -21,7 +21,8 @@ import json
 import re
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -102,12 +103,21 @@ class SqliteConfigStore:
     for concurrent use from multiple threads even with ``check_same_thread=False``
     — and the web app serves sync routes from a threadpool alongside the nightly
     sync cron.
+
+    Multi-write authoring strokes (:meth:`batch`) run several audited writes in
+    one lock + one SQLite transaction, so a mid-stroke failure rolls back every
+    write and its audit rows together. A stroke like the sold-as-is
+    quick-create (a purchasable SKU + its cost + a sold SKU + a serving recipe
+    + a mapping) lands as all-or-nothing. Audit semantics are unchanged: each
+    write still records its own audit row, all stamped with the same
+    ``session_id`` — the only difference from sequential standalone calls is
+    atomicity.
     """
 
     def __init__(
         self,
         conn: sqlite3.Connection,
-        lock: threading.Lock | None = None,
+        lock: threading.Lock | threading.RLock | None = None,
         now: Callable[[], str] | None = None,
     ) -> None:
         """``lock`` lets a caller share one serialisation lock across every
@@ -122,10 +132,64 @@ class SqliteConfigStore:
         — like ``auth.py``'s clock and ``create_app``'s ``now_epoch`` — so
         the web app can drive the store and the "under 24 hours" banner from
         the same pinned instant in tests. Defaults to the wall clock.
+
+        The lock may be a plain :class:`~threading.Lock` or an
+        :class:`~threading.RLock`; an ``RLock`` is required when callers use
+        :meth:`batch` (the write methods called inside a ``batch`` block
+        re-enter the same lock the block already holds).
+        :func:`~tangerine.web.app.create_app` always shares an ``RLock``
+        with the Loyverse store so config authoring routes can wrap their
+        multi-write strokes in ``batch()``.
         """
         self._conn = conn
-        self._lock = lock if lock is not None else threading.Lock()
+        self._lock = lock if lock is not None else threading.RLock()
         self._now = now if now is not None else _utc_now_iso
+        # True while a :meth:`batch` block holds the lock + open transaction.
+        # The write methods check this to decide whether to take the lock and
+        # manage their own transaction (standalone call) or assume the caller
+        # already holds both (call from inside ``batch``). Guarded by ``_lock``.
+        self._in_batch = False
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Run several audited writes in one lock + one SQLite transaction.
+
+        Inside the block, the store's write methods (``save_cost``,
+        ``save_mapping``, ``create_sku``, ``save_recipe``, ``delete_recipe``,
+        ``create_fixed_cost``, ``end_fixed_cost``, ``delete_fixed_cost``)
+        join the open transaction instead of each opening and committing
+        their own. A normal block exit commits the whole batch atomically;
+        any exception propagating out rolls back every write *and* its audit
+        rows — the audit log never records a partial stroke.
+
+        The same ``session_id`` threaded into each write keeps the audit
+        grouping (per-session revert, "N changes since last review")
+        identical to what N sequential standalone calls would have
+        produced — only the all-or-nothing durability is new.
+
+        ``batch`` blocks may be nested; the innermost block that is not
+        itself inside a ``batch`` owns the transaction (its ``with
+        self._conn`` is the commit/rollback point). Inner blocks just
+        re-enter the already-held lock and yield without touching the
+        transaction, so a helper that wraps its own ``batch()`` is safe to
+        call either standalone or from inside another batch. The lock is
+        held for the outermost block's whole duration, so a long-running
+        stroke serialises against concurrent writers — the same
+        serialisation standalone writes already buy.
+        """
+        with self._lock:
+            outer = not self._in_batch
+            if outer:
+                self._in_batch = True
+            try:
+                if outer:
+                    with self._conn:
+                        yield
+                else:
+                    yield
+            finally:
+                if outer:
+                    self._in_batch = False
 
     def recipes(self) -> list[Recipe]:
         """All stored recipes, in sku_id order, each with its ingredient rows.
@@ -291,35 +355,76 @@ class SqliteConfigStore:
         save appends to inside the same transaction.
 
         Returns the derived net per-unit price so callers can surface it.
+
+        Batch-aware: when called inside a :meth:`batch` block the write +
+        audit row join that block's open transaction (so a mid-stroke
+        failure rolls them back); standalone calls open and commit their
+        own transaction as before.
         """
         net = net_price_per_unit(pack_price, pack_quantity, vat_inclusive)
-        with self._lock, self._conn:
-            old = self._row_snapshot("costs", "sku_id", sku_id)
-            self._conn.execute(
-                "INSERT OR REPLACE INTO costs"
-                " (sku_id, pack_price, pack_quantity, vat_inclusive,"
-                "  price_per_unit_net, updated_at, updated_by)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    sku_id,
-                    str(pack_price),
-                    str(pack_quantity),
-                    1 if vat_inclusive else 0,
-                    str(net),
-                    updated_on.isoformat(),
-                    updated_by,
-                ),
-            )
-            new = self._row_snapshot("costs", "sku_id", sku_id)
-            self._record_audit(
-                "costs",
+        if self._in_batch:
+            self._save_cost_impl(
                 sku_id,
-                old=old,
-                new=new,
-                changed_by=updated_by,
+                net=net,
+                pack_price=pack_price,
+                pack_quantity=pack_quantity,
+                vat_inclusive=vat_inclusive,
+                updated_by=updated_by,
+                updated_on=updated_on,
                 session_id=session_id,
             )
+        else:
+            with self._lock, self._conn:
+                self._save_cost_impl(
+                    sku_id,
+                    net=net,
+                    pack_price=pack_price,
+                    pack_quantity=pack_quantity,
+                    vat_inclusive=vat_inclusive,
+                    updated_by=updated_by,
+                    updated_on=updated_on,
+                    session_id=session_id,
+                )
         return net
+
+    def _save_cost_impl(
+        self,
+        sku_id: str,
+        *,
+        net: Decimal,
+        pack_price: Decimal,
+        pack_quantity: Decimal,
+        vat_inclusive: bool,
+        updated_by: str,
+        updated_on: date,
+        session_id: str | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("costs", "sku_id", sku_id)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO costs"
+            " (sku_id, pack_price, pack_quantity, vat_inclusive,"
+            "  price_per_unit_net, updated_at, updated_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                sku_id,
+                str(pack_price),
+                str(pack_quantity),
+                1 if vat_inclusive else 0,
+                str(net),
+                updated_on.isoformat(),
+                updated_by,
+            ),
+        )
+        new = self._row_snapshot("costs", "sku_id", sku_id)
+        self._record_audit(
+            "costs",
+            sku_id,
+            old=old,
+            new=new,
+            changed_by=updated_by,
+            session_id=session_id,
+        )
 
     def audit_entries(self) -> list[AuditEntry]:
         """Every audit-log row, newest first — what ``GET /audit`` renders."""
@@ -605,24 +710,45 @@ class SqliteConfigStore:
         updated_by: str,
         session_id: str | None = None,
     ) -> None:
-        """Assign a Loyverse item to a SKU (upsert — latest assignment wins)."""
-        with self._lock, self._conn:
-            old = self._row_snapshot("mappings", "item_id", item_id)
-            self._conn.execute(
-                "INSERT OR REPLACE INTO mappings"
-                " (item_id, sku_id, updated_at, updated_by)"
-                " VALUES (?, ?, ?, ?)",
-                (item_id, sku_id, self._now(), updated_by),
+        """Assign a Loyverse item to a SKU (upsert — latest assignment wins).
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            self._save_mapping_impl(
+                item_id, sku_id, updated_by=updated_by, session_id=session_id
             )
-            new = self._row_snapshot("mappings", "item_id", item_id)
-            self._record_audit(
-                "mappings",
-                item_id,
-                old=old,
-                new=new,
-                changed_by=updated_by,
-                session_id=session_id,
-            )
+        else:
+            with self._lock, self._conn:
+                self._save_mapping_impl(
+                    item_id, sku_id, updated_by=updated_by, session_id=session_id
+                )
+
+    def _save_mapping_impl(
+        self,
+        item_id: str,
+        sku_id: str,
+        *,
+        updated_by: str,
+        session_id: str | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("mappings", "item_id", item_id)
+        self._conn.execute(
+            "INSERT OR REPLACE INTO mappings"
+            " (item_id, sku_id, updated_at, updated_by)"
+            " VALUES (?, ?, ?, ?)",
+            (item_id, sku_id, self._now(), updated_by),
+        )
+        new = self._row_snapshot("mappings", "item_id", item_id)
+        self._record_audit(
+            "mappings",
+            item_id,
+            old=old,
+            new=new,
+            changed_by=updated_by,
+            session_id=session_id,
+        )
 
     def create_sku(
         self,
@@ -643,25 +769,57 @@ class SqliteConfigStore:
         ingredient may feed both cafe and bar); the sold-as-is quick-create
         passes the Loyverse item's segment for the *sold* SKU it creates, so
         the segment-contribution-margin view attributes the sale correctly.
+
+        Batch-aware: see :meth:`save_cost`.
         """
-        segment_value = segment.value if segment is not None else None
-        with self._lock, self._conn:
-            self._conn.execute(
-                "INSERT INTO skus"
-                " (sku_id, name, segment, unit, yield_qty,"
-                "  yield_estimated, target_gross_margin_pct,"
-                "  created_at, created_by)"
-                " VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
-                (sku_id, name, segment_value, unit, self._now(), created_by),
-            )
-            self._record_audit(
-                "skus",
+        if self._in_batch:
+            self._create_sku_impl(
                 sku_id,
-                old=None,
-                new=self._row_snapshot("skus", "sku_id", sku_id),
-                changed_by=created_by,
+                name=name,
+                unit=unit,
+                created_by=created_by,
                 session_id=session_id,
+                segment=segment,
             )
+        else:
+            with self._lock, self._conn:
+                self._create_sku_impl(
+                    sku_id,
+                    name=name,
+                    unit=unit,
+                    created_by=created_by,
+                    session_id=session_id,
+                    segment=segment,
+                )
+
+    def _create_sku_impl(
+        self,
+        sku_id: str,
+        *,
+        name: str,
+        unit: str,
+        created_by: str,
+        session_id: str | None,
+        segment: Segment | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        segment_value = segment.value if segment is not None else None
+        self._conn.execute(
+            "INSERT INTO skus"
+            " (sku_id, name, segment, unit, yield_qty,"
+            "  yield_estimated, target_gross_margin_pct,"
+            "  created_at, created_by)"
+            " VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?)",
+            (sku_id, name, segment_value, unit, self._now(), created_by),
+        )
+        self._record_audit(
+            "skus",
+            sku_id,
+            old=None,
+            new=self._row_snapshot("skus", "sku_id", sku_id),
+            changed_by=created_by,
+            session_id=session_id,
+        )
 
     def save_recipe(
         self,
@@ -707,71 +865,109 @@ class SqliteConfigStore:
         The audit entry snapshots the *whole recipe* (header + ingredient
         rows) as one logical row, because that is what the partner edits and
         what a revert must restore in one stroke.
+
+        Batch-aware: see :meth:`save_cost`.
         """
-        target_str = _decimal_or_none_to_str(target_gross_margin_pct)
-        yield_str = str(yield_qty)
-        with self._lock, self._conn:
-            old = self._recipe_snapshot(sku_id)
-            header = self._conn.execute(
-                "SELECT sku_id FROM recipes WHERE sku_id = ?", (sku_id,)
-            ).fetchone()
-            if header is None:
-                sku_row = self._conn.execute(
-                    "SELECT name, segment FROM skus WHERE sku_id = ?", (sku_id,)
-                ).fetchone()
-                name, segment = sku_row if sku_row else (sku_id, None)
-                self._conn.execute(
-                    "INSERT INTO recipes"
-                    " (sku_id, name, segment, yield_qty, yield_estimated,"
-                    "  target_gross_margin_pct, prep)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        sku_id,
-                        name,
-                        segment or Segment.CAFE.value,
-                        yield_str,
-                        1 if yield_estimated else 0,
-                        target_str,
-                        int(prep),
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE recipes"
-                    " SET yield_qty = ?, yield_estimated = ?,"
-                    "     target_gross_margin_pct = ?, prep = ?"
-                    " WHERE sku_id = ?",
-                    (
-                        yield_str,
-                        1 if yield_estimated else 0,
-                        target_str,
-                        int(prep),
-                        sku_id,
-                    ),
-                )
-            self._conn.execute(
-                "DELETE FROM recipe_ingredients WHERE sku_id = ?", (sku_id,)
-            )
-            self._conn.executemany(
-                "INSERT INTO recipe_ingredients"
-                " (sku_id, ingredient_sku_id, quantity, position)"
-                " VALUES (?, ?, ?, ?)",
-                [
-                    (sku_id, ingredient_sku_id, str(quantity), position)
-                    for position, (ingredient_sku_id, quantity) in enumerate(
-                        ingredients
-                    )
-                ],
-            )
-            new = self._recipe_snapshot(sku_id)
-            self._record_audit(
-                "recipes",
+        if self._in_batch:
+            self._save_recipe_impl(
                 sku_id,
-                old=old,
-                new=new,
-                changed_by=updated_by,
+                ingredients=ingredients,
+                yield_qty=yield_qty,
+                yield_estimated=yield_estimated,
+                target_gross_margin_pct=target_gross_margin_pct,
+                prep=prep,
+                updated_by=updated_by,
                 session_id=session_id,
             )
+        else:
+            with self._lock, self._conn:
+                self._save_recipe_impl(
+                    sku_id,
+                    ingredients=ingredients,
+                    yield_qty=yield_qty,
+                    yield_estimated=yield_estimated,
+                    target_gross_margin_pct=target_gross_margin_pct,
+                    prep=prep,
+                    updated_by=updated_by,
+                    session_id=session_id,
+                )
+
+    def _save_recipe_impl(
+        self,
+        sku_id: str,
+        *,
+        ingredients: list[tuple[str, Decimal]],
+        yield_qty: Decimal,
+        yield_estimated: bool,
+        target_gross_margin_pct: Decimal | None,
+        prep: bool,
+        updated_by: str,
+        session_id: str | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        target_str = _decimal_or_none_to_str(target_gross_margin_pct)
+        yield_str = str(yield_qty)
+        old = self._recipe_snapshot(sku_id)
+        header = self._conn.execute(
+            "SELECT sku_id FROM recipes WHERE sku_id = ?", (sku_id,)
+        ).fetchone()
+        if header is None:
+            sku_row = self._conn.execute(
+                "SELECT name, segment FROM skus WHERE sku_id = ?", (sku_id,)
+            ).fetchone()
+            name, segment = sku_row if sku_row else (sku_id, None)
+            self._conn.execute(
+                "INSERT INTO recipes"
+                " (sku_id, name, segment, yield_qty, yield_estimated,"
+                "  target_gross_margin_pct, prep)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sku_id,
+                    name,
+                    segment or Segment.CAFE.value,
+                    yield_str,
+                    1 if yield_estimated else 0,
+                    target_str,
+                    int(prep),
+                ),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE recipes"
+                " SET yield_qty = ?, yield_estimated = ?,"
+                "     target_gross_margin_pct = ?, prep = ?"
+                " WHERE sku_id = ?",
+                (
+                    yield_str,
+                    1 if yield_estimated else 0,
+                    target_str,
+                    int(prep),
+                    sku_id,
+                ),
+            )
+        self._conn.execute(
+            "DELETE FROM recipe_ingredients WHERE sku_id = ?", (sku_id,)
+        )
+        self._conn.executemany(
+            "INSERT INTO recipe_ingredients"
+            " (sku_id, ingredient_sku_id, quantity, position)"
+            " VALUES (?, ?, ?, ?)",
+            [
+                (sku_id, ingredient_sku_id, str(quantity), position)
+                for position, (ingredient_sku_id, quantity) in enumerate(
+                    ingredients
+                )
+            ],
+        )
+        new = self._recipe_snapshot(sku_id)
+        self._record_audit(
+            "recipes",
+            sku_id,
+            old=old,
+            new=new,
+            changed_by=updated_by,
+            session_id=session_id,
+        )
 
     def delete_recipe(
         self,
@@ -787,20 +983,39 @@ class SqliteConfigStore:
         records the removal (``new`` is ``None``), so a revert restores the
         recipe in one stroke — the mirror image of the create-on-first-save
         the recipe editor performs (issue #37, the role-flip demo).
+
+        Batch-aware: see :meth:`save_cost`.
         """
-        with self._lock, self._conn:
-            old = self._recipe_snapshot(sku_id)
-            if old is None:
-                return
-            self._apply_snapshot("recipes", sku_id, None)
-            self._record_audit(
-                "recipes",
-                sku_id,
-                old=old,
-                new=None,
-                changed_by=updated_by,
-                session_id=session_id,
+        if self._in_batch:
+            self._delete_recipe_impl(
+                sku_id, updated_by=updated_by, session_id=session_id
             )
+        else:
+            with self._lock, self._conn:
+                self._delete_recipe_impl(
+                    sku_id, updated_by=updated_by, session_id=session_id
+                )
+
+    def _delete_recipe_impl(
+        self,
+        sku_id: str,
+        *,
+        updated_by: str,
+        session_id: str | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._recipe_snapshot(sku_id)
+        if old is None:
+            return
+        self._apply_snapshot("recipes", sku_id, None)
+        self._record_audit(
+            "recipes",
+            sku_id,
+            old=old,
+            new=None,
+            changed_by=updated_by,
+            session_id=session_id,
+        )
 
     def _recipe_snapshot(self, sku_id: str) -> dict[str, Any] | None:
         """One recipe — header plus ordered ingredient rows — as a single dict.
@@ -860,31 +1075,67 @@ class SqliteConfigStore:
 
         ``period`` is the ``(year, month)`` a one-off applies to, or the
         first month a recurring row applies from. Returns the new row's id.
+
+        Batch-aware: see :meth:`save_cost`. The returned id is only stable
+        once the surrounding batch commits — a rolled-back stroke may have
+        already allocated and discarded the rowid.
         """
-        with self._lock, self._conn:
-            cursor = self._conn.execute(
-                "INSERT INTO fixed_costs"
-                " (label, category, amount, kind, period, created_at, created_by)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    label,
-                    category,
-                    str(amount),
-                    kind,
-                    _format_year_month(period),
-                    self._now(),
-                    created_by,
-                ),
-            )
-            entry_id = int(cursor.lastrowid or 0)
-            self._record_audit(
-                "fixed_costs",
-                str(entry_id),
-                old=None,
-                new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
-                changed_by=created_by,
+        if self._in_batch:
+            return self._create_fixed_cost_impl(
+                label=label,
+                category=category,
+                amount=amount,
+                kind=kind,
+                period=period,
+                created_by=created_by,
                 session_id=session_id,
             )
+        with self._lock, self._conn:
+            return self._create_fixed_cost_impl(
+                label=label,
+                category=category,
+                amount=amount,
+                kind=kind,
+                period=period,
+                created_by=created_by,
+                session_id=session_id,
+            )
+
+    def _create_fixed_cost_impl(
+        self,
+        *,
+        label: str,
+        category: str,
+        amount: Decimal,
+        kind: str,
+        period: tuple[int, int],
+        created_by: str,
+        session_id: str | None,
+    ) -> int:
+        """The write + audit, assuming the lock + transaction are held."""
+        cursor = self._conn.execute(
+            "INSERT INTO fixed_costs"
+            " (label, category, amount, kind, period, created_at, created_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                label,
+                category,
+                str(amount),
+                kind,
+                _format_year_month(period),
+                self._now(),
+                created_by,
+            ),
+        )
+        entry_id = int(cursor.lastrowid or 0)
+        self._record_audit(
+            "fixed_costs",
+            str(entry_id),
+            old=None,
+            new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
+            changed_by=created_by,
+            session_id=session_id,
+        )
         return entry_id
 
     def end_fixed_cost(
@@ -901,23 +1152,48 @@ class SqliteConfigStore:
         mid-month does not un-charge a month already paid); later months
         charge nothing. Audit-logged like every config edit. Returns
         ``False`` for an unknown id.
+
+        Batch-aware: see :meth:`save_cost`.
         """
-        with self._lock, self._conn:
-            old = self._row_snapshot("fixed_costs", "id", str(entry_id))
-            if old is None:
-                return False
-            self._conn.execute(
-                "UPDATE fixed_costs SET ended_at = ? WHERE id = ?",
-                (ended_on.isoformat(), entry_id),
-            )
-            self._record_audit(
-                "fixed_costs",
-                str(entry_id),
-                old=old,
-                new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
-                changed_by=updated_by,
+        if self._in_batch:
+            return self._end_fixed_cost_impl(
+                entry_id,
+                ended_on=ended_on,
+                updated_by=updated_by,
                 session_id=session_id,
             )
+        with self._lock, self._conn:
+            return self._end_fixed_cost_impl(
+                entry_id,
+                ended_on=ended_on,
+                updated_by=updated_by,
+                session_id=session_id,
+            )
+
+    def _end_fixed_cost_impl(
+        self,
+        entry_id: int,
+        *,
+        ended_on: date,
+        updated_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("fixed_costs", "id", str(entry_id))
+        if old is None:
+            return False
+        self._conn.execute(
+            "UPDATE fixed_costs SET ended_at = ? WHERE id = ?",
+            (ended_on.isoformat(), entry_id),
+        )
+        self._record_audit(
+            "fixed_costs",
+            str(entry_id),
+            old=old,
+            new=self._row_snapshot("fixed_costs", "id", str(entry_id)),
+            changed_by=updated_by,
+            session_id=session_id,
+        )
         return True
 
     def delete_fixed_cost(
@@ -932,20 +1208,38 @@ class SqliteConfigStore:
         Deletion is for rows that should never have applied (a typo, a
         duplicate); a cost that genuinely stopped is *ended*, which keeps
         its history in past months. Returns ``False`` for an unknown id.
+
+        Batch-aware: see :meth:`save_cost`.
         """
-        with self._lock, self._conn:
-            old = self._row_snapshot("fixed_costs", "id", str(entry_id))
-            if old is None:
-                return False
-            self._conn.execute("DELETE FROM fixed_costs WHERE id = ?", (entry_id,))
-            self._record_audit(
-                "fixed_costs",
-                str(entry_id),
-                old=old,
-                new=None,
-                changed_by=deleted_by,
-                session_id=session_id,
+        if self._in_batch:
+            return self._delete_fixed_cost_impl(
+                entry_id, deleted_by=deleted_by, session_id=session_id
             )
+        with self._lock, self._conn:
+            return self._delete_fixed_cost_impl(
+                entry_id, deleted_by=deleted_by, session_id=session_id
+            )
+
+    def _delete_fixed_cost_impl(
+        self,
+        entry_id: int,
+        *,
+        deleted_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("fixed_costs", "id", str(entry_id))
+        if old is None:
+            return False
+        self._conn.execute("DELETE FROM fixed_costs WHERE id = ?", (entry_id,))
+        self._record_audit(
+            "fixed_costs",
+            str(entry_id),
+            old=old,
+            new=None,
+            changed_by=deleted_by,
+            session_id=session_id,
+        )
         return True
 
     def skus(self) -> list[SkuRecord]:

@@ -54,9 +54,19 @@ from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
-from ..margin import cost_breakdown
+from ..margin import CostResolver, cost_breakdown
 from ..quantity import QuantityError, estimated_yield, parse_quantity
 from ..recipes import RecipeCatalog, find_recipe_cycle
+from ..serving_recipe import (
+    ServingRecipeSetup,
+    create_serving_recipe_setup,
+)
+from ..sku_authoring import (
+    SkuAuthoringError,
+    SkuAuthoringInput,
+    create_sku as author_new_sku,
+    parse_price,
+)
 from ..storage.config_store import (
     AuditEntry,
     SqliteConfigStore,
@@ -357,7 +367,15 @@ def create_app(
     # docstring). Wave 1.5 Slice 1 (ADR-0003 decision 1): recipes/costs/
     # mappings are seeded into SQLite once, then read live on every request
     # instead of being loaded into memory at startup.
-    conn_lock = threading.Lock()
+    #
+    # An ``RLock`` (reentrant) rather than a plain ``Lock`` so the config
+    # store's :meth:`~tangerine.storage.config_store.SqliteConfigStore.batch`
+    # context manager can hold the lock across multiple writes that each
+    # re-enter it — the multi-write-stroke transaction (serving-recipe
+    # authoring, sold-as-is quick-create) the store exposes for atomic
+    # authoring. The Loyverse store never re-enters, so an ``RLock`` is a
+    # strict superset of its needs.
+    conn_lock = threading.RLock()
     store = SqliteLoyverseStore(conn, lock=conn_lock)
     seed_config(conn, recipes_path=recipes_yaml, costs_path=costs_yaml)
 
@@ -943,45 +961,40 @@ def create_app(
         new ingredient selected — so the partner finishes the recipe without
         context-switching (``recipe_sku_id`` says whose editor the picker
         belongs to, for the preview wiring).
+
+        The stroke itself — SKU + optional cost + optional mapping, written
+        atomically when more than one write is involved — lives in the
+        :mod:`tangerine.sku_authoring` domain module so it is testable
+        without HTTP. This route is a thin adapter: parse the form, call the
+        module, translate :class:`~tangerine.sku_authoring.SkuAuthoringError`
+        into HTTP 400 (the pattern the serving-recipe setup will reuse).
         """
         cfg: SqliteConfigStore = app.state.config_store
-        sku_id = sku_id.strip()
-        name = name.strip()
-        if not sku_id or not name:
-            return HTMLResponse("sku_id and name are required.", status_code=400)
-        if unit not in ("g", "ml", "unit"):
-            return HTMLResponse("Unit must be g, ml, or unit.", status_code=400)
-        if cfg.sku(sku_id) is not None:
-            return HTMLResponse(f"SKU {sku_id} already exists.", status_code=400)
         price_value: Decimal | None = None
         if price.strip():
             try:
-                price_value = Decimal(price.strip())
-            except InvalidOperation:
-                return HTMLResponse("Price must be a number.", status_code=400)
-            if price_value < 0:
-                return HTMLResponse("Price must be ≥ 0.", status_code=400)
-        actor: str = request.state.assignee_id
-        session_id: str | None = request.state.session_id
-        cfg.create_sku(
-            sku_id, name=name, unit=unit, created_by=actor, session_id=session_id
-        )
-        if price_value is not None:
-            cfg.save_cost(
-                sku_id,
-                pack_price=price_value,
-                pack_quantity=Decimal("1"),
-                vat_inclusive=False,
-                updated_by=actor,
-                updated_on=app.state.today,
-                session_id=session_id,
+                price_value = parse_price(price)
+            except SkuAuthoringError as err:
+                return HTMLResponse(str(err), status_code=400)
+        try:
+            author_new_sku(
+                cfg,
+                SkuAuthoringInput(
+                    sku_id=sku_id,
+                    name=name,
+                    unit=unit,
+                    price_per_unit=price_value,
+                    item_id=item_id,
+                ),
+                created_by=request.state.assignee_id,
+                effective_on=app.state.today,
+                session_id=request.state.session_id,
             )
-        if item_id.strip():
-            # The item-coverage entry point: the new SKU exists to cost this
-            # unmapped item, so the mapping lands in the same stroke.
-            cfg.save_mapping(
-                item_id.strip(), sku_id, updated_by=actor, session_id=session_id
-            )
+        except SkuAuthoringError as err:
+            return HTMLResponse(str(err), status_code=400)
+        # The module strips the identity fields; read the canonical sku_id
+        # back so the redirect/HTMX paths use exactly what was persisted.
+        persisted_sku_id = sku_id.strip()
         if request.headers.get("hx-request"):
             t: Jinja2Templates = app.state.templates
             return cast(
@@ -997,11 +1010,11 @@ def create_app(
                         "all_skus": pickable_ingredient_skus(
                             cfg.skus(), cfg.recipes()
                         ),
-                        "selected_sku_id": sku_id,
+                        "selected_sku_id": persisted_sku_id,
                     },
                 ),
             )
-        return RedirectResponse(url=f"/skus/{sku_id}", status_code=303)
+        return RedirectResponse(url=f"/skus/{persisted_sku_id}", status_code=303)
 
     @app.get("/items/{item_id}/sold-as-is", response_class=HTMLResponse)
     def sold_as_is_form(request: Request, item_id: str) -> HTMLResponse:
@@ -1044,6 +1057,16 @@ def create_app(
         produced sold SKU the recipe outputs, and the item → sold-SKU mapping.
         No second costing path exists — the serving recipe is an ordinary
         recipe (one ingredient line, yield 1 in the sold SKU's unit).
+
+        This route is a thin adapter: it resolves the Loyverse item's segment
+        (the one fact the form cannot carry), packs the form fields into a
+        :class:`~tangerine.serving_recipe.ServingRecipeSetup`, and delegates
+        the stroke — validation, the five writes, the atomic ``batch()`` — to
+        :func:`~tangerine.serving_recipe.create_serving_recipe_setup`.
+        :class:`~tangerine.sku_authoring.SkuAuthoringError` is the partner-
+        facing error type that module raises; the route maps it verbatim to
+        HTTP 400. "sold-as-is" is the Books UI label; the domain name lives
+        in the module.
         """
         cfg: SqliteConfigStore = app.state.config_store
         store: SqliteLoyverseStore = app.state.store
@@ -1052,75 +1075,26 @@ def create_app(
         # attributes the sale correctly; the purchasable stays segment-NULL
         # (an ingredient may feed both cafe and bar).
         sold_segment = item.segment if item is not None else None
-        sku_id = sku_id.strip()
-        name = name.strip()
-        if not sku_id or not name:
-            return HTMLResponse("sku_id and name are required.", status_code=400)
-        if unit not in ("g", "ml", "unit"):
-            return HTMLResponse("Unit must be g, ml, or unit.", status_code=400)
-        if cfg.sku(sku_id) is not None:
-            return HTMLResponse(f"SKU {sku_id} already exists.", status_code=400)
         try:
-            pack_price_value = Decimal(pack_price.strip())
-            pack_quantity_value = Decimal(pack_quantity.strip())
-        except InvalidOperation:
-            return HTMLResponse(
-                "Pack price and pack quantity must be numbers.", status_code=400
+            sold_sku_id = create_serving_recipe_setup(
+                cfg,
+                item_id=item_id,
+                setup=ServingRecipeSetup(
+                    sku_id=sku_id,
+                    name=name,
+                    unit=unit,
+                    pack_price=pack_price,
+                    pack_quantity=pack_quantity,
+                    vat_inclusive=bool(vat_inclusive),
+                    serving_qty=serving_size,
+                    sold_segment=sold_segment,
+                ),
+                actor=request.state.assignee_id,
+                session_id=request.state.session_id,
+                today=app.state.today,
             )
-        if pack_price_value < 0 or pack_quantity_value <= 0:
-            return HTMLResponse(
-                "Pack price must be \u2265 0 and pack quantity must be > 0.",
-                status_code=400,
-            )
-        try:
-            serving_qty = Decimal(serving_size.strip())
-        except InvalidOperation:
-            return HTMLResponse("Serving size must be a number.", status_code=400)
-        if serving_qty <= 0:
-            return HTMLResponse("Serving size must be > 0.", status_code=400)
-        actor: str = request.state.assignee_id
-        session_id: str | None = request.state.session_id
-        sold_sku_id = f"{sku_id}:served"
-        if cfg.sku(sold_sku_id) is not None:
-            return HTMLResponse(
-                f"SKU {sold_sku_id} already exists.", status_code=400
-            )
-        # 1. The purchasable SKU — receipt-priced.
-        cfg.create_sku(
-            sku_id, name=name, unit=unit, created_by=actor, session_id=session_id
-        )
-        cfg.save_cost(
-            sku_id,
-            pack_price=pack_price_value,
-            pack_quantity=pack_quantity_value,
-            vat_inclusive=bool(vat_inclusive),
-            updated_by=actor,
-            updated_on=app.state.today,
-            session_id=session_id,
-        )
-        # 2. The produced sold SKU the serving recipe outputs (one per sale).
-        cfg.create_sku(
-            sold_sku_id,
-            name=f"{name} (serving)",
-            unit="unit",
-            segment=sold_segment,
-            created_by=actor,
-            session_id=session_id,
-        )
-        # 3. The serving recipe — one ingredient line, yield 1 sold unit.
-        cfg.save_recipe(
-            sold_sku_id,
-            ingredients=[(sku_id, serving_qty)],
-            yield_qty=Decimal("1"),
-            yield_estimated=False,
-            prep=False,
-            updated_by=actor,
-            session_id=session_id,
-        )
-        # 4. The mapping — the Loyverse item now resolves to the sold SKU.
-        cfg.save_mapping(
-            item_id, sold_sku_id, updated_by=actor, session_id=session_id
-        )
+        except SkuAuthoringError as err:
+            return HTMLResponse(str(err), status_code=400)
         return RedirectResponse(url=f"/skus/{sold_sku_id}", status_code=303)
 
     @app.get("/skus/{sku_id}", response_class=HTMLResponse)
@@ -1145,23 +1119,27 @@ def create_app(
         if sku is None:
             return HTMLResponse("Unknown SKU.", status_code=404)
         recipes = cfg.recipes()
+        mappings = cfg.mappings()
         recipe = next((r for r in recipes if r.sku_id == sku_id), None)
         role = sku_role(recipe)
+        cost = cfg.cost_book()
+        catalog = RecipeCatalog(recipes, mappings)
+        resolver = CostResolver(catalog, cost)
         breakdown = None
         if role is not SkuRole.PURCHASABLE:
             breakdown = cost_breakdown(
                 sku_id,
-                recipes=RecipeCatalog(recipes),
-                cost=cfg.cost_book(),
+                recipes=catalog,
+                cost=cost,
                 name_of={s.sku_id: s.name for s in cfg.skus()},
             )
         classification = classify_sku(
-            sku_id, recipes=recipes, mappings=cfg.mappings()
+            sku_id, recipes=recipes, mappings=mappings
         )
         health = sku_health(
             sku_id,
             recipe=recipe,
-            cost=cfg.cost_book(),
+            resolver=resolver,
             classification=classification,
         )
         t: Jinja2Templates = app.state.templates
@@ -1283,29 +1261,49 @@ def create_app(
         and the recipe total below — so a typo'd quantity is a visibly
         wrong number *before* save. Applies the same shorthand conversion
         as the save, so the preview never disagrees with what saving would
-        store. Half-typed rows and unpriced ingredients are skipped calmly
+        store. Half-typed rows and unpriceable ingredients are skipped calmly
         — the partner is mid-edit, not wrong.
+
+        Each ingredient is priced via ``CostResolver`` (issue #36, ADR-0005),
+        so a prep ingredient shows its *derived* unit cost even when the prep
+        has no direct cost-book entry — the same honesty the saved
+        ``cost_breakdown`` applies, kept in step mid-edit. A row is skipped
+        only when its resolved unit cost is ``None`` (a missing leaf anywhere
+        in the prep's own recipe), never merely because the prep itself lacks
+        a cost-book row.
         """
         del sku_id  # the preview depends only on the rows, not the recipe SKU
         cfg: SqliteConfigStore = app.state.config_store
         unit_by_sku = {s.sku_id: s.unit for s in cfg.skus()}
         book = cfg.cost_book()
+        # The preview prices the same way the saved breakdown does (ADR-0005):
+        # one resolver over the catalog + current cost book, recursing into
+        # prep recipes down to purchasables. Mid-edit rows that are not yet a
+        # saved recipe are still resolved — a prep in the catalog costs the
+        # same whether you are about to save it into a dish or already have.
+        resolver = CostResolver(RecipeCatalog(cfg.recipes(), cfg.mappings()), book)
         row_html: list[str] = []
         total = Decimal("0")
         for ing_sku_id, qty_text in zip(ingredient_sku_id, quantity):
-            entry = book.price(ing_sku_id)
-            if entry is None or ing_sku_id not in unit_by_sku:
+            if ing_sku_id not in unit_by_sku:
                 continue
             try:
                 qty = parse_quantity(qty_text, unit_by_sku[ing_sku_id])
             except QuantityError:
                 continue
+            unit_cost = resolver.unit_cost(ing_sku_id)
+            # Skip only when genuinely unpriceable — a prep with no direct
+            # cost-book entry but a fully priced recipe still resolves; a
+            # missing leaf anywhere in its tree returns None and is skipped
+            # calmly rather than zero-costed.
+            if unit_cost is None:
+                continue
             unit = unit_by_sku[ing_sku_id] or "unit"
-            row_cost = entry.price * qty
+            row_cost = unit_cost * qty
             total += row_cost
             row_html.append(
                 f'<li class="recipe-preview__row">{ing_sku_id}: '
-                f"{entry.price}/{unit} × {qty} {unit} = "
+                f"{unit_cost}/{unit} × {qty} {unit} = "
                 f"<strong>{_money(row_cost)}</strong> THB</li>"
             )
         if not row_html:

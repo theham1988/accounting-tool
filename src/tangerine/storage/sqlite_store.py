@@ -48,7 +48,7 @@ class SqliteLoyverseStore:
     """
 
     def __init__(
-        self, conn: sqlite3.Connection, lock: threading.Lock | None = None
+        self, conn: sqlite3.Connection, lock: threading.Lock | threading.RLock | None = None
     ) -> None:
         """``lock`` lets a caller share one serialisation lock across every
         store that wraps the *same* connection (e.g. ``create_app`` also

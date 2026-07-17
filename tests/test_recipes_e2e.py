@@ -22,9 +22,8 @@ import pytest
 from tangerine.approvals import ApprovalBook, apply_decision
 from tangerine.cost import CostBook, cost_per_unit
 from tangerine.margin import (
+    CostResolver,
     compute_item_margins,
-    recipe_cost,
-    recipe_cost_per_unit,
 )
 from tangerine.receipts import check_receipt
 from tangerine.recipes import RecipeCatalog
@@ -140,9 +139,11 @@ def test_recipe_costs_per_unit_against_a_fractional_weight_yield(
         ),
         yield_qty=D("61"),
     )
+    resolver = CostResolver(RecipeCatalog([recipe]), cost)
 
-    assert recipe_cost(recipe, cost) == D("12.20")
-    assert recipe_cost_per_unit(recipe, cost) == D("0.20")
+    # Input cost 12.20 THB spread over a 61 g batch = 0.20 THB per gram.
+    assert resolver.cost_per_unit(recipe) * recipe.yield_qty == D("12.20")
+    assert resolver.cost_per_unit(recipe) == D("0.20")
 
 
 def test_recipe_yield_defaults_to_one_and_is_estimated() -> None:
@@ -182,10 +183,11 @@ def test_recipe_with_unit_denominated_yield_costs_per_pour(day: date) -> None:
         yield_qty=D("2"),
     )
     recipes = RecipeCatalog([recipe])
+    resolver = CostResolver(recipes, cost)
 
     # 1000 ml @ 0.07 = 70 THB input cost, yields 2 units -> 35 THB per unit.
-    assert recipe_cost(recipe, cost) == D("70")
-    assert recipe_cost_per_unit(recipe, cost) == D("35")
+    assert resolver.cost_per_unit(recipe) * recipe.yield_qty == D("70")
+    assert resolver.cost_per_unit(recipe) == D("35")
 
 
 def test_cost_per_unit_uses_latest_approved_price(
@@ -245,8 +247,10 @@ def test_recipe_cost_sums_ingredients_at_current_price(
             RecipeIngredient(sku_id="chang-keg", quantity=D("500")),
         ),
     )
+    resolver = CostResolver(RecipeCatalog([recipe]), cost)
 
-    assert recipe_cost(recipe, cost) == D("35")
+    # Single ingredient, yield defaults to 1 -> input cost == per-unit cost.
+    assert resolver.cost_per_unit(recipe) == D("35")
 
 
 # --- per-item margin table: cost, margin, margin %, sell volume --------------
@@ -523,7 +527,7 @@ def test_compute_daily_margin_honours_source_mappings(day: date) -> None:
     ``recipes()``.
 
     Regression test for a bug where ``compute_daily_margin`` /
-    ``compute_period_segment_margins`` rebuilt a ``RecipeCatalog`` from only
+    ``build_period_review`` rebuilt a ``RecipeCatalog`` from only
     ``source.recipes()``, silently dropping ``source.mappings()`` — every
     Loyverse item -> SKU mapping in ``config/recipes.yaml`` was therefore
     never consulted in production (regardless of whether it was correct),

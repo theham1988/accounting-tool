@@ -1165,6 +1165,44 @@ def test_recipe_preview_converts_shorthand_too(tmp_path: Path) -> None:
     assert "0.30" in response.text  # 15 × 0.02
 
 
+def test_recipe_preview_prices_a_prep_via_its_own_recipe(tmp_path: Path) -> None:
+    """The preview prices a prep ingredient the same way the saved cost
+    breakdown does — by deriving its unit cost from its own recipe, not by
+    looking for a direct cost-book entry it does not have.
+
+    ADR-0005: ``sauce-ahi`` is a prep with no direct leaf price, but its
+    recipe (100 ml soy-sauce @ 0.05 + 24 ml mirin @ 0.30 = 12.20 over a
+    124 yield) resolves to ~0.0984/ml. A 25 ml line in the poke bowl's
+    preview therefore costs ~2.46 THB — and the recipe total reflects it
+    (2.46 + rice 200 × 0.04 = 10.46). The old preview skipped the row and
+    understated the total as 8.00; this test pins the honest number.
+    """
+    app = _prep_app(tmp_path)
+    client = _authed_client(app)
+
+    response = client.get(
+        "/skus/poke-bowl/recipe-preview",
+        params=[
+            ("ingredient_sku_id", "sauce-ahi"),
+            ("quantity", "25"),
+            ("ingredient_sku_id", "rice"),
+            ("quantity", "200"),
+        ],
+    )
+
+    assert response.status_code == 200
+    html = response.text
+    # The prep's row is present (not skipped) and carries its derived line
+    # cost: 25 × (12.20 / 124) = 2.4596... → 2.46 THB.
+    assert "sauce-ahi" in html
+    assert "2.46" in html
+    # Rice's row stays as before: 200 × 0.04 = 8.00.
+    assert "8.00" in html
+    # The total reflects both rows: 2.46 + 8.00 = 10.46, not the 8.00 the
+    # leaf-only preview would have shown.
+    assert "10.46" in html
+
+
 # --- AC: yield field rendered in the output SKU's own unit (issue #34) ------
 
 

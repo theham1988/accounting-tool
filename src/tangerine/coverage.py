@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from .cost import CostBook
 from .loyverse.store import MenuItem
-from .margin import gross_margin_pct, recipe_cost_per_unit
+from .margin import CostResolver, gross_margin_pct
+from .recipes import RecipeCatalog
 from .types import (
     ItemCoverageRow,
     Money,
@@ -88,30 +89,32 @@ def sku_health(
     sku_id: str,
     *,
     recipe: Recipe | None,
-    cost: CostBook,
+    resolver: CostResolver,
     classification: SkuClassification,
 ) -> SkuHealth:
     """At-a-glance costing health for one SKU.
 
-    A dangling SKU is always red — nothing sells or consumes it, so its
-    costing state is moot. Otherwise the check branches on whether the SKU
-    has a recipe of its own:
+    The honest face is the recursive margin resolver (ADR-0005): a dish that
+    uses a prep is GREEN the moment its prep's recipe is fully priced, even
+    when the prep output is itself unpriced as a leaf — exactly as the daily
+    review costs it. Leaf-priced-only checks would mark such a dish YELLOW
+    while the margin engine costed it GREEN, so the two surfaces disagreed.
 
-    - A recipe SKU is red when it has zero ingredients (a broken, empty
-      recipe); green when every ingredient is priced; yellow otherwise
-      (some or none priced — a real recipe just not fully costed yet).
-    - A leaf SKU (no recipe of its own — either a raw material, or a sold/
-      consumed SKU that should have a recipe but doesn't) is green when it
-      has its own direct price, red when it does not.
+    - ``RED``    dangling; or a recipe SKU with an empty recipe; or a
+                 purchasable SKU (no recipe) with no cost-book entry.
+    - ``YELLOW`` recipe exists but the resolver cannot derive a cost — some
+                 leaf under it (direct or through a prep) is still unpriced.
+    - ``GREEN``  a recipe SKU the resolver can fully cost
+                 (``resolver.unit_cost(sku_id) is not None``), or a
+                 purchasable SKU with a cost-book entry.
     """
     if classification is SkuClassification.DANGLING:
         return SkuHealth.RED
     if recipe is not None:
         if not recipe.ingredients:
             return SkuHealth.RED
-        priced = sum(1 for ing in recipe.ingredients if cost.price(ing.sku_id) is not None)
-        return SkuHealth.GREEN if priced == len(recipe.ingredients) else SkuHealth.YELLOW
-    return SkuHealth.GREEN if cost.price(sku_id) is not None else SkuHealth.RED
+        return SkuHealth.GREEN if resolver.unit_cost(sku_id) is not None else SkuHealth.YELLOW
+    return SkuHealth.GREEN if resolver.unit_cost(sku_id) is not None else SkuHealth.RED
 
 
 def build_sku_coverage(
@@ -125,12 +128,15 @@ def build_sku_coverage(
 
     The SKU view's whole table: for each SKU, its classification, health,
     how many Loyverse items map to it, its recipe completeness, and a
-    per-unit cost — derived via the same ``recipe_cost_per_unit`` the margin
-    engine uses when the recipe is fully priced (green), or read straight
-    off the cost book for a priced leaf SKU. ``None`` whenever a cost cannot
-    be honestly derived, mirroring the margin engine's own
-    exclude-rather-than-guess rule for unpriced ingredients.
+    per-unit cost. Health and cost both come from the recursive
+    :class:`CostResolver` (ADR-0005), so a dish containing a prep is GREEN
+    and costed the moment its prep's recipe is fully priced — never
+    YELLOW while the daily review costs it GREEN. ``cost_per_unit`` is
+    ``None`` whenever a cost cannot be honestly derived, mirroring the
+    margin engine's own exclude-rather-than-guess rule.
     """
+    catalog = RecipeCatalog(recipes, mappings)
+    resolver = CostResolver(catalog, cost)
     recipes_by_sku = {r.sku_id: r for r in recipes}
     mapped_counts: dict[str, int] = {}
     for m in mappings:
@@ -141,7 +147,7 @@ def build_sku_coverage(
         recipe = recipes_by_sku.get(sku.sku_id)
         classification = classify_sku(sku.sku_id, recipes=recipes, mappings=mappings)
         health = sku_health(
-            sku.sku_id, recipe=recipe, cost=cost, classification=classification
+            sku.sku_id, recipe=recipe, resolver=resolver, classification=classification
         )
         rows.append(
             SkuCoverageRow(
@@ -156,12 +162,16 @@ def build_sku_coverage(
                 has_recipe=recipe is not None,
                 ingredient_count=len(recipe.ingredients) if recipe else 0,
                 priced_ingredient_count=(
-                    sum(1 for ing in recipe.ingredients if cost.price(ing.sku_id) is not None)
+                    sum(
+                        1
+                        for ing in recipe.ingredients
+                        if resolver.unit_cost(ing.sku_id) is not None
+                    )
                     if recipe
                     else 0
                 ),
                 cost_per_unit=_derived_cost_per_unit(
-                    sku.sku_id, recipe=recipe, cost=cost, health=health
+                    sku.sku_id, resolver=resolver, health=health
                 ),
             )
         )
@@ -169,18 +179,22 @@ def build_sku_coverage(
 
 
 def _derived_cost_per_unit(
-    sku_id: str, *, recipe: Recipe | None, cost: CostBook, health: SkuHealth
+    sku_id: str, *, resolver: CostResolver, health: SkuHealth
 ) -> Money | None:
     """The per-unit cost to show on a coverage row, or ``None`` if unreliable.
 
-    A recipe SKU's cost is only shown once every ingredient is priced
-    (``health`` is green) — a partial cost would understate the true cost
-    and mislead the partner. A leaf SKU shows its own direct price, if any.
+    The same recursive resolver the margin engine uses (ADR-0005), so the
+    number on the coverage row cannot disagree with the daily review's. A
+    partial cost is never shown — yellow/red rows carry ``None`` rather
+    than a number that would understate the true cost and mislead the
+    partner. GREEN rows get ``resolver.unit_cost`` (which recurses into
+    preps, so a dish containing a prep is costed from the prep's own
+    recipe, not from a stale leaf price on the prep output).
     """
-    if recipe is not None:
-        return recipe_cost_per_unit(recipe, cost) if health is SkuHealth.GREEN else None
-    entry = cost.price(sku_id)
-    return entry.price if entry is not None else None
+    if health is not SkuHealth.GREEN:
+        return None
+    unit = resolver.unit_cost(sku_id)
+    return Money(unit) if unit is not None else None
 
 
 def build_item_coverage(

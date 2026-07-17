@@ -19,24 +19,34 @@ recipe, never typed directly. A produced SKU with an unpriceable leaf (a
 missing price, or a cycle) is itself unpriceable; dishes using it flag
 ``unknown_price`` exactly as a direct missing price does.
 
-Per slice 04, the current unit cost of each purchasable ingredient SKU is
-looked up from the ``CostBook`` (which tracks the latest approved purchase
-price), so a recipe is a formula and a re-pricing flows straight into
-margin without the recipe changing.
+The current unit cost of each purchasable ingredient SKU is looked up from
+the ``CostBook`` (which tracks the latest approved purchase price), so a
+recipe is a formula and a re-pricing flows straight into margin without the
+recipe changing.
 
 Rows whose margin cannot be trusted — unmapped items (no recipe) or items
 where an ingredient SKU has no approved price — are flagged and excluded
 from the daily totals: their COGS is unknown, so booking their revenue as
 margin would over-state profitability. Their revenue is surfaced separately
 on the ``DailyMargin`` so it stays visible.
+
+There is one public recipe-cost face: :class:`CostResolver` (and the thin
+``unit_cost`` one-shot that wraps it). The Wave 1 slice-04 bare helpers
+(``recipe_input_cost`` / ``recipe_cost`` / ``recipe_cost_per_unit`` / the
+module-level ``has_unknown_price``) have been retired — they could not
+recurse into preps and so silently understated any dish that used one. Any
+caller wanting a recipe's cost builds a ``CostResolver`` and calls its
+``unit_cost`` / ``cost_per_unit`` / ``has_unknown_price`` (ADR-0005
+amendment 2026-07-16).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
-from .cost import CostBook, cost_per_unit
+from .cost import CostBook
 from .ingestion import Source
 from .recipes import RecipeCatalog
 from .segments import segment_of_sale
@@ -80,67 +90,6 @@ def unit_cost(
     SKU memo walks each prep's graph once.
     """
     return CostResolver(recipes, cost).unit_cost(sku_id)
-
-
-def recipe_input_cost(recipe: Recipe, cost: CostBook) -> Money:
-    """Cost of executing the recipe once (before dividing by yield).
-
-    Sums each ingredient's ``quantity`` × its SKU's current cost per unit.
-    Does not recurse into sub-recipes — the bare form takes only one recipe
-    plus the cost book, with no catalog to look up other recipes in. The
-    margin engine's per-pass resolver (``CostResolver``) handles recursion for
-    the daily/period margins; this helper is the slice-04 primitive for
-    recipes whose ingredients are all purchasables (or whose caller has
-    already resolved any prep ingredients themselves).
-    """
-    return Money(
-        sum(
-            (ing.quantity * cost_per_unit(cost, ing.sku_id))
-            for ing in recipe.ingredients
-        )
-        or Decimal("0")
-    )
-
-
-def recipe_cost(recipe: Recipe, cost: CostBook) -> Money:
-    """Cost of executing the recipe once (alias of ``recipe_input_cost``).
-
-    Retained for the slice-04 worked-example vocabulary ("recipe cost = sum
-    of inputs"). For the per-saleable-unit cost use
-    ``recipe_cost_per_unit``, which divides by yield.
-    """
-    return recipe_input_cost(recipe, cost)
-
-
-def recipe_cost_per_unit(recipe: Recipe, cost: CostBook) -> Money:
-    """Cost of one saleable unit produced by the recipe.
-
-    ``recipe_input_cost / yield_qty`` — one formula for every recipe shape
-    (CONTEXT.md "Yield"). A single-pour recipe (yield 1) has per-unit cost
-    equal to its input cost; a 1L pitcher recipe yielding two pours halves
-    it; an ahi-sauce batch yielding ~61 g costs the input sum spread over
-    61 g. The yield is a decimal in the output SKU's own unit.
-
-    This is the bare slice-04 form (no recursion); callers needing recursive
-    derivation of a produced SKU's ingredients go through ``unit_cost`` or
-    ``compute_item_margins``.
-    """
-    return Money(recipe_input_cost(recipe, cost) / recipe.yield_qty)
-
-
-def has_unknown_price(recipe: Recipe, cost: CostBook) -> bool:
-    """True if any ingredient SKU has no approved price in the cost book.
-
-    Bare slice-04 form — checks each ingredient's direct cost-book entry,
-    does not recurse into sub-recipes. The per-pass resolver in
-    ``compute_item_margins`` does the recursive version for daily/period
-    margin. Such a recipe cannot be costed honestly; its margin row is
-    flagged and excluded from the daily totals rather than silently zero-
-    costed.
-    """
-    return any(
-        cost.price(ing.sku_id) is None for ing in recipe.ingredients
-    )
 
 
 def gross_margin_pct(gross_margin: Money, revenue: Money) -> Decimal | None:
@@ -445,33 +394,90 @@ def _flagged_row(
     )
 
 
+@dataclass(frozen=True)
+class DayMargins:
+    """One day's per-item margin rows, as produced by ``margins_over_range``.
+
+    A *per-day* slice of a multi-day pass: the item-margin table for a single
+    day inside the range, carrying only the per-item rows (not the rolled-up
+    totals / flagged revenue / segment CMs those rows aggregate into). The
+    daily and period roll-ups both project over a sequence of these slices,
+    so a one-day range and ``compute_daily_margin`` agree by construction
+    (the daily view is the one-day projection of the range pass).
+
+    ``day`` repeats each row's ``ItemMargin.day``; it is carried here so a
+    caller iterating the sequence can read the day off the slice without
+    reaching into a row.
+    """
+
+    day: date
+    item_margins: tuple[ItemMargin, ...]
+
+
+def margins_over_range(
+    source: Source, start: date, end: date
+) -> tuple[DayMargins, ...]:
+    """Per-day item-margin rows for every day in the inclusive ``[start, end]``.
+
+    The single multi-day pass the reporting surfaces project from. The
+    recipe catalog is built **once** (recipes + mappings do not change per
+    day); each day is then costed at that day's prices
+    (``source.cost_book_as_of(day)``, ADR-0004 decision 2) and run through
+    ``compute_item_margins``. One ``DayMargins`` is emitted per day in the
+    range, in date order, including quiet days (``item_margins == ()``) so
+    the sequence is total over the range — the same rule the period review
+    applies to its per-day drilldown rows.
+
+    Rejects ``end < start`` with ``ValueError`` (mirrors ``build_period_review``).
+    Does not roll up totals, flagged revenue, or segment CMs — those are a
+    projection the daily and period views layer on top of the per-day rows.
+    """
+    if end < start:
+        raise ValueError(
+            f"range end {end} precedes start {start}; range must be inclusive"
+        )
+
+    sales = source.sales()
+    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
+
+    slices: list[DayMargins] = []
+    current = start
+    while current <= end:
+        rows = compute_item_margins(
+            sales=sales,
+            recipes=recipes,
+            cost=source.cost_book_as_of(current),
+            day=current,
+        )
+        slices.append(DayMargins(day=current, item_margins=tuple(rows)))
+        current += timedelta(days=1)
+    return tuple(slices)
+
+
 def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     """Compute item-level and rolled-up gross margin for a single day.
 
-    Recipes come from ``source.recipes()``, resolved via ``source.mappings()``
-    (item -> SKU -> recipe, per ``RecipeCatalog``); their ingredient costs are
-    looked up from ``source.cost_book_as_of(day)`` — the prices in effect on
-    the day being costed, not at render time, so a cost edit does not
-    re-state history (Wave 2 slice 1, ADR-0004 decision 2). Rows flagged
-    ``unmapped`` or ``unknown_price`` are excluded from the totals (their
-    COGS is unknown); their revenue is summed into ``flagged_revenue`` so it
-    stays visible.
+    A thin projection over ``margins_over_range(source, day, day)``: the
+    one-day range pass yields exactly this day's item-margin rows (catalog
+    built once, this day costed via ``source.cost_book_as_of(day)`` — the
+    prices in effect on the day being costed, not at render time, so a cost
+    edit does not re-state history; Wave 2 slice 1, ADR-0004 decision 2).
+    The rows are then rolled up exactly as before: flagged
+    ``unmapped`` / ``unknown_price`` rows are excluded from the totals (their
+    COGS is unknown) and their revenue is summed into ``flagged_revenue`` so
+    it stays visible.
 
     Per-segment contribution margins (slice 07) are populated from the
     reliable rows only: flagged rows have unknown COGS, so booking their
     revenue into a segment's CM would over-state it. Both segments are always
     present; a segment with no reliable sales carries zeros.
     """
-    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
-    cost = source.cost_book_as_of(day)
-    rows = compute_item_margins(
-        sales=source.sales(), recipes=recipes, cost=cost, day=day
-    )
+    rows = margins_over_range(source, day, day)[0].item_margins
     counted = [im for im in rows if not im.excluded_from_totals]
     flagged = [im for im in rows if im.excluded_from_totals]
     return DailyMargin(
         day=day,
-        item_margins=tuple(rows),
+        item_margins=rows,
         total_revenue=sum((im.revenue for im in counted), Money("0")),
         total_cogs=sum((im.cogs for im in counted), Money("0")),
         total_gross_margin=sum((im.gross_margin for im in counted), Money("0")),
@@ -498,45 +504,6 @@ def segment_margins_from_items(rows: list[ItemMargin]) -> tuple[SegmentMargin, .
         bucket["revenue"] += im.revenue
         bucket["cogs"] += im.cogs
     return _build_segment_margins(by_segment)
-
-
-def compute_period_segment_margins(
-    source: Source, start: date, end: date
-) -> tuple[SegmentMargin, ...]:
-    """Per-segment contribution margin over an inclusive ``[start, end]`` range.
-
-    Issue 07 requires per-segment CM "for any period", not just one day. This
-    runs the per-item margin engine for each day in the range — each day
-    costed at that day's prices (``cost_book_as_of``, ADR-0004 decision 2) —
-    rolls each day's reliable rows into segment CMs via
-    ``segment_margins_from_items`` (the single honest path), and sums the
-    per-day segment CMs into the period total. Both segments are always
-    returned.
-    """
-    if end < start:
-        raise ValueError(
-            f"period end {end} precedes start {start}; range must be inclusive"
-        )
-    sales = source.sales()
-    recipes = RecipeCatalog(list(source.recipes()), list(source.mappings()))
-
-    accumulated = _empty_segment_buckets()
-    current = start
-    while current <= end:
-        rows = compute_item_margins(
-            sales=sales,
-            recipes=recipes,
-            cost=source.cost_book_as_of(current),
-            day=current,
-        )
-        counted = [im for im in rows if not im.excluded_from_totals]
-        for sm in segment_margins_from_items(counted):
-            bucket = accumulated[sm.segment]
-            bucket["revenue"] += sm.revenue
-            bucket["cogs"] += sm.variable_costs
-        current = current + timedelta(days=1)
-
-    return _build_segment_margins(accumulated)
 
 
 # Canonical display order for segment roll-ups: cafe first, then bar. The

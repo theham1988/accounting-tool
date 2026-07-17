@@ -54,8 +54,9 @@ class Recipe:
     identity (a Loyverse item id) — two menu items can share one SKU/recipe.
 
     - ``sku_id``        the SKU this recipe produces (its key in a catalog)
-    - ``ingredients``   the inputs; ``recipe_cost`` sums each input's
-                        ``quantity`` × the input SKU's current cost per unit
+    - ``ingredients``   the inputs; their ``quantity`` × each input SKU's
+                        current cost per unit is summed by the cost resolver
+                        (:class:`tangerine.margin.CostResolver`)
     - ``yield_qty``     how much of the output SKU one execution of the
                         recipe produces, expressed in **that SKU's own
                         unit** (CONTEXT.md "Yield"). A 1L pitcher recipe
