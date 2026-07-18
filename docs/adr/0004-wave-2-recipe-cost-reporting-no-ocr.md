@@ -76,6 +76,23 @@ history after every price change — the two-truths failure ADR-0003
 rejects). Rejected: period-average (hides the change point, still
 disagrees with the daily view's day-of numbers).
 
+*Amendment (2026-07-18): a SKU's first-ever price reaches back.* As-of
+pricing assumed every cost edit is a *repricing*; it had no answer for a
+cost row *created* after the SKU's sales had already happened (an
+always-unmapped item finally authored), so those days stayed flagged
+unknown-price forever — a bulk authoring session visibly failed to heal
+history. Now a date before every recorded change resolves to the first
+change's before-value (the seed price) as before, but when that first
+change created the row, the first-ever price reaches back over the
+unknown days instead of answering nothing. History there was unknown, not
+different — the first known price is the only honest number available,
+so every surface heals on the next render with no backfill job. A later
+repricing still governs only from its own day, and a creation undone by
+revert does not reach back (the row was declared a mistake). Healing is
+silent — no per-row label; the audit log stays the paper trail. Pushing a
+*correction* of an already-existing price into the past remains out of
+scope (a wrong seed price still poisons history; revisit if one bites).
+
 **3. Fixed costs are recurring + day-apportioned for sub-month periods.**
 A fixed cost is recurring (defined once, auto-applies each month) or
 one-off (entered for a period); fixed costs remain entity-level, never

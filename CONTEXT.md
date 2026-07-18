@@ -284,6 +284,17 @@ monthly view share one as-of-date lookup, so they agree by construction.
 This also corrects a latent Wave 1 behaviour where the daily review costed
 at *current* price and so re-costed history after any price edit.
 
+One deliberate exception (ADR-0004 decision 2 amendment): a SKU's
+**first-ever price reaches back** over the days before it was entered. A
+cost row *created* by an edit means history was unknown, not different —
+so instead of flagging those days unknown-price forever, they cost at the
+first known price, silently (the audit log stays the paper trail). This is
+what makes history self-heal when an always-unmapped item is finally
+authored: mappings and recipes always read at current state, the first
+price reaches back, and every past surface fills in on its next render.
+A later repricing stays forward-only, and pushing a *correction* of an
+existing price into the past is consciously unsupported.
+
 ## Fixed costs
 
 Entity-level costs (rent, utilities, shared staff, insurance) that are

@@ -6,7 +6,10 @@ date, not the price at render time. The history is reconstructed from the
 audit log — every cost edit already snapshots the row's old/new
 ``price_per_unit_net`` — so no new capture and no new table is needed.
 Pre-cutover sales (no audit history) use the seed price; a SKU never
-edited uses its current price.
+edited uses its current price; a SKU whose cost row was *created* by an
+edit reaches its first-ever price back over the days before it was
+entered (ADR-0004 decision 2 amendment: unknown history heals at the
+first known price).
 
 This module is pure engine: it consumes plain ``PriceChange`` records and
 a current ``CostBook``. Parsing audit-log rows into ``PriceChange``s is
@@ -66,16 +69,26 @@ class PriceHistory:
         The latest recorded change on or before ``on_date`` governs; a
         change made on a day applies to that day's sales (the partner
         repriced that morning). A date before every recorded change takes
-        the first change's before-value — the seed price. A SKU with no
-        recorded changes costs at its current (seed) price. ``None`` when
-        the SKU had no price on that date.
+        the first change's before-value — the seed price. When the first
+        change *created* the cost row (no seed), the SKU's first-ever price
+        reaches back over those days instead: history there was unknown,
+        not different, and the first known price is the only honest number
+        available for it — this is what lets a past day heal once an
+        always-unmapped item is finally authored. A creation later reverted
+        away (no current price) does not reach back; the row was declared a
+        mistake. A SKU with no recorded changes costs at its current (seed)
+        price. ``None`` when the SKU had no price on that date.
         """
         changes = self._changes_by_sku.get(sku_id, [])
         governing = self._governing_change(sku_id, on_date)
         if governing is not None:
             return governing.new_price
         if changes:
-            return changes[0].old_price
+            if changes[0].old_price is not None:
+                return changes[0].old_price
+            if self._current.price(sku_id) is not None:
+                return changes[0].new_price
+            return None
         entry = self._current.price(sku_id)
         if entry is None:
             return None
@@ -116,6 +129,10 @@ class PriceHistory:
         governing = self._governing_change(sku_id, on_date)
         if governing is not None:
             return governing.changed_on
+        changes = self._changes_by_sku.get(sku_id, [])
+        if changes and changes[0].old_price is None:
+            # Reach-back days cost at the first-ever price; it landed here.
+            return changes[0].changed_on
         entry = self._current.price(sku_id)
         if entry is not None:
             return entry.updated_at

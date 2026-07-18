@@ -117,11 +117,15 @@ def test_edited_more_than_once_dates_between_edits_take_the_price_then_in_effect
     assert history.price_as_of("milk", date(2026, 7, 25)) == D("0.030")
 
 
-def test_sku_created_by_an_edit_has_no_price_before_its_creation() -> None:
-    """A cost row born from an edit (no seed) had no price before that day.
+def test_first_ever_price_reaches_back_over_the_days_before_it_was_entered() -> None:
+    """A SKU's first-ever price also covers the days before it was entered.
 
-    ``price_as_of`` answers ``None`` rather than inventing a price — the
-    margin engine already knows how to flag unknown-price rows honestly.
+    A cost row born from an edit (no seed) has no *recorded* price before
+    that day — but history there was unknown, not different. The first
+    known price is the only honest number available for those days, so the
+    reach-back costs them instead of leaving them flagged unknown-price
+    forever (the "authored everything today, history still shows nothing"
+    gap). A later repricing still governs only from its own day.
     """
     history = PriceHistory(
         current=CostBook({"oat-milk": (D("0.045"), date(2026, 7, 12))}),
@@ -135,8 +139,68 @@ def test_sku_created_by_an_edit_has_no_price_before_its_creation() -> None:
         ],
     )
 
-    assert history.price_as_of("oat-milk", date(2026, 7, 5)) is None
+    assert history.price_as_of("oat-milk", date(2026, 7, 5)) == D("0.045")
     assert history.price_as_of("oat-milk", date(2026, 7, 12)) == D("0.045")
+
+
+def test_reach_back_takes_the_first_price_not_a_later_repricing() -> None:
+    """Days before the creation cost at the *first* entered price.
+
+    Oat milk is first priced on 12 Jul and repriced on 20 Jul: the 5th
+    reaches back to the first price, the 25th carries the repricing. The
+    repricing is a real forward-only change (ADR-0004 decision 2); only
+    the unknown days before the first price are back-filled.
+    """
+    history = PriceHistory(
+        current=CostBook({"oat-milk": (D("0.050"), date(2026, 7, 20))}),
+        changes=[
+            PriceChange(
+                sku_id="oat-milk",
+                changed_on=date(2026, 7, 12),
+                old_price=None,
+                new_price=D("0.045"),
+            ),
+            PriceChange(
+                sku_id="oat-milk",
+                changed_on=date(2026, 7, 20),
+                old_price=D("0.045"),
+                new_price=D("0.050"),
+            ),
+        ],
+    )
+
+    assert history.price_as_of("oat-milk", date(2026, 7, 5)) == D("0.045")
+    assert history.price_as_of("oat-milk", date(2026, 7, 15)) == D("0.045")
+    assert history.price_as_of("oat-milk", date(2026, 7, 25)) == D("0.050")
+
+
+def test_a_reverted_creation_does_not_reach_back() -> None:
+    """A creation undone by revert leaves no price on any date.
+
+    The revert deleted the cost row — the creation was declared a mistake
+    (Slice 5: a creation's revert deletes the row), so its price must not
+    resurface as the cost of earlier days.
+    """
+    history = PriceHistory(
+        current=CostBook(),  # the revert removed the row
+        changes=[
+            PriceChange(
+                sku_id="typo-sku",
+                changed_on=date(2026, 7, 12),
+                old_price=None,
+                new_price=D("0.045"),
+            ),
+            PriceChange(
+                sku_id="typo-sku",
+                changed_on=date(2026, 7, 13),
+                old_price=D("0.045"),
+                new_price=None,
+            ),
+        ],
+    )
+
+    assert history.price_as_of("typo-sku", date(2026, 7, 5)) is None
+    assert history.price_as_of("typo-sku", date(2026, 7, 14)) is None
 
 
 def test_unknown_sku_has_no_price_on_any_date() -> None:
@@ -153,8 +217,8 @@ def test_cost_book_as_of_is_a_cost_book_frozen_at_that_date() -> None:
     one whose every price is the as-of-date answer.
 
     Butter was repriced on the 15th; oat milk did not exist until the 12th.
-    The book as of the 3rd holds butter's seed price and no oat milk at all
-    (so a recipe using it is flagged unknown-price, not silently zero-costed).
+    The book as of the 3rd holds butter's seed price, and oat milk's
+    first-ever price reaching back (effective-dated to the day it landed).
     """
     history = PriceHistory(
         current=CostBook(
@@ -184,7 +248,9 @@ def test_cost_book_as_of_is_a_cost_book_frozen_at_that_date() -> None:
 
     butter = book.price("butter")
     assert butter is not None and butter.price == D("0.50")
-    assert book.price("oat-milk") is None
+    oat_milk = book.price("oat-milk")
+    assert oat_milk is not None and oat_milk.price == D("0.045")
+    assert oat_milk.updated_at == date(2026, 7, 12)
     beans = book.price("beans")
     assert beans is not None and beans.price == D("0.80")
 
@@ -537,3 +603,63 @@ costs:
     assert review.cogs == D("11")
     # 250 - 11 = 239 THB gross margin.
     assert review.gross_margin == D("239")
+
+
+def test_authoring_an_item_today_heals_the_days_it_sold_unmapped(
+    tmp_path: Path,
+) -> None:
+    """The back-fill story end to end: history self-heals once authored.
+
+    An oat latte sold on 3 Jul while the tool knew nothing about it — no
+    mapping, no recipe, no priced ingredient — so that day's review carried
+    it as unmapped, outside the headline numbers. On the 18th the partner
+    authors the whole chain in the UI: ingredient SKU + its first cost,
+    sold SKU + recipe, item mapping. Mappings and recipes always read at
+    current state, and the first-ever price reaches back, so re-opening the
+    3 Jul review now shows the sale fully costed — no backfill job, no
+    migration, just the next page load.
+    """
+    clock = {"now": "2026-07-18T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }  # unrelated seed
+""",
+        clock,
+    )
+
+    loyverse_store = InMemoryLoyverseStore()
+    loyverse_store.record_sales([_sale("i-oat-latte", date(2026, 7, 3), "120", "l-1")])
+    source = StoreSource(store=loyverse_store, config=store)
+
+    before = build_daily_review(source=source, review_date=date(2026, 7, 3))
+    assert any(im.item_id == "i-oat-latte" for im in before.unmapped_items)
+    assert before.cogs == D("0")
+
+    # 18 Jul: the partner authors the whole chain through the store.
+    store.create_sku("oat-milk", name="Oat milk", unit="ml", created_by="daniel")
+    store.save_cost(
+        "oat-milk",
+        pack_price=D("45"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 18),
+    )
+    store.create_sku("oat-latte", name="Oat Latte", unit="unit", created_by="daniel")
+    store.save_recipe(
+        "oat-latte",
+        ingredients=[("oat-milk", D("200"))],
+        yield_qty=D("1"),
+        yield_estimated=False,
+        updated_by="daniel",
+    )
+    store.save_mapping("i-oat-latte", "oat-latte", updated_by="daniel")
+
+    healed = build_daily_review(source=source, review_date=date(2026, 7, 3))
+    assert not any(im.item_id == "i-oat-latte" for im in healed.unmapped_items)
+    assert healed.revenue == D("120")
+    # 200 ml x 0.045 THB/ml = 9 THB.
+    assert healed.cogs == D("9")
+    assert healed.gross_margin == D("111")
