@@ -23,6 +23,13 @@ dependencies = [
     # for the login POST. FastAPI declares it as an extra rather than a hard
     # dep, so we have to list it explicitly.
     "python-multipart>=0.0.9",
+    # Issue #66: Loyverse ``created_at`` is UTC; the venue is in Phuket
+    # (Asia/Bangkok). ``zoneinfo`` is in the stdlib but needs a timezone
+    # database — Linux ships one in /usr/share/zoneinfo, but Windows (dev, CI)
+    # and macOS do not, so the ``tzdata`` package is the cross-platform source.
+    # It is a no-op on Linux (the system db is found first) and pure data, no
+    # runtime cost.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

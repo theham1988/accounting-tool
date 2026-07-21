@@ -7,9 +7,13 @@ boundary.
 
 Conventions mirrored from the Loyverse API:
 
-- A receipt's ``created_at`` is the transaction timestamp; sales carry the
-  ``date`` portion of it (the PRD says "stored with their Loyverse transaction
-  timestamp"; the margin engine keys on ``date``).
+- A receipt's ``created_at`` is the transaction timestamp in UTC; sales carry
+  the ``date`` portion of it **converted to the venue's local timezone**
+  (Asia/Bangkok, UTC+7 — issue #66). The PRD's "stored with their Loyverse
+  transaction timestamp" is honoured at local granularity: a 02:00 local
+  nightcap (19:00 UTC the prior day) belongs to the local calendar day it
+  happened on, not the UTC one. The shift fallback (cafe ``[8, 17)`` local,
+  else bar) is stamped from the same local timestamp.
 - A line item's identity is its ``sku`` (falling back to ``item_id``) — that is
   the value recipes map onto in slice 04.
 - REFUND receipts are excluded from sales for now (refund handling is a later
@@ -21,11 +25,18 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ..types import Money, Sale, Segment
 from ..segments import segment_for_timestamp
 from .payloads import LoyverseItem, LoyverseLineItem, LoyverseVariant
 from .store import CAFE_CATEGORY_ID, MenuItem, MenuSnapshot, SaleRecord
+
+#: The venue's local timezone. Loyverse ``created_at`` is always UTC; every
+#: venue-facing decision (which day a sale belongs to, which shift it falls in)
+#: is local. Bangkok has no DST, so this is a fixed +07:00 offset that holds
+#: forever — there is no clock-change edge case to track.
+VENUE_TIMEZONE = ZoneInfo("Asia/Bangkok")
 
 
 class LoyverseParseError(Exception):
@@ -105,12 +116,20 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
             continue
         receipt_number = receipt.get("receipt_number", "")
         created_dt = _parse_created_at(receipt["created_at"])
-        created = created_dt.date()
+        # Issue #66: bucket the sale date and shift-stamp the segment in venue
+        # local time, not UTC. Loyverse ``created_at`` is UTC; the venue is in
+        # Phuket (UTC+7). Without this conversion, an 18:00 local bar sale
+        # (11:00 UTC) stamps *cafe* under the ``[8, 17)`` cafe window, and a
+        # 02:00 local nightcap (19:00 UTC the prior day) buckets to the wrong
+        # calendar day and across month boundaries. Bangkok has no DST so the
+        # conversion is a fixed +07:00 forever.
+        local_dt = created_dt.astimezone(VENUE_TIMEZONE)
+        created = local_dt.date()
         # Shift-timestamp fallback (slice 07): stamp the segment from the
         # transaction time so an unmapped sale (no recipe -> no category
         # segment) can still be tagged cafe/bar. A mapped sale's recipe
         # segment overrides this at margin time.
-        shift_segment = segment_for_timestamp(created_dt)
+        shift_segment = segment_for_timestamp(local_dt)
         for line in receipt.get("line_items", []):
             line_id = line.get("id", "")
             qty = _line_quantity(
@@ -127,6 +146,10 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
                     ),
                     receipt_number=receipt_number,
                     line_id=line_id,
+                    # The raw UTC timestamp, kept so a future fix can re-derive
+                    # ``Sale.timestamp``/``segment`` from it without re-fetching
+                    # the receipt (issue #66's migration story).
+                    created_at_utc=created_dt,
                 )
             )
     return records
