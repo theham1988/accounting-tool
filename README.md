@@ -239,9 +239,12 @@ result = apply_decision(checked, ReceiptDecision(decision=ReceiptState.APPROVED)
 Recipes are defined per **SKU** (a formula: inputs + a yield) and Loyverse
 items map to SKUs via a `SkuMapping`. The margin engine produces a per-item
 table (cost/unit, margin, margin %, sell volume, target-margin flags). Items
-with no recipe, or whose recipe references an unpriced SKU, are flagged and
-excluded from the daily totals — their COGS is unknown, so their revenue is
-surfaced separately as `flagged_revenue` rather than booked as margin.
+with no recipe, or whose recipe references an unpriced SKU, are flagged —
+their COGS is unknown. Since #71 / ADR-0008 the headline REVENUE on Day,
+Period, and Month includes every sale (so Books ties to Loyverse Gross
+sales); COGS and gross margin stay recipe-cost over reliable rows only, and
+the flagged revenue surfaces separately as `flagged_revenue` and in a
+needs-attention card.
 
 ### SKU roles (issue #35)
 

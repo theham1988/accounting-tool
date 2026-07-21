@@ -256,14 +256,16 @@ def test_daily_margin_projection_unchanged_across_shapes(
     # The rows are exactly the one-day range pass's rows.
     expected_rows = margins_over_range(source, day, day)[0].item_margins
     assert daily.item_margins == expected_rows
-    # Totals/flagged/segments derive from those rows by the same rule as before.
+    # Headline follows the gross-sales rule (issue #71, ADR-0008): revenue
+    # sums every row; COGS sums reliable rows only; gross margin is
+    # ``revenue - cogs`` by construction. Flagged revenue surfaces
+    # separately so the needs-attention card and headline callout share
+    # one source of truth.
     counted = [im for im in expected_rows if not im.excluded_from_totals]
-    assert daily.total_revenue == sum((im.revenue for im in counted), D("0"))
-    assert daily.total_cogs == sum((im.cogs for im in counted), D("0"))
-    assert daily.total_gross_margin == sum(
-        (im.gross_margin for im in counted), D("0")
-    )
     flagged = [im for im in expected_rows if im.excluded_from_totals]
+    assert daily.total_revenue == sum((im.revenue for im in expected_rows), D("0"))
+    assert daily.total_cogs == sum((im.cogs for im in counted), D("0"))
+    assert daily.total_gross_margin == daily.total_revenue - daily.total_cogs
     assert daily.flagged_revenue == sum((im.revenue for im in flagged), D("0"))
     # Both segments always present, cafe-then-bar canonical order.
     assert [sm.segment for sm in daily.segment_margins] == [Segment.CAFE, Segment.BAR]

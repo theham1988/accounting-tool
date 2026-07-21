@@ -697,16 +697,22 @@ def test_end_to_end_synthetic_yesterday_renders_all_sections(day: date) -> None:
     )
 
     # 1. Revenue / COGS / gross margin.
-    # Reliable revenue (mapped items only): 120 + 120 + 90 + 45 = 375.
-    # The unmapped 'mystery' sale (100) is excluded from revenue/COGS/GM per
-    # slice-04 policy (its COGS is unknown) — its revenue surfaces at
-    # ``daily.flagged_revenue`` instead, and the item shows up in
-    # ``unmapped_items`` below.
-    # COGS counts reliable rows only: 35 + 45 + 40 + 35 = 155.
-    # Gross margin = reliable revenue (375) - COGS (155) = 220.
-    assert review.revenue == D("375")
+    # Gross-sales headline (issue #71, ADR-0008): every sale's revenue lands
+    # in the headline — mapped or not — so the partner reads Loyverse Gross
+    # sales. COGS stays recipe-cost over reliable rows only; gross margin is
+    # ``revenue - cogs`` by construction.
+    #   reliable revenue     = 120 + 120 + 90 + 45 = 375
+    #   flagged  revenue     = 100  (the unmapped 'mystery' sale)
+    #   total_revenue        = 375 + 100 = 475  (= Loyverse Gross)
+    #   total_cogs           = 35 + 45 + 40 + 35 = 155  (reliable rows only)
+    #   total_gross_margin   = 475 - 155 = 320
+    # The unmapped sale still surfaces in ``flagged_revenue`` and
+    # ``unmapped_items`` below; the implicit zero-COGS assumption on its
+    # revenue is the template's honest-labelling problem ("includes 100.00
+    # THB of uncosted revenue"), not a number buried in the math.
+    assert review.revenue == D("475")
     assert review.cogs == D("155")
-    assert review.gross_margin == D("220")
+    assert review.gross_margin == D("320")
     # The unmapped sale's cash is not lost — it surfaces here.
     assert review.daily.flagged_revenue == D("100")
 

@@ -98,6 +98,14 @@
           <dd>{{ review.goal.days_in_range }}</dd>
         </div>
       </dl>
+      {% if review.flagged_revenue > 0 %}
+      <p class="headline__uncosted-note">
+        Revenue includes <strong>{{ review.flagged_revenue | money }} THB</strong>
+        of sales whose cost the tool cannot compute — the gross margin
+        implicitly zero-costs them. Map the items in
+        <a href="#needs-attention">Needs a fix</a> to cost them.
+      </p>
+      {% endif %}
       <dl class="headline__row headline__row--net">
         <div class="headline__stat">
           <dt>{% if review.fixed_costs.estimated %}Fixed (est · apportioned){% else %}Fixed costs{% endif %}</dt>
@@ -207,12 +215,14 @@
     </section>
 
     {% if review.needs_attention %}
-    <section class="needs-attention needs-attention--card">
+    <section class="needs-attention needs-attention--card" id="needs-attention">
       <h2>Needs a fix · {{ review.needs_attention | length }}</h2>
       <!--section:needs-attention-->
       <p class="needs-attention__note">
-        These items sold in the period but their cost could not be computed, so
-        their revenue is left out of the headline totals above.
+        These items sold in the period but their cost could not be computed.
+        Their revenue is in the headline above (so it ties to Loyverse Gross
+        sales) but their COGS is unknown — the gross margin implicitly
+        zero-costs them.
       </p>
       <ul class="needs-attention__list">
         {% for row in review.needs_attention %}

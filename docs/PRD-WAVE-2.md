@@ -350,7 +350,9 @@ no client JavaScript (ADR-0002 unchanged).
     the same day (daily ⊂ period).
   - Segment split via recipe (mapped) and shift fallback (unmapped).
   - Unmapped revenue excluded from the headline, surfaced in
-    `needs_attention`.
+    `needs_attention`. *(Superseded for the revenue line by issue #71 /
+    ADR-0008: unmapped revenue now joins the headline — Books ties to
+    Loyverse Gross sales. COGS and segment CM stay reliable-only.)*
   - Fixed costs: exact for a calendar month; apportioned and
     `estimated=True` for a 7-day range.
   - Goal status vs `10K × days_in_range`.

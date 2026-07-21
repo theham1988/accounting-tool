@@ -2337,6 +2337,22 @@ a.trend-bar:hover .trend-bar__fill {
   font-variant-numeric: tabular-nums;
 }
 
+/* Issue #71 honesty callout — appears in the headline card when part of the
+   gross-sales revenue carries unknown COGS (unmapped / unknown-price rows).
+   Names the implicit zero-COGS assumption rather than hiding it in the math. */
+.headline__uncosted-note {
+  margin: 0.65rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--tb-tango);
+  background: color-mix(in srgb, var(--tb-tango) 8%, var(--tb-paper));
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.headline__uncosted-note a {
+  text-decoration: underline;
+}
+
 .headline__goal {
   margin-top: var(--tb-space-3);
 }

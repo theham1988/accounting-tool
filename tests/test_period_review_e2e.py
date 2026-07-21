@@ -194,19 +194,22 @@ costs:
     assert bar.is_red
 
 
-# --- unmapped items: excluded from headline, surfaced in needs_attention -------
+# --- unmapped items: in the headline (gross-sales), surfaced in needs_attention --
 
 
-def test_unmapped_revenue_is_excluded_from_headline_and_surfaced(
+def test_unmapped_revenue_is_in_headline_and_surfaced(
     tmp_path: Path,
 ) -> None:
-    """The daily view's unmapped rule, applied to the period (ADR-0004 dec 1).
+    """Issue #71 / ADR-0008: the headline is gross-sales, so unmapped revenue
+    lands in it. The segment CMs still exclude it (PRD user story 20 — segment
+    CM must stay "clean and defensible": a flagged row's COGS is unknown, so
+    its revenue cannot honestly land in a segment's CM).
 
     A seasonal special sells twice in the week with no recipe mapping, once
-    stamped with the bar shift fallback. Its 300 THB of revenue stays out of
-    the headline and the segment CMs (recipe-cost COGS is unknown for it) and
-    surfaces as one aggregated needs-attention row carrying the shift-stamped
-    segment.
+    stamped with the bar shift fallback. Its 300 THB of revenue is in the
+    headline (so the partner reads Loyverse Gross sales), stays out of the
+    segment CMs, and surfaces as one aggregated needs-attention row carrying
+    the shift-stamped segment.
     """
     recipes_yaml, costs_yaml = _CROISSANT_CONFIG
     special = SaleRecord(
@@ -242,12 +245,16 @@ def test_unmapped_revenue_is_excluded_from_headline_and_surfaced(
         source=source, start=date(2026, 7, 1), end=date(2026, 7, 7)
     )
 
-    # Headline counts only the mapped croissant sale.
-    assert review.revenue == D("80")
-    assert review.cogs == D("5")
+    # Headline is gross-sales: mapped croissant (80) + unmapped specials (300).
+    assert review.revenue == D("380")
+    assert review.cogs == D("5")  # COGS stays mapped-only
+    assert review.gross_margin == D("375")  # 380 - 5
+    # Segment CMs still exclude the flagged revenue — the cafe card carries
+    # the croissant only; the bar card is empty.
     for sm in review.segment_margins:
         assert sm.revenue in (D("80"), D("0"))
 
+    # Flagged revenue still surfaces as the needs-attention residue.
     assert review.flagged_revenue == D("300")
     assert len(review.needs_attention) == 1
     row = review.needs_attention[0]

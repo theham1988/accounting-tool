@@ -431,13 +431,27 @@ def test_mapped_item_with_unpriced_ingredient_is_flagged_unknown_price(
     assert m.gross_margin == D("0")  # no margin booked on unknown cost
 
 
-def test_flagged_rows_excluded_from_daily_rollup(day: date) -> None:
-    """Unmapped/unknown-price rows do not inflate the daily margin totals.
+def test_flagged_rows_revenue_in_headline_but_cogs_reliable_only(day: date) -> None:
+    """Unmapped/unknown-price rows inflate revenue but not COGS (issue #71).
 
-    One mapped Chang (120 revenue, 85 margin) and one unmapped mystery item
-    (90 revenue). The daily roll-up totals only the mapped row: 120 revenue,
-    85 margin. The unmapped item's 90 revenue is surfaced separately as
-    ``flagged_revenue`` so it is visible, not silently booked as margin.
+    Reverses the slice-04 reliable-rows-only rule for revenue (ADR-0008):
+    the headline ties to Loyverse Gross sales, so every sale's revenue lands
+    in ``total_revenue`` — mapped or not. COGS stays recipe-cost over
+    reliable rows only (a flagged row's cost is unknown), and
+    ``total_gross_margin = total_revenue - total_cogs`` follows.
+
+    Worked example. One mapped Chang (120 revenue, 35 COGS) and one unmapped
+    mystery item (90 revenue). The daily roll-up:
+
+      total_revenue       = 120 + 90 = 210  (gross-sales headline)
+      total_cogs          = 35            (mapped only)
+      total_gross_margin  = 210 - 35 = 175 (revenue − cogs, by construction)
+      flagged_revenue     = 90            (still surfaces the residue)
+
+    The implicit assumption (the unmapped revenue carries zero COGS)
+    overstates the margin on the uncosted portion — honest labelling lives
+    on the template's "includes N THB of uncosted revenue" callout, and the
+    needs-attention card still carries the unmapped item.
     """
     from tangerine.margin import compute_daily_margin
     from tangerine.seeded import SeededSource
@@ -461,9 +475,10 @@ def test_flagged_rows_excluded_from_daily_rollup(day: date) -> None:
 
     result = compute_daily_margin(source, day)
 
-    assert result.total_revenue == D("120")  # only the mapped item
-    assert result.total_gross_margin == D("85")
-    assert result.flagged_revenue == D("90")  # unmapped item's revenue, surfaced
+    assert result.total_revenue == D("210")  # gross-sales: mapped + unmapped
+    assert result.total_cogs == D("35")  # COGS stays mapped-only
+    assert result.total_gross_margin == D("175")  # 210 - 35
+    assert result.flagged_revenue == D("90")  # unmapped revenue still surfaces
 
 
 # --- Loyverse items map to recipes via SkuMapping ----------------------------

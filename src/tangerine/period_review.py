@@ -41,9 +41,14 @@ from .types import (
 class PeriodDay:
     """One day's headline inside a period — the drill-down row.
 
-    Reliable rows only, same rule as the period headline. Quiet days carry
-    zeros rather than being omitted, so a rendered period always shows every
-    day in the range.
+    Gross-sales revenue (issue #71, ADR-0008): every sale's revenue lands
+    here, mapped or not, so the drill-down sums to the headline. COGS and
+    gross margin stay recipe-cost over the day's reliable rows only — the
+    implicit assumption (flagged revenue carries zero COGS) overstates the
+    margin on the uncosted portion, and the template's honest-labelling
+    callout lives at the period headline, not on every day row. Quiet days
+    carry zeros rather than being omitted, so a rendered period always shows
+    every day in the range.
     """
 
     day: date
@@ -105,19 +110,28 @@ class FlaggedPeriodItem:
 class PeriodReview:
     """The report shape for an inclusive ``[start, end]`` range.
 
-    Headline totals (``revenue`` / ``cogs`` / ``gross_margin``) sum only
-    reliable rows — unmapped and unknown-price rows are excluded, as the
-    daily view excludes them.
+    Headline totals (``revenue`` / ``cogs`` / ``gross_margin``) follow the
+    gross-sales rule (issue #71, ADR-0008): ``revenue`` is every sale's
+    revenue, mapped or not — so it ties to Loyverse Gross sales for the
+    range. ``cogs`` and ``gross_margin`` stay recipe-cost over reliable rows
+    only; ``gross_margin = revenue - cogs`` by construction, so the template
+    shows one arithmetically consistent trio. The implicit assumption
+    (flagged revenue carries zero COGS) overstates the margin on the
+    uncosted portion, and the template's "includes N THB of uncosted
+    revenue" callout is the honest labelling for that.
 
     ``segment_margins`` is the period's per-segment contribution margin,
-    rolled up through the same path the daily view uses (mapped sale →
-    recipe's segment; both segments always present, cafe-then-bar; a losing
-    segment carries ``is_red``).
+    rolled up through the same path the daily view uses — **reliable rows
+    only**, per PRD user story 20 (segment CM must stay "clean and
+    defensible"): flagged revenue cannot honestly land in a segment's CM.
+    Both segments are always present, cafe-then-bar; a losing segment
+    carries ``is_red``.
 
     The revenue sitting in flagged rows is surfaced as ``flagged_revenue``
     plus one aggregated ``needs_attention`` row per flagged item, so it is
-    visible, not silently dropped (the daily view's rule, per the COGS
-    recognition entry in ``CONTEXT.md``).
+    visible as the fix path (not double-counted in the headline —
+    ``flagged_revenue`` names the portion of the headline that the
+    needs-attention items account for).
 
     ``fixed_costs`` is the entity-level fixed-cost block for the range
     (never allocated to a segment — the segment rows above stay pure
@@ -153,7 +167,8 @@ def build_period_review(
     loop owns the multi-day costing — the catalog is built once and each day
     is costed at that day's prices (``cost_book_as_of``, ADR-0004 decision
     2). The per-day ``DayMargins`` slices are rolled up here into the
-    period's reliable-rows headline and per-day drilldown rows.
+    period's gross-sales headline (issue #71, ADR-0008) and per-day
+    drilldown rows.
     ``fixed_costs`` are the stored entity-level entries (Wave 2 slice 3);
     the ones applying to the range turn the gross margin into ``net_profit``,
     which is what the goal compares against 10K THB/day × days.
@@ -173,7 +188,12 @@ def build_period_review(
         counted = [im for im in rows if not im.excluded_from_totals]
         counted_rows.extend(counted)
         flagged_rows.extend(im for im in rows if im.excluded_from_totals)
-        day_revenue = sum((im.revenue for im in counted), Money("0"))
+        # Gross-sales headline (issue #71, ADR-0008): the per-day row's
+        # revenue includes every sale that day — mapped or not — so the
+        # drill-down sums to the headline and the partner reading the day
+        # row sees the same Loyverse Gross number they see on the headline.
+        # COGS and gross margin stay recipe-cost over reliable rows only.
+        day_revenue = sum((im.revenue for im in rows), Money("0"))
         day_cogs = sum((im.cogs for im in counted), Money("0"))
         days.append(
             PeriodDay(
@@ -184,7 +204,11 @@ def build_period_review(
             )
         )
 
-    revenue = sum((im.revenue for im in counted_rows), Money("0"))
+    # Headline revenue is gross-sales (every sale); COGS and gross margin
+    # stay recipe-cost over reliable rows only. Honest labelling lives on
+    # the template ("includes N THB of uncosted revenue"), not in the
+    # numbers — the ``flagged_revenue`` field still surfaces the residue.
+    revenue = sum((im.revenue for im in counted_rows + flagged_rows), Money("0"))
     cogs = sum((im.cogs for im in counted_rows), Money("0"))
     gross_margin = revenue - cogs
     days_in_range = (end - start).days + 1

@@ -381,15 +381,18 @@ def test_month_mode_shows_exact_net_profit_after_fixed_costs(
     assert "49850" not in segment
 
 
-def test_period_mode_excludes_unmapped_revenue_and_surfaces_it(
+def test_period_mode_includes_unmapped_revenue_in_headline_and_surfaces_it(
     tmp_path: Path, yesterday: date, today: date
 ) -> None:
-    """The daily view's unmapped rule holds in Period mode (issue #29 AC).
+    """Issue #71 / ADR-0008: the period headline is gross-sales, so unmapped
+    revenue lands in it. The fix path still surfaces as needs-attention.
 
     A week with one latte (120 THB) and two sales of an unmapped seasonal
-    special (150 THB each): the headline shows only the latte's 120.00
-    revenue; the special's 300.00 sits in a needs-attention section with its
-    fix-it link into item coverage, not silently in the totals.
+    special (150 THB each): the headline reads 420.00 THB revenue (= 120 +
+    300, Loyverse Gross sales for the week), and the special's 300.00 still
+    sits in a needs-attention section with its fix-it link into item
+    coverage. The segment CMs continue to exclude the unmapped revenue
+    (PRD user story 20).
     """
     start = yesterday - timedelta(days=6)
     sales = [
@@ -419,9 +422,9 @@ def test_period_mode_excludes_unmapped_revenue_and_surfaces_it(
         f"/review?mode=period&start={start.isoformat()}&end={yesterday.isoformat()}"
     ).text
 
-    # Headline: latte only.
-    assert "120.00" in html
-    assert "420.00" not in html  # 120 + 300 must NOT be a headline number
+    # Headline: gross-sales — mapped latte (120) + unmapped specials (300).
+    assert "420.00" in html  # the headline REVENUE number
+    assert "120.00" in html  # the latte's revenue still appears (segment card)
 
     attention = html.split("<!--section:needs-attention-->")[1].split(
         "<!--/section:needs-attention-->"
@@ -430,6 +433,58 @@ def test_period_mode_excludes_unmapped_revenue_and_surfaces_it(
     assert "300.00" in attention  # both days' revenue, aggregated
     assert "unmapped" in attention
     assert "/items?item=i-special" in attention  # the existing fix-it deep link
+
+
+def test_period_mode_headline_carries_the_uncosted_revenue_callout(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Issue #71 honesty labelling: when part of the gross-sales headline
+    carries unknown COGS, the headline card calls it out by amount and links
+    into Needs a fix.
+
+    Same setup as the gross-sales test (one latte at 120 + two unmapped
+    specials at 150 each). The headline now reads 420.00 THB revenue; the
+    callout names the 300.00 of that revenue which the gross-margin number
+    implicitly zero-costs, and links into the needs-attention anchor.
+    """
+    start = yesterday - timedelta(days=6)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="espresso-latte",
+            day=start,
+            price="120",
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="i-special",
+            day=start + timedelta(days=1),
+            price="150",
+        ),
+        _sale_record(
+            receipt_number="r-3",
+            item_id="i-special",
+            day=start + timedelta(days=2),
+            price="150",
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    html = client.get(
+        f"/review?mode=period&start={start.isoformat()}&end={yesterday.isoformat()}"
+    ).text
+
+    headline = html.split("<!--section:headline-->")[1].split(
+        "<!--/section:headline-->"
+    )[0]
+    # The callout names the uncosted portion...
+    assert "300.00" in headline
+    assert "uncosted" in headline.lower() or "cannot compute" in headline.lower()
+    # ...and links into Needs a fix.
+    assert 'href="#needs-attention"' in headline
+    # The Needs-a-fix section carries the matching anchor.
+    assert 'id="needs-attention"' in html
 
 
 def test_period_and_month_pages_carry_the_switcher_anchored_on_their_range(
