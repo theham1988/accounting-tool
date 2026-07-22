@@ -19,7 +19,7 @@ import os
 from datetime import date
 from typing import Any
 
-from .loyverse.config import LoyverseCredentials
+from .loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
 from .loyverse.sync import SyncResult, run_sync
 from .storage.sqlite_store import SqliteLoyverseStore
 
@@ -42,15 +42,18 @@ def main(
     store_id: str | None = None,
     urlopen: Any = None,
     today: date | None = None,
+    cafe_category_ids: frozenset[str] | None = None,
 ) -> None:
     """Run one Loyverse sync and print a one-line summary.
 
     ``db_path`` defaults to ``$TANGERINE_DB_PATH`` or ``./tangerine.db``.
     Credentials default to ``$LOYVERSE_ACCESS_TOKEN`` / ``$LOYVERSE_STORE_ID``.
-    ``urlopen`` is injectable so tests stub Loyverse's HTTP boundary without
-    env mutation. All parameters are explicit so tests drive the script
-    in-process; the real ``python -m tangerine.sync`` entrypoint reads env
-    defaults.
+    ``cafe_category_ids`` defaults to ``$LOYVERSE_CAFE_CATEGORY_IDS`` parsed
+    into a set (ADR-0009); pass it explicitly to drive the script in-process
+    without env mutation. ``urlopen`` is injectable so tests stub Loyverse's
+    HTTP boundary without env mutation. All parameters are explicit so tests
+    drive the script in-process; the real ``python -m tangerine.sync``
+    entrypoint reads env defaults.
 
     Recipes and costs are deliberately not loaded here: the sync only writes
     sales and menu snapshots into the store, so config validity is the
@@ -66,6 +69,11 @@ def main(
     db = db_path or os.environ.get(DB_PATH_ENV, DEFAULT_DB_PATH)
     token = access_token or os.environ.get(LOYVERSE_TOKEN_ENV)
     sid = store_id if store_id is not None else os.environ.get(LOYVERSE_STORE_ID_ENV)
+    cafe_ids = (
+        cafe_category_ids
+        if cafe_category_ids is not None
+        else cafe_category_ids_from_env()
+    )
 
     if token is None:
         print(
@@ -82,6 +90,7 @@ def main(
             credentials=credentials,
             urlopen=urlopen,
             today=today,
+            cafe_category_ids=cafe_ids,
         )
     finally:
         store.close()

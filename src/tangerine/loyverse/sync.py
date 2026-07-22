@@ -32,7 +32,7 @@ from .parser import (
     parse_items_snapshot,
     parse_receipts_to_sales,
 )
-from .store import LoyverseStore
+from .store import DEFAULT_CAFE_CATEGORY_IDS, LoyverseStore
 
 #: How many days of sales the first run backfills so the 7-day rolling average
 #: has data immediately rather than reporting zeros for the first week
@@ -65,9 +65,12 @@ class SyncOrchestrator:
         self,
         client: LoyverseHttpClient,
         store: LoyverseStore,
+        *,
+        cafe_category_ids: frozenset[str] = DEFAULT_CAFE_CATEGORY_IDS,
     ) -> None:
         self._client = client
         self._store = store
+        self._cafe_category_ids = cafe_category_ids
 
     def sync_sales_and_menu(
         self,
@@ -84,6 +87,11 @@ class SyncOrchestrator:
         every receipt, with idempotency at the store handling the overlap. The
         first-run backfill sets this to ``today - BACKFILL_DAYS`` so the 7-day
         rolling average has data immediately.
+
+        Menu items are tagged cafe/bar from the configured ``cafe_category_ids``
+        (ADR-0009). Under pure-clock segmentation (#65) this segment no longer
+        drives revenue splitting, but it still feeds menu-shape views and the
+        sold-as-is quick-create.
         """
         moment = at or datetime.now(timezone.utc)
 
@@ -102,7 +110,9 @@ class SyncOrchestrator:
         for page in self._client.get_pages("items"):
             all_items.extend(page.get("items", []))
         snapshot = parse_items_snapshot(
-            {"items": all_items}, store_id=self._client.store_id
+            {"items": all_items},
+            store_id=self._client.store_id,
+            cafe_category_ids=self._cafe_category_ids,
         )
         self._store.record_menu_snapshot(snapshot, at=moment)
 
@@ -114,6 +124,7 @@ def run_sync(
     urlopen: Any = None,
     today: date | None = None,
     backfill_days: int = BACKFILL_DAYS,
+    cafe_category_ids: frozenset[str] = DEFAULT_CAFE_CATEGORY_IDS,
 ) -> SyncResult:
     """Run one Loyverse sales+menu sync and return its result.
 
@@ -125,6 +136,12 @@ def run_sync(
     first sync, so the orchestrator is asked to backfill
     ``today - backfill_days`` (PRD user story 9). Subsequent syncs pull
     everything (no date filter); idempotency at the store handles the overlap.
+
+    ``cafe_category_ids`` is the configured set of Loyverse cafe category
+    UUIDs (ADR-0009). Defaults to empty — every item bar — matching the
+    observable behaviour of the slice-02 placeholder bug, so a deployment
+    that hasn't configured the real UUIDs yet stays correct rather than
+    silently mis-tagging half the menu.
 
     A Loyverse HTTP failure (auth, transport, other API error) is caught and
     surfaced as a readable entry in ``SyncResult.errors`` rather than raising;
@@ -139,7 +156,11 @@ def run_sync(
     changes_before = len(store.menu_change_history())
 
     client = LoyverseHttpClient(credentials, urlopen=urlopen)
-    orchestrator = SyncOrchestrator(client=client, store=store)
+    orchestrator = SyncOrchestrator(
+        client=client,
+        store=store,
+        cafe_category_ids=cafe_category_ids,
+    )
     try:
         orchestrator.sync_sales_and_menu(since=since)
     except LoyverseApiError as exc:

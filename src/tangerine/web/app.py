@@ -51,7 +51,7 @@ from ..coverage import (
 from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
 from ..trends import WeekdayAggregate, build_trends
-from ..loyverse.config import LoyverseCredentials
+from ..loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
 from ..margin import CostResolver, cost_breakdown
@@ -270,6 +270,7 @@ def create_app(
     loyverse_urlopen: Any = None,
     loyverse_access_token: str | None = None,
     loyverse_store_id: str | None = None,
+    loyverse_cafe_category_ids: frozenset[str] | None = None,
     passphrase: str | None = None,
     signing_secret: str | None = None,
     cookie_secure: bool | None = None,
@@ -297,6 +298,10 @@ def create_app(
     Loyverse credentials default to ``$LOYVERSE_ACCESS_TOKEN`` /
     ``$LOYVERSE_STORE_ID``; ``loyverse_urlopen`` is injectable so the UI seam
     tests stub the Loyverse HTTP endpoint without mutating the environment.
+    ``loyverse_cafe_category_ids`` defaults to
+    ``$LOYVERSE_CAFE_CATEGORY_IDS`` parsed into a set (ADR-0009); the venue's
+    cafe category UUID is opaque, so it lives in the environment, never the
+    repo.
 
     The store is opened once and held for the app's lifetime (closed on
     shutdown). Config is loaded once at construction — a malformed config
@@ -313,6 +318,11 @@ def create_app(
         loyverse_store_id
         if loyverse_store_id is not None
         else os.environ.get(LOYVERSE_STORE_ID_ENV)
+    )
+    cafe_category_ids = (
+        loyverse_cafe_category_ids
+        if loyverse_cafe_category_ids is not None
+        else cafe_category_ids_from_env()
     )
     loyverse_urlopen_param = loyverse_urlopen
 
@@ -431,6 +441,7 @@ def create_app(
         if token is not None
         else None
     )
+    app.state.cafe_category_ids = cafe_category_ids
     app.state.assignees = assignees
     app.state.auth_config = auth_config
     app.state.authenticator = authenticator
@@ -1760,6 +1771,7 @@ def create_app(
                 credentials=credentials,
                 urlopen=app.state.loyverse_urlopen,
                 today=today_date,
+                cafe_category_ids=app.state.cafe_category_ids,
             )
 
         # Refresh yesterday's headline numbers so the partner sees fresh data
