@@ -155,8 +155,9 @@ def test_review_surfaces_per_segment_cm_with_red_flag(day: date) -> None:
     Cafe sells a latte normally (120 THB, cost 45 -> CM 75, not red).
     """
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
     ]
     source = SeededSource(
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()
@@ -654,11 +655,13 @@ def test_end_to_end_synthetic_yesterday_renders_all_sections(day: date) -> None:
         _leo_recipe(),
     ]
 
+    # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+    # Each item's natural shift: draught beers are bar, espresso drinks are cafe.
     reliable_sales = [
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
-        Sale(item_id="cappuccino", timestamp=day, sell_price=D("90")),
-        Sale(item_id="leo-draft-500", timestamp=day, sell_price=D("45")),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="cappuccino", timestamp=day, sell_price=D("90"), segment=Segment.CAFE),
+        Sale(item_id="leo-draft-500", timestamp=day, sell_price=D("45"), segment=Segment.BAR),
     ]
     unmapped_sale = Sale(
         item_id="mystery", timestamp=day, sell_price=D("100"),
@@ -671,7 +674,7 @@ def test_end_to_end_synthetic_yesterday_renders_all_sections(day: date) -> None:
     all_sales = list(reliable_sales) + [unmapped_sale]
     for d in prior_days:
         all_sales.extend(
-            Sale(item_id=s.item_id, timestamp=d, sell_price=s.sell_price)
+            Sale(item_id=s.item_id, timestamp=d, sell_price=s.sell_price, segment=s.segment)
             for s in reliable_sales
         )
     source = SeededSource(sales=all_sales, recipes=recipes, cost=_cost())

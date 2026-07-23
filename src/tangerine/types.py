@@ -218,18 +218,26 @@ class DailyMargin:
 
 @dataclass(frozen=True)
 class SegmentMargin:
-    """Per-segment contribution margin for a period (slice 07).
+    """Per-segment contribution margin for a period (slice 07, ADR-0007).
 
-    Per the PRD segmentation model and issue 07:
+    Per the PRD segmentation model and issue 07 / #73:
 
     - ``revenue``             reliable revenue in the segment for the period
-                              (unmapped / unknown-price rows are excluded —
-                              their COGS is unknown, so booking their revenue
-                              as CM would over-state the segment)
+                              (mapped sales only — unmapped / unknown-price
+                              rows are excluded because their COGS is
+                              unknown, so booking their revenue as CM would
+                              over-state the segment)
     - ``variable_costs``      segment COGS for the period (direct labor is
                               "if tracked" per the issue and not tracked yet,
                               so today this equals COGS)
     - ``contribution_margin`` revenue − variable_costs
+    - ``flagged_revenue``     unmapped / unknown-price revenue that landed
+                              in this segment by clock (ADR-0007). Surfaced
+                              per-card so a partner sees *which* segment the
+                              uncosted revenue sits in — honest labelling
+                              (#64) applied to the card shape. Excluded from
+                              the card's CM (a flagged row's COGS is
+                              unknown, so it cannot honestly contribute).
     - ``is_red``              True when contribution_margin < 0 (PRD: a segment
                               failing to cover its own variable costs triggers
                               an explicit conversation)
@@ -243,6 +251,7 @@ class SegmentMargin:
     revenue: Money
     variable_costs: Money
     contribution_margin: Money
+    flagged_revenue: Money = Money("0")
 
     @property
     def is_red(self) -> bool:

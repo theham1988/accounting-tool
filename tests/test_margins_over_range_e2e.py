@@ -279,11 +279,12 @@ def test_daily_margin_unchanged_for_split_segments_with_red_flag() -> None:
     """
     day = date(2026, 6, 27)
     sales = [
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
     ]
     source = SeededSource(
         sales=sales,
@@ -431,8 +432,9 @@ def test_daily_review_unchanged_through_range_pass_projection() -> None:
     """
     day = date(2026, 6, 24)
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
     ]
     source = SeededSource(
         sales=sales,

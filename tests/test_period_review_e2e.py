@@ -73,9 +73,24 @@ def _seeded_source(
     return StoreSource(store=loyverse_store, config=config_store), config_store
 
 
-def _sale(item_id: str, day: date, price: str, line: str) -> SaleRecord:
+def _sale(
+    item_id: str,
+    day: date,
+    price: str,
+    line: str,
+    segment: Segment | None = None,
+) -> SaleRecord:
+    """Build a ``SaleRecord`` for a synthetic sale.
+
+    ``segment`` is the **clock-stamped** segment (ADR-0007 pure-clock rule).
+    Tests written before #73 left it unset; pre-#73 the recipe's segment
+    filled in, but under pure-clock an unset segment defaults to bar
+    (``segment_of_sale``'s out-of-hours default), which would silently
+    mis-split revenue. Tests that care which segment their sale lands in
+    pass it explicitly.
+    """
     return SaleRecord(
-        sale=Sale(item_id=item_id, timestamp=day, sell_price=D(price)),
+        sale=Sale(item_id=item_id, timestamp=day, sell_price=D(price), segment=segment),
         receipt_number=f"r-{day.isoformat()}",
         line_id=line,
     )
@@ -167,10 +182,11 @@ costs:
   chang-keg: { price: "0.07", updated_at: "2026-06-01" }
 """
     sales = [
-        _sale("i-croissant", date(2026, 7, 1), "80", "l-1"),
-        _sale("i-croissant", date(2026, 7, 2), "80", "l-2"),
-        _sale("i-chang", date(2026, 7, 1), "20", "l-3"),
-        _sale("i-chang", date(2026, 7, 2), "20", "l-4"),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        _sale("i-croissant", date(2026, 7, 1), "80", "l-1", Segment.CAFE),
+        _sale("i-croissant", date(2026, 7, 2), "80", "l-2", Segment.CAFE),
+        _sale("i-chang", date(2026, 7, 1), "20", "l-3", Segment.BAR),
+        _sale("i-chang", date(2026, 7, 2), "20", "l-4", Segment.BAR),
     ]
     source, _ = _seeded_source(
         tmp_path, recipes_yaml=recipes_yaml, costs_yaml=costs_yaml, sales=sales

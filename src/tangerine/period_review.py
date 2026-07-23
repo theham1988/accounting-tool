@@ -198,7 +198,7 @@ def build_period_review(
         revenue=revenue,
         cogs=cogs,
         gross_margin=gross_margin,
-        segment_margins=segment_margins_from_items(counted_rows),
+        segment_margins=segment_margins_from_items(counted_rows, flagged_rows),
         flagged_revenue=sum((im.revenue for im in flagged_rows), Money("0")),
         needs_attention=_aggregate_flagged(flagged_rows),
         days=tuple(days),

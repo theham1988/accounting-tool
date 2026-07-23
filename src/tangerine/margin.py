@@ -243,10 +243,12 @@ def compute_item_margins(
     cost: CostBook,
     day: date,
 ) -> list[ItemMargin]:
-    """Per-item margin table for a single day.
+    """Per-(item, segment) margin table for a single day.
 
-    Sales on other days are ignored. Each sold item resolves to a recipe via
-    the catalog (item -> SKU -> recipe). Three outcomes per item:
+    Sales on other days are ignored. Each sale is resolved to a recipe via
+    the catalog (item -> SKU -> recipe) and to a segment via
+    :func:`segment_of_sale` (ADR-0007: pure clock — the sale's shift-stamped
+    ``segment``, never the recipe's). Three outcomes per (item, segment):
 
       - mapped and fully priced     -> normal margin row, included in totals
       - mapped but a SKU unpriced   -> flagged ``unknown_price``, excluded
@@ -256,54 +258,60 @@ def compute_item_margins(
     ``excluded_from_totals`` is True on them, so ``compute_daily_margin``
     sums only reliable rows.
 
-    Output is one ``ItemMargin`` per distinct item id sold that day, sorted by
-    item id for determinism.
+    Output is one ``ItemMargin`` per **(item id, segment)** that sold that
+    day, sorted by ``(item_id, segment)`` for determinism. An item that
+    sells in both the cafe and bar windows on the same day therefore
+    produces two rows — one carrying only its cafe-window units/revenue,
+    the other only its bar-window units/revenue. This is what makes a
+    clock-segment split honest: revenue on each segment card ties to the
+    item rows behind it, with no phantom revenue in a card whose items
+    never sold there. Pre-#73 this aggregated by ``item_id`` alone and
+    let the recipe's segment win, so cross-shift items silently
+    mis-split.
     """
-    units_by_item: dict[str, int] = {}
-    revenue_by_item: dict[str, Money] = {}
-    sell_price_by_item: dict[str, Money] = {}
-    # Resolved segment per item, for flagged rows (unmapped items take their
-    # segment from the shift fallback on the sale). For mapped items the
-    # recipe's segment is used directly, so this is only consulted on the
-    # unmapped branch; we still compute it for every item for simplicity.
-    segment_by_item: dict[str, Segment] = {}
+    # Key is (item_id, segment): an item selling in both shifts produces
+    # two buckets. The first sale seen for a key wins its sell_price
+    # (Loyverse sell price is the menu price; intra-day repricing between
+    # syncs is accepted as stale per the PRD sync note).
+    units: dict[tuple[str, Segment], int] = {}
+    revenue: dict[tuple[str, Segment], Money] = {}
+    sell_price: dict[tuple[str, Segment], Money] = {}
 
     for sale in sales:
         if sale.timestamp != day:
             continue
-        units_by_item[sale.item_id] = (
-            units_by_item.get(sale.item_id, 0) + sale.quantity
+        # ADR-0007: the sale's segment is its clock-stamped segment, not
+        # the recipe's. The parser stamps every production sale post-#66;
+        # segment_of_sale is the single read of that stamp.
+        seg = segment_of_sale(sale)
+        key = (sale.item_id, seg)
+        units[key] = units.get(key, 0) + sale.quantity
+        revenue[key] = (
+            revenue.get(key, Money("0")) + sale.sell_price * sale.quantity
         )
-        revenue_by_item[sale.item_id] = (
-            revenue_by_item.get(sale.item_id, Money("0"))
-            + sale.sell_price * sale.quantity
-        )
-        # Per-unit sell price: take the first sale's price (Loyverse sell price
-        # is the menu price; intra-day repricing between syncs is accepted as
-        # stale per the PRD sync note).
-        sell_price_by_item.setdefault(sale.item_id, sale.sell_price)
-        # First sale seen for the item wins the shift-fallback segment. Used
-        # only when the item is unmapped (no recipe); a later recipe hit
-        # overrides it via recipe.segment.
-        segment_by_item.setdefault(sale.item_id, segment_of_sale(sale, recipe=None))
+        sell_price.setdefault(key, sale.sell_price)
 
     rows: list[ItemMargin] = []
     resolver = CostResolver(recipes, cost)
-    for item_id in sorted(units_by_item):
+    # Sort by (item_id, segment) — item first for the daily review's item
+    # table grouping, segment second so the cafe row precedes the bar row
+    # of the same item (matches the roll-up's cafe-then-bar order).
+    for key in sorted(units, key=lambda k: (k[0], _SEGMENT_ORDER[k[1]])):
+        item_id, seg = key
         recipe = recipes.for_item(item_id)
-        units = units_by_item[item_id]
-        revenue = revenue_by_item[item_id]
-        sell_price = sell_price_by_item[item_id]
+        row_units = units[key]
+        row_revenue = revenue[key]
+        row_sell_price = sell_price[key]
 
         if recipe is None:
             rows.append(_flagged_row(
                 item_id=item_id,
                 name=item_id,
-                segment=segment_by_item[item_id],
+                segment=seg,
                 day=day,
-                units=units,
-                sell_price=sell_price,
-                revenue=revenue,
+                units=row_units,
+                sell_price=row_sell_price,
+                revenue=row_revenue,
             ))
             continue
 
@@ -311,24 +319,25 @@ def compute_item_margins(
         if unpriced:
             # Mapped, but at least one ingredient has no approved price —
             # directly or recursively through a prep's recipe. Surface the
-            # row (with the recipe's name/segment) but exclude it from
-            # totals — its COGS is unknown.
+            # row (with the recipe's name and the **sale's clock segment**)
+            # but exclude it from totals — its COGS is unknown. The recipe's
+            # menu-segment is irrelevant for revenue splitting (ADR-0007).
             rows.append(_flagged_row(
                 item_id=item_id,
                 name=recipe.name,
-                segment=recipe.segment,
+                segment=seg,
                 day=day,
-                units=units,
-                sell_price=sell_price,
-                revenue=revenue,
+                units=row_units,
+                sell_price=row_sell_price,
+                revenue=row_revenue,
                 unknown_price=True,
             ))
             continue
 
         cpu = resolver.cost_per_unit(recipe)
-        cogs = cpu * units
-        gm = revenue - cogs
-        pct = gross_margin_pct(gm, revenue)
+        cogs = cpu * row_units
+        gm = row_revenue - cogs
+        pct = gross_margin_pct(gm, row_revenue)
         below = (
             recipe.target_gross_margin_pct is not None
             and pct is not None
@@ -338,12 +347,12 @@ def compute_item_margins(
             ItemMargin(
                 item_id=item_id,
                 name=recipe.name,
-                segment=recipe.segment,
+                segment=seg,
                 day=day,
-                units_sold=units,
-                sell_price=sell_price,
+                units_sold=row_units,
+                sell_price=row_sell_price,
                 cost_per_unit=cpu,
-                revenue=revenue,
+                revenue=row_revenue,
                 cogs=cogs,
                 gross_margin=gm,
                 gross_margin_pct=pct,
@@ -482,27 +491,42 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
         total_cogs=sum((im.cogs for im in counted), Money("0")),
         total_gross_margin=sum((im.gross_margin for im in counted), Money("0")),
         flagged_revenue=sum((im.revenue for im in flagged), Money("0")),
-        segment_margins=segment_margins_from_items(counted),
+        segment_margins=segment_margins_from_items(counted, flagged),
     )
 
 
-def segment_margins_from_items(rows: list[ItemMargin]) -> tuple[SegmentMargin, ...]:
+def segment_margins_from_items(
+    counted_rows: list[ItemMargin],
+    flagged_rows: list[ItemMargin] | None = None,
+) -> tuple[SegmentMargin, ...]:
     """Roll reliable item-margin rows up into per-segment contribution margin.
 
-    Only reliable rows (``excluded_from_totals`` False) are summed: a flagged
-    row's COGS is unknown, so its revenue cannot honestly contribute to a
-    segment's CM (PRD user story 20: segment CM must stay "clean and
-    defensible"). Both segments are always returned, in canonical order
-    (see ``_SEGMENT_ORDER``); a segment with no reliable rows carries zeros.
+    Only reliable rows (``excluded_from_totals`` False) are summed into
+    ``revenue`` / ``variable_costs``: a flagged row's COGS is unknown, so
+    its revenue cannot honestly contribute to a segment's CM (PRD user
+    story 20: segment CM must stay "clean and defensible"). Both segments
+    are always returned, in canonical order (see ``_SEGMENT_ORDER``); a
+    segment with no reliable rows carries zeros.
+
+    ADR-0007 (issue #73): the **flagged** rows' revenue is attributed to
+    each segment by clock and surfaced as ``SegmentMargin.flagged_revenue``
+    — the per-card honest-labelling line. Pre-#73 flagged revenue sat only
+    at the daily level; surfacing it per-segment lets a partner see *which*
+    segment the uncosted revenue sits in, without booking it into the CM.
 
     Today variable costs == COGS (direct labor is "if tracked" per issue 07
     and not tracked yet), so ``variable_costs`` is the sum of each row's COGS.
     """
     by_segment = _empty_segment_buckets()
-    for im in rows:
+    for im in counted_rows:
         bucket = by_segment[im.segment]
         bucket["revenue"] += im.revenue
         bucket["cogs"] += im.cogs
+    # Per-segment flagged revenue: every flagged row contributes its
+    # revenue to the segment it was sold in (its clock-stamped segment,
+    # which is the row's ``segment`` post-#73).
+    for im in flagged_rows or []:
+        by_segment[im.segment]["flagged"] += im.revenue
     return _build_segment_margins(by_segment)
 
 
@@ -514,19 +538,23 @@ _SEGMENT_ORDER: dict[Segment, int] = {Segment.CAFE: 0, Segment.BAR: 1}
 
 
 def _empty_segment_buckets() -> dict[Segment, dict[str, Money]]:
-    """A fresh ``{segment: {revenue, cogs}}`` accumulator over all segments."""
+    """A fresh ``{segment: {revenue, cogs, flagged}}`` accumulator."""
     return {
-        seg: {"revenue": Money("0"), "cogs": Money("0")} for seg in Segment
+        seg: {"revenue": Money("0"), "cogs": Money("0"), "flagged": Money("0")}
+        for seg in Segment
     }
 
 
 def _build_segment_margins(
     by_segment: dict[Segment, dict[str, Money]]
 ) -> tuple[SegmentMargin, ...]:
-    """Turn a ``{segment: {revenue, cogs}}`` accumulator into SegmentMargins.
+    """Turn a ``{segment: {revenue, cogs, flagged}}`` accumulator into
+    SegmentMargins.
 
     One ``SegmentMargin`` per segment in canonical order (cafe-then-bar).
     Today variable costs == COGS, so ``contribution_margin = revenue - cogs``.
+    ``flagged_revenue`` carries the segment's unmapped / unknown-price
+    revenue (ADR-0007) — surfaced per-card, excluded from CM.
     """
     ordered = sorted(
         by_segment.items(), key=lambda kv: _SEGMENT_ORDER[kv[0]]
@@ -537,6 +565,7 @@ def _build_segment_margins(
             revenue=bucket["revenue"],
             variable_costs=bucket["cogs"],
             contribution_margin=bucket["revenue"] - bucket["cogs"],
+            flagged_revenue=bucket["flagged"],
         )
         for seg, bucket in ordered
     )

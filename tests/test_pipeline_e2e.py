@@ -55,10 +55,15 @@ def chang_cost() -> CostBook:
 
 
 def chang_sale(day: date) -> Sale:
+    # ADR-0007: pure-clock segmentation — the sale's segment is its shift-
+    # stamped segment (the parser output), not the recipe's. Stamped BAR
+    # here because a draught pour's natural shift is the bar window; the
+    # recipe's ``segment=bar`` is now a menu-shape fact only.
     return Sale(
         item_id="chang-draft-500",
         timestamp=day,
         sell_price=D("120"),
+        segment=Segment.BAR,
     )
 
 
@@ -114,6 +119,9 @@ def test_two_items_reuse_seam(day: date) -> None:
         item_id="espresso-latte",
         timestamp=day,
         sell_price=D("120"),
+        # ADR-0007: clock-stamped CAFE (a latte's natural shift is the cafe
+        # window). The recipe's segment is now menu-shape only.
+        segment=Segment.CAFE,
     )
     cost = CostBook(
         {

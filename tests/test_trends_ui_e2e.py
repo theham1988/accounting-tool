@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from tangerine.loyverse.store import SaleRecord
 from tangerine.storage.sqlite_store import SqliteLoyverseStore
-from tangerine.types import Money, Sale
+from tangerine.types import Money, Sale, Segment
 
 _TEST_PASSPHRASE = "slice5-test-passphrase"
 _TEST_SIGNING_SECRET = "slice5-test-signing-secret"
@@ -75,9 +75,19 @@ def _sale_record(
     day: date,
     price: str,
     line_id: str = "li-1",
+    segment: Segment | None = None,
 ) -> SaleRecord:
+    """Build a ``SaleRecord`` for a synthetic sale.
+
+    ``segment`` is the **clock-stamped** segment (ADR-0007 pure-clock rule).
+    Tests written before #73 left it unset; under pure-clock an unset
+    segment defaults to bar, which would silently mis-split revenue.
+    """
     return SaleRecord(
-        sale=Sale(item_id=item_id, timestamp=day, sell_price=Money(price)),
+        sale=Sale(
+            item_id=item_id, timestamp=day, sell_price=Money(price),
+            segment=segment,
+        ),
         receipt_number=receipt_number,
         line_id=line_id,
     )
@@ -378,17 +388,20 @@ def test_segment_cm_metric_renders_a_chart_per_segment(
     Period view.
     """
     sales = [
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
         _sale_record(
             receipt_number="r-1",
             item_id="espresso-latte",
             day=date(2026, 7, 14),
             price="120",
+            segment=Segment.CAFE,
         ),
         _sale_record(
             receipt_number="r-2",
             item_id="chang-draft-500",
             day=date(2026, 7, 14),
             price="120",
+            segment=Segment.BAR,
         ),
     ]
     app = _build_app(tmp_path, today=today, sales=sales)

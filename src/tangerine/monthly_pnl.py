@@ -208,10 +208,12 @@ def _revenue_by_segment(
     """All-sale revenue per segment for the month, by sale timestamp.
 
     Revenue is restricted to sales whose ``timestamp`` falls in the month.
-    A mapped sale takes its segment from the recipe (slice-07 rule). An
-    unmapped sale takes its segment from the shift-stamped ``sale.segment``
-    (the slice-07 fallback the Loyverse parser resolved at the sync boundary
-    from the transaction timestamp: 8am–5pm cafe, else bar).
+    A sale's segment is its clock-stamped segment (ADR-0007 pure-clock
+    rule — the value the Loyverse parser resolved from the local
+    ``created_at`` and stamped on ``sale.segment``). The ``recipes``
+    argument is kept for source compatibility with the accrual COGS path
+    but is no longer consulted for revenue splitting; pre-#73 a mapped
+    sale took its segment from the recipe.
 
     Unlike the daily recipe-margin engine, the monthly view INCLUDES unmapped
     sales' revenue. The daily engine excludes them because their COGS is
@@ -220,7 +222,7 @@ def _revenue_by_segment(
     ALL stock regardless of which sale used it. Dropping unmapped revenue here
     would therefore under-state segment CM — the consumed stock is costed but
     the sale that consumed it is invisible. Including unmapped revenue (via the
-    shift fallback segment) keeps revenue and accrual COGS symmetric.
+    clock-stamped segment) keeps revenue and accrual COGS symmetric.
     """
     start, end = _month_bounds(month)
     buckets: dict[Segment, Money] = {seg: Money("0") for seg in Segment}

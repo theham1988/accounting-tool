@@ -199,17 +199,22 @@ def test_segment_of_unmapped_sale_uses_shift_fallback(day: date) -> None:
     assert segment_of_sale(bar_sale, recipe=None) == Segment.BAR
 
 
-def test_segment_of_mapped_sale_uses_recipe_segment(day: date) -> None:
-    """A mapped sale takes its segment from the recipe (the category default),
-    ignoring any shift-derived stamp on the sale — so a keg beer sold during
-    the cafe hour is still bar."""
+def test_segment_of_mapped_sale_uses_clock_segment(day: date) -> None:
+    """A mapped sale takes its revenue segment from its **clock-stamped**
+    segment, ignoring the recipe's menu-segment (ADR-0007 / issue #73).
+
+    Pre-#73 this asserted the inverse — the recipe's segment won. Pure-clock
+    reverses that: a keg beer sold during the cafe hour is *cafe* for
+    revenue, regardless of its bar-tagged recipe. The recipe's segment is
+    now a menu-shape fact only (see ``test_pure_clock_segmentation``).
+    """
     sale = Sale(
         item_id="chang-draft-500",
         timestamp=day,
         sell_price=D("120"),
-        segment=Segment.CAFE,  # would be wrong for a mapped bar item
+        segment=Segment.CAFE,  # clock-stamped: sold at 14:00 local
     )
-    assert segment_of_sale(sale, recipe=_chang_recipe()) == Segment.BAR
+    assert segment_of_sale(sale, recipe=_chang_recipe()) == Segment.CAFE
 
 
 # --- AC 3 + 4: per-segment revenue, variable costs, CM; no fixed allocation -
@@ -220,11 +225,16 @@ def test_daily_segment_margins_split_revenue_and_cogs(day: date) -> None:
 
     Bar:  2 * 120 = 240 revenue, 2 * 35  = 70 COGS, CM = 170
     Cafe: 1 * 120 = 120 revenue, 1 * 45  = 45 COGS, CM = 75
+
+    Under pure-clock (ADR-0007) each sale's segment is its clock-stamped
+    segment, so the synthetic sales here carry an explicit ``segment``
+    matching the shift they were sold in. The recipe-segment is no longer
+    consulted for revenue splitting; it stays a menu-shape fact.
     """
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
     ]
     source = SeededSource(
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()
@@ -291,10 +301,13 @@ def test_negative_cm_segment_flagged_red(day: date) -> None:
 
     Worked example: a bar item sold below cost. 1 unit sold at 30 THB, recipe
     cost 35 THB -> bar CM = -5 -> red. Cafe has a normal positive CM.
+
+    ADR-0007: sales carry an explicit clock-stamped segment matching the
+    shift they sold in.
     """
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
     ]
     source = SeededSource(
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()
@@ -422,14 +435,16 @@ def test_period_segment_margins_span_multiple_days() -> None:
     the same projection the period view renders, which itself projects over
     the single as-of range pass. Two days, each with 1 Chang (bar) + 1
     Latte (cafe). Over the period: Bar CM = 85 * 2 = 170, Cafe CM = 75 * 2 = 150.
+
+    ADR-0007: each sale carries its clock-stamped segment explicitly.
     """
     day1 = date(2026, 6, 24)
     day2 = date(2026, 6, 25)
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=day1, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day1, sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=day2, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day2, sell_price=D("120")),
+        Sale(item_id="chang-draft-500", timestamp=day1, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day1, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="chang-draft-500", timestamp=day2, sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=day2, sell_price=D("120"), segment=Segment.CAFE),
     ]
     source = SeededSource(
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()
@@ -476,14 +491,16 @@ def test_end_to_end_split_sales_assert_per_segment_cm_and_red_flag() -> None:
       - Bar:  3x chang @ 30 (below cost), cost 35 -> 90 rev, 105 cogs, CM -15 (red)
 
     Daily totals reconcile to the sum of the segments; the bar segment is red.
+
+    ADR-0007: each sale carries its clock-stamped segment explicitly.
     """
     day = date(2026, 6, 27)
     sales = [
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
-        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30")),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"), segment=Segment.CAFE),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=day, sell_price=D("30"), segment=Segment.BAR),
     ]
     source = SeededSource(
         sales=sales, recipes=[_chang_recipe(), _latte_recipe()], cost=_cost()

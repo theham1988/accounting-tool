@@ -500,6 +500,58 @@ def test_period_mode_flags_a_segment_with_negative_cm_red(
     assert "RED" in html
 
 
+def test_period_mode_renders_unmapped_revenue_as_flagged_line_per_segment(
+    tmp_path: Path, yesterday: date, today: date
+) -> None:
+    """Per-card honest labelling (ADR-0007 / issue #73).
+
+    An unmapped sale lands in its **clock** segment's card as a flagged
+    line — its revenue shows on the card (so a partner sees *which* segment
+    the uncosted revenue sits in) but is excluded from the card's CM. The
+    card's CM stays clean and defensible (the slice-07 rule, applied per-
+    card post-#73).
+
+    Worked example: a Chang at ฿120 sold at 19:00 (bar window, mapped) and
+    an unmapped 'mystery' item at ฿90 sold at 10:00 (cafe window). The
+    cafe card carries ฿90 of flagged revenue (no contribution to CM); the
+    bar card carries ฿120 reliable revenue and ฿85 CM, no flagged line.
+    """
+    from tangerine.types import Segment
+
+    start = yesterday - timedelta(days=6)
+    sales = [
+        _sale_record(
+            receipt_number="r-1",
+            item_id="chang-draft-500",
+            day=start,
+            price="120",
+            segment=Segment.BAR,
+        ),
+        _sale_record(
+            receipt_number="r-2",
+            item_id="mystery",
+            day=start,
+            price="90",
+            segment=Segment.CAFE,
+        ),
+    ]
+    app = _build_app(tmp_path, today=today, sales=sales)
+    client = _authed_client(app)
+
+    html = client.get(
+        f"/review?mode=period&start={start.isoformat()}&end={yesterday.isoformat()}"
+    ).text
+    segment_section = html.split("<!--section:segment-cm-->")[1].split(
+        "<!--/section:segment-cm-->"
+    )[0]
+
+    # The cafe card carries ฿90 of flagged revenue as a labelled line.
+    assert "segment-cm__flagged" in segment_section
+    assert "90.00" in segment_section
+    # A partner-readable honest label names the uncosted portion.
+    assert "uncosted" in segment_section.lower() or "unmapped" in segment_section.lower()
+
+
 # --- AC: the Admin destination gathers the config surfaces ----------------------
 
 
