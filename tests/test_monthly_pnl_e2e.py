@@ -316,20 +316,21 @@ def test_monthly_revenue_per_segment_recognised_by_timestamp(
     Worked example over June 2026: 2x Chang (bar) @ 120 = 240 bar revenue;
     1x Latte (cafe) @ 120 = 120 cafe revenue. A sale dated May 31 and one
     dated July 1 are excluded (revenue is recognised by transaction timestamp
-    per the PRD COGS-recognition note). Segment comes from the recipe (slice 07
-    rule).
+    per the PRD COGS-recognition note). Segment is the sale's clock-stamped
+    segment (ADR-0007 pure-clock rule; pre-#73 this came from the recipe).
     """
     weigh_ins = [
         KegWeighIn(brand_id="chang", weighed_on=month_start, gross_weight_g=D("25000")),
         KegWeighIn(brand_id="chang", weighed_on=month_end, gross_weight_g=D("25000")),
     ]
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 10), sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 20), sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=date(2026, 6, 15), sell_price=D("120")),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 10), sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 20), sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=date(2026, 6, 15), sell_price=D("120"), segment=Segment.CAFE),
         # Outside the month -> excluded from June revenue.
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 5, 31), sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 7, 1), sell_price=D("120")),
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 5, 31), sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 7, 1), sell_price=D("120"), segment=Segment.BAR),
     ]
 
     pnl = compute_monthly_pnl(
@@ -478,9 +479,10 @@ def test_monthly_segment_cm_is_revenue_minus_accrual_cogs(
         CafeStockCount(sku_id="milk-fresh", quantity=D("3000"), timestamp=month_end),
     ]
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 10), sell_price=D("120")),
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 20), sell_price=D("120")),
-        Sale(item_id="espresso-latte", timestamp=date(2026, 6, 15), sell_price=D("120")),
+        # ADR-0007: clock-stamped segments — the recipe's segment is menu-shape only.
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 10), sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, 20), sell_price=D("120"), segment=Segment.BAR),
+        Sale(item_id="espresso-latte", timestamp=date(2026, 6, 15), sell_price=D("120"), segment=Segment.CAFE),
     ]
 
     pnl = compute_monthly_pnl(
@@ -938,12 +940,24 @@ def test_end_to_end_monthly_pnl_full_reconciliation(
         ),
     ]
     # 100 Chang sales + 80 Latte sales, spread across June days.
+    # ADR-0007: each sale carries its clock-stamped segment — Chang is bar
+    # (draught pour's natural shift), Latte is cafe.
     sales = [
-        Sale(item_id="chang-draft-500", timestamp=date(2026, 6, d), sell_price=D("120"))
+        Sale(
+            item_id="chang-draft-500",
+            timestamp=date(2026, 6, d),
+            sell_price=D("120"),
+            segment=Segment.BAR,
+        )
         for d in ((list(range(1, 31)) * 4)[:100])  # 100 sales across the month
     ]
     sales += [
-        Sale(item_id="espresso-latte", timestamp=date(2026, 6, d), sell_price=D("120"))
+        Sale(
+            item_id="espresso-latte",
+            timestamp=date(2026, 6, d),
+            sell_price=D("120"),
+            segment=Segment.CAFE,
+        )
         for d in ((list(range(1, 31)) * 3)[:80])  # 80 sales across the month
     ]
     fixed_costs = [

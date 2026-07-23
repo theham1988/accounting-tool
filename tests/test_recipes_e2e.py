@@ -672,7 +672,15 @@ def test_multi_input_recipe_costs_each_ingredient(day: date) -> None:
             )
         ]
     )
-    sales = [Sale(item_id="espresso-latte", timestamp=day, sell_price=D("120"))]
+    # ADR-0007: clock-stamped CAFE — the recipe's segment is menu-shape only.
+    sales = [
+        Sale(
+            item_id="espresso-latte",
+            timestamp=day,
+            sell_price=D("120"),
+            segment=Segment.CAFE,
+        )
+    ]
 
     margins = compute_item_margins(
         sales=sales, recipes=recipes, cost=cost, day=day

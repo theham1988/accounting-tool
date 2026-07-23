@@ -69,6 +69,17 @@ Covering costs with {{ sm.contribution_margin | money }} THB left after {{ sm.va
         </div>
       </dl>
       <p class="segment-cm__one-liner">{{ segment_one_liner(sm) }}</p>
+      {# ADR-0007 (#73): per-card honest-labelling line. Unmapped /
+         unknown-price revenue that landed in this segment by clock is shown
+         here, **excluded from the card's CM** (a flagged row's COGS is
+         unknown, so it cannot honestly contribute). Surfaced per-card so a
+         partner sees which segment the uncosted revenue sits in. The
+         ``segment-cm__flagged`` class is the test hook. #}
+      {% if sm.flagged_revenue > 0 %}
+      <p class="segment-cm__flagged" title="Revenue from unmapped items — its COGS is unknown, so it is excluded from this card's contribution margin">
+        + {{ sm.flagged_revenue | money }} THB uncosted revenue in this segment
+      </p>
+      {% endif %}
     </li>
   {% endfor %}
   </ul>
