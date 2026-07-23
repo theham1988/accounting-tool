@@ -39,7 +39,6 @@ from tangerine.loyverse.parser import (
     parse_items_snapshot,
     parse_receipts_to_sales,
 )
-from tangerine.loyverse.store import CAFE_CATEGORY_ID
 
 D = Decimal
 
@@ -114,7 +113,12 @@ def test_item_margin_row_carries_recipe_segment(day: date) -> None:
 
 def test_loyverse_item_segment_tagged_from_category() -> None:
     """The Loyverse menu parser tags each item cafe/bar from its category
-    (default tagging source per issue 07)."""
+    (default tagging source per issue 07).
+
+    Under the configurable category mapping (ADR-0009), the parser resolves
+    cafe against the configured set; an explicit ``cafe_category_ids`` here
+    stands in for the production UUID the sync reads from the environment.
+    """
     snapshot = parse_items_snapshot(
         {
             "items": [
@@ -129,13 +133,14 @@ def test_loyverse_item_segment_tagged_from_category() -> None:
                 {
                     "id": "i-cafe",
                     "item_name": "Latte",
-                    "category_id": CAFE_CATEGORY_ID,
+                    "category_id": "cat-cafe",
                     "variants": [
                         {"variant_id": "v", "option1_value": "Latte", "sku": "l", "default_price": 80}
                     ],
                 },
             ]
-        }
+        },
+        cafe_category_ids=frozenset({"cat-cafe"}),
     )
 
     # Menu rows are keyed by variant SKU; each carries its item's segment.

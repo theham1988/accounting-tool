@@ -73,6 +73,20 @@ Fill in a long random `TANGERINE_AUTH_PASSPHRASE`, a random
 `TANGERINE_SIGNING_SECRET` (`openssl rand -hex 32`), and the Loyverse
 credentials. Keep `TANGERINE_COOKIE_SECURE=1` (we serve over HTTPS).
 
+`LOYVERSE_CAFE_CATEGORY_IDS` is the one non-secret Loyverse value. It is the
+comma-separated list of Loyverse category UUIDs that tag menu items as the
+cafe segment (ADR-0009); every other category defaults to bar. Leaving it
+blank tags every item bar — correct for a fresh deployment, sharper once the
+real cafe UUID is configured. To find it:
+
+```bash
+sudo -u tangerine bash -c 'set -a; . /etc/tangerine/env; set +a; \
+    cd /opt/tangerine/app && .venv/bin/python scripts/dump_loyverse_items.py' \
+    > /tmp/menu.tsv
+# Read the category_id column for the cafe items, then paste it into
+# LOYVERSE_CAFE_CATEGORY_IDS in /etc/tangerine/env and restart.
+```
+
 > The systemd unit and the cron jobs both read this one file. It is the only
 > place credentials exist — never in the repo, never in the database.
 

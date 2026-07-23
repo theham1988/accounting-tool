@@ -31,8 +31,8 @@ class MenuItem:
     recipe mappings key on, so menu rows join to sales and mappings. A
     multi-variant Loyverse item yields one ``MenuItem`` per variant.
     ``sell_price`` is that variant's price at sync time. ``segment`` is
-    resolved by the parser from the item's category (cafe category -> cafe,
-    else bar); slice 07 generalises segment tagging.
+    resolved by the parser from the item's category: cafe when the category
+    id is in the configured cafe set, else bar (ADR-0009).
     """
 
     item_id: str
@@ -177,10 +177,18 @@ def diff_menu(
     return changes
 
 
-# Category id that maps to the cafe segment. Loyverse category ids are opaque;
-# the venue has one cafe and one bar category. Slice 02 hard-codes the cafe
-# category id; slice 07 (segment tagging) generalises this.
-CAFE_CATEGORY_ID = "cat-cafe"
+#: Loyverse category ids that map to the cafe segment. The venue has one cafe
+#: and one bar category today; Loyverse allows sub-categories, so the shape is
+#: a set. The ids are opaque UUIDs unique to this venue's Loyverse account, so
+#: they cannot ship in the repo — the production set is configured at runtime
+#: via ``LOYVERSE_CAFE_CATEGORY_IDS`` (env, comma-separated) and passed to
+#: :func:`tangerine.loyverse.parser.parse_items_snapshot` by the sync. The
+#: default empty set makes every item bar — the honest restatement of the
+#: slice-02 placeholder bug (``CAFE_CATEGORY_ID = "cat-cafe"`` never matched a
+#: real UUID, so every item was bar *de facto*). With the real cafe UUIDs
+#: configured, items in that category carry the cafe segment; everything else
+#: is bar by construction (two segments, no third). See ADR-0009.
+DEFAULT_CAFE_CATEGORY_IDS: frozenset[str] = frozenset()
 
 
 class InMemoryLoyverseStore:

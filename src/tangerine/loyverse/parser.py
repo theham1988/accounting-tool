@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 from ..types import Money, Sale, Segment
 from ..segments import segment_for_timestamp
 from .payloads import LoyverseItem, LoyverseLineItem, LoyverseVariant
-from .store import CAFE_CATEGORY_ID, MenuItem, MenuSnapshot, SaleRecord
+from .store import DEFAULT_CAFE_CATEGORY_IDS, MenuItem, MenuSnapshot, SaleRecord
 
 #: The venue's local timezone. Loyverse ``created_at`` is always UTC; every
 #: venue-facing decision (which day a sale belongs to, which shift it falls in)
@@ -181,7 +181,10 @@ def variant_price(variant: LoyverseVariant, *, store_id: str | None = None) -> D
 
 
 def parse_items_snapshot(
-    payload: dict[str, Any], *, store_id: str | None = None
+    payload: dict[str, Any],
+    *,
+    store_id: str | None = None,
+    cafe_category_ids: frozenset[str] = DEFAULT_CAFE_CATEGORY_IDS,
 ) -> MenuSnapshot:
     """Turn an ``/items`` response into a ``MenuSnapshot`` (current menu).
 
@@ -195,7 +198,15 @@ def parse_items_snapshot(
     prices) yields one row per variant; an item with no variants still
     yields one row, keyed by the item id and priced at zero.
 
-    Segment is cafe when the item's category is the cafe category, else bar.
+    Segment is cafe when the item's ``category_id`` is in ``cafe_category_ids``
+    (the configured set of Loyverse cafe category UUIDs), else bar. The
+    default empty set tags every item bar — the honest restatement of the
+    slice-02 placeholder bug (ADR-0009). Under pure-clock segmentation
+    (#65 / ADR-0007) this segment no longer drives revenue splitting, but it
+    still feeds menu-shape views (``/items``, ``/skus``) and the sold-as-is
+    quick-create (which inherits it onto the sold SKU), so correctness here
+    matters even after the clock won the revenue-side call.
+
     ``store_id`` disambiguates a variant's per-store price (see
     :func:`variant_price`); the sync orchestrator passes the configured
     credentials' store id.
@@ -207,7 +218,7 @@ def parse_items_snapshot(
         name = raw.get("item_name", "")
         segment = (
             Segment.CAFE
-            if raw.get("category_id") == CAFE_CATEGORY_ID
+            if raw.get("category_id") in cafe_category_ids
             else Segment.BAR
         )
         variants = raw.get("variants") or []
