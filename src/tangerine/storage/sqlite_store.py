@@ -83,14 +83,27 @@ class SqliteLoyverseStore:
 
         Re-inserting a record with the same key is a no-op (``INSERT OR IGNORE``
         against the primary key), so a replayed sync never double-counts.
+
+        ``created_at`` is the raw Loyverse UTC timestamp (issue #66), kept so
+        the date/segment derived from it can be re-derived by a future fix
+        without re-fetching the receipt. Stored as ISO-8601 UTC with a trailing
+        ``Z`` to match Loyverse's wire format, preserving the source's
+        millisecond precision.
         """
         with self._lock, self._conn:
             for rec in records:
+                created_at = (
+                    rec.created_at_utc.astimezone(timezone.utc)
+                    .strftime("%Y-%m-%dT%H:%M:%S")
+                    + f".{rec.created_at_utc.microsecond // 1000:03d}Z"
+                    if rec.created_at_utc is not None
+                    else None
+                )
                 self._conn.execute(
                     "INSERT OR IGNORE INTO sales"
                     " (receipt_number, line_id, item_id, timestamp,"
-                    "  sell_price, quantity, segment)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "  sell_price, quantity, segment, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         rec.receipt_number,
                         rec.line_id,
@@ -99,6 +112,7 @@ class SqliteLoyverseStore:
                         str(rec.sale.sell_price),
                         rec.sale.quantity,
                         rec.sale.segment.value if rec.sale.segment else None,
+                        created_at,
                     ),
                 )
 

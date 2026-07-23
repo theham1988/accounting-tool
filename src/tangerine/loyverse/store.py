@@ -51,11 +51,18 @@ class SaleRecord:
     — even when two genuinely different sales of the same SKU happen on the
     same day at the same price and quantity (which a value-based key would
     wrongly collapse).
+
+    ``created_at_utc`` is the raw Loyverse ``created_at`` (UTC) the record was
+    parsed from. Stored alongside the derived ``Sale`` (issue #66) so a future
+    fix can re-derive ``Sale.timestamp`` and ``Sale.segment`` from it without
+    re-fetching the receipt from Loyverse. ``None`` only on records built
+    directly by tests; production syncs always populate it.
     """
 
     sale: Sale
     receipt_number: str
     line_id: str
+    created_at_utc: datetime | None = None
 
     @property
     def source_ref(self) -> tuple[str, str]:

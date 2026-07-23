@@ -543,9 +543,13 @@ def _receipts_payload(created_at: str, *, sku: str = "mystery") -> dict[str, obj
 
 
 def test_parser_stamps_cafe_segment_for_daytime_unmapped_sale() -> None:
-    """An unmapped sale created at 10:15 UTC is stamped cafe by the parser."""
+    """An unmapped sale created at 04:15 UTC (11:15 local) is stamped cafe.
+
+    Issue #66: the parser converts Loyverse ``created_at`` (UTC) to Asia/Bangkok
+    before shift-stamping. 11:15 local is inside the ``[8, 17)`` cafe window.
+    """
     records = parse_receipts_to_sales(
-        _receipts_payload("2026-06-24T10:15:00.000Z")
+        _receipts_payload("2026-06-24T04:15:00.000Z")
     )
 
     assert len(records) == 1
@@ -553,9 +557,16 @@ def test_parser_stamps_cafe_segment_for_daytime_unmapped_sale() -> None:
 
 
 def test_parser_stamps_bar_segment_for_evening_unmapped_sale() -> None:
-    """An unmapped sale created at 19:00 UTC is stamped bar by the parser."""
+    """An unmapped sale created at 13:00 UTC (20:00 local) is stamped bar.
+
+    Issue #66: 20:00 local is inside the ``[17, 22)`` bar window. Pre-fix this
+    used 19:00 UTC, which stamped bar only because the UTC hour is past 17;
+    under the local-time fix 19:00 UTC is 02:00 local (out-of-hours) — still
+    bar, but for a different reason. Pinning 20:00 local makes the bar-window
+    intent explicit.
+    """
     records = parse_receipts_to_sales(
-        _receipts_payload("2026-06-24T19:00:00.000Z")
+        _receipts_payload("2026-06-24T13:00:00.000Z")
     )
 
     assert len(records) == 1
