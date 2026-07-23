@@ -471,10 +471,19 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     built once, this day costed via ``source.cost_book_as_of(day)`` — the
     prices in effect on the day being costed, not at render time, so a cost
     edit does not re-state history; Wave 2 slice 1, ADR-0004 decision 2).
-    The rows are then rolled up exactly as before: flagged
-    ``unmapped`` / ``unknown_price`` rows are excluded from the totals (their
-    COGS is unknown) and their revenue is summed into ``flagged_revenue`` so
-    it stays visible.
+
+    Headline ``total_revenue`` is the **gross-sales** headline (issue #71,
+    reversing the slice-04 reliable-rows-only rule for revenue, ADR-0008):
+    every sale's revenue lands in it, mapped or not, so the number a partner
+    reads equals Loyverse Gross sales for the same day. ``total_cogs`` stays
+    recipe-cost over reliable rows only — a flagged row's COGS is unknown.
+    ``total_gross_margin = total_revenue - total_cogs`` follows, so the hero
+    stays arithmetically consistent with the two numbers beside it; the
+    implicit assumption (flagged revenue carries zero COGS) overstates the
+    margin on the uncosted portion, and the template's "includes N THB of
+    uncosted revenue" callout is the honest labelling for that. The
+    ``flagged_revenue`` field still surfaces the residue so the
+    needs-attention card and the headline callout share one source of truth.
 
     Per-segment contribution margins (slice 07) are populated from the
     reliable rows only: flagged rows have unknown COGS, so booking their
@@ -484,12 +493,24 @@ def compute_daily_margin(source: Source, day: date) -> DailyMargin:
     rows = margins_over_range(source, day, day)[0].item_margins
     counted = [im for im in rows if not im.excluded_from_totals]
     flagged = [im for im in rows if im.excluded_from_totals]
+    # Gross-sales headline (issue #71, ADR-0008): every sale's revenue lands
+    # in ``total_revenue``, mapped or not, so the partner reads Loyverse
+    # Gross sales. ``total_cogs`` stays recipe-cost over reliable rows only;
+    # ``total_gross_margin = total_revenue - total_cogs`` follows, so the
+    # hero stays arithmetically consistent with the two numbers beside it.
+    # The implicit assumption — flagged revenue carries zero COGS —
+    # overstated the margin on the uncosted portion; the template's "includes
+    # N THB of uncosted revenue" callout is the honest labelling for that.
+    # ``flagged_revenue`` still surfaces the residue so the needs-attention
+    # card and the headline callout share one source of truth.
+    total_cogs = sum((im.cogs for im in counted), Money("0"))
+    total_revenue = sum((im.revenue for im in rows), Money("0"))
     return DailyMargin(
         day=day,
         item_margins=rows,
-        total_revenue=sum((im.revenue for im in counted), Money("0")),
-        total_cogs=sum((im.cogs for im in counted), Money("0")),
-        total_gross_margin=sum((im.gross_margin for im in counted), Money("0")),
+        total_revenue=total_revenue,
+        total_cogs=total_cogs,
+        total_gross_margin=total_revenue - total_cogs,
         flagged_revenue=sum((im.revenue for im in flagged), Money("0")),
         segment_margins=segment_margins_from_items(counted, flagged),
     )

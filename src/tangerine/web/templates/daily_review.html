@@ -160,7 +160,14 @@
        7-day-avg-vs-goal progress bar with a status line (tango when short
        of goal, teal when MET). Computed numbers come from the namespace at
        the top of the block so the bar tracks the same figures the partner
-       reads. #}
+       reads.
+
+       Issue #71 honesty callout: when ``review.daily.flagged_revenue`` is
+       non-zero, the headline REVENUE includes sales whose COGS the tool
+       cannot compute (unmapped items, or items with an unpriced ingredient).
+       That revenue is in the gross-sales headline so it ties to Loyverse,
+       but the gross-margin number implicitly zero-costs it — surfacing the
+       amount here names the assumption instead of hiding it in the math. #}
     <!--section:headline-->
     <section class="headline headline--card">
       <p class="headline__hero-label">Gross margin</p>
@@ -182,6 +189,14 @@
           <dd>{% if ns.margin_pct is not none %}{{ ns.margin_pct }}%{% else %}—{% endif %}</dd>
         </div>
       </dl>
+      {% if review.daily.flagged_revenue > 0 %}
+      <p class="headline__uncosted-note">
+        Revenue includes <strong>{{ review.daily.flagged_revenue | money }} THB</strong>
+        of sales whose cost the tool cannot compute — the gross margin
+        implicitly zero-costs them. Map the items in
+        <a href="#needs-attention">Needs a fix</a> to cost them.
+      </p>
+      {% endif %}
 
       <div class="headline__goal">
         <div class="headline__goal-bar" role="progressbar"
@@ -203,12 +218,13 @@
     {% include "_segment_cm.html" %}
 
     {% if needs_attention %}
-    <section class="needs-attention needs-attention--card">
+    <section class="needs-attention needs-attention--card" id="needs-attention">
       <h2>Needs a fix</h2>
       <!--section:needs-attention-->
       <p class="needs-attention__note">
-        These items sold but their cost could not be computed, so their revenue
-        is left out of the headline totals above.
+        These items sold but their cost could not be computed. Their revenue
+        is in the headline (so it ties to Loyverse Gross sales) but their
+        COGS is unknown — the gross margin implicitly zero-costs them.
         To fix this, map the item to a SKU in item coverage (or add the
         missing ingredient cost in the SKU&rsquo;s editor) — the links below
         take you there.

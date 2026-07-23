@@ -48,11 +48,14 @@ aggregated over the period. The accrual engines (`monthly_pnl.py`'s
 purchases/inventory path, `keg_inventory.py`, `cafe_stock.py`) stay built
 and E2E-tested but are **dormant**: not wired to any surface this wave.
 The cash-flow/payables view (PRD story 24) is dropped — it has no meaning
-without `purchases`. Unmapped items are handled as the daily view handles
-them (revenue excluded from headline totals, surfaced in a needs-attention
-section), because recipe-cost COGS is unknown for them; the accrual view's
-reason for *including* unmapped revenue (consumption-derived COGS catches
-their cost regardless of the sale) no longer applies.
+without `purchases`. Unmapped items were originally handled as the daily
+view handles them — revenue excluded from headline totals, surfaced in a
+needs-attention section, because recipe-cost COGS is unknown for them;
+the accrual view's reason for *including* unmapped revenue
+(consumption-derived COGS catches their cost regardless of the sale) no
+longer applies. *(The revenue-line part of this rule is superseded by
+issue #71 / ADR-0008: unmapped revenue now joins the headline so Books
+ties to Loyverse Gross sales. COGS and segment CM stay reliable-only.)*
 
 Rejected: keep accrual and surface the capture flows minus OCR (Wave 2
 becomes capture UX, not reporting; manual purchase entry is the exact

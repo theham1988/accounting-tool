@@ -264,11 +264,21 @@ recipe-cost model is the tool's live COGS. The trade-off (losing the
 waste/yield-loss signal and period-matched costing) is recorded in
 ADR-0004.
 
-Unmapped items are handled as the daily view handles them — their revenue
-is excluded from headline totals (recipe-cost COGS is unknown for them)
-and surfaced in a needs-attention section. The accrual monthly view's
-reason for *including* unmapped revenue (consumption-derived COGS catches
-their cost regardless of the sale) no longer applies.
+**The headline is gross-sales** (issue #71, ADR-0008): unmapped and
+unknown-price sales — every sale — lands in the headline REVENUE on
+Day / Period / Month, so Books ties to Loyverse Gross sales for the same
+range. COGS and gross margin stay recipe-cost over reliable rows only;
+`gross_margin = revenue − cogs` by construction, so the implicit
+assumption (flagged revenue carries zero COGS) overstates the margin on
+the uncosted portion. The headline card carries an honesty callout when
+flagged revenue is present — "includes N THB of sales whose cost the
+tool cannot compute" — and links into Needs a fix. Per-segment
+contribution margin cards stay reliable-only (PRD user story 20: a
+flagged row's COGS is unknown, so its revenue cannot honestly land in a
+segment's CM). The fix path — `flagged_revenue`, the `needs_attention`
+section, the needs-attention card — is unchanged: it still surfaces the
+same residue as the fix path; the headline just no longer pretends the
+uncosted revenue isn't part of the day's take.
 
 ## As-of-date pricing
 

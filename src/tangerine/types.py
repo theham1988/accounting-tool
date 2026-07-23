@@ -192,15 +192,22 @@ class ItemMargin:
 class DailyMargin:
     """Roll-up of all item margins for a single day, across all segments.
 
-    Totals are flat (not split by segment) and include only items whose margin
-    is reliable: rows flagged ``unmapped`` (no recipe) or ``unknown_price``
-    (an ingredient SKU has no approved price) are excluded from
-    ``total_revenue``/``total_cogs``/``total_gross_margin`` because their COGS
-    is unknown and booking their revenue as margin would over-state
-    profitability. The revenue sitting in those flagged rows is surfaced
-    separately as ``flagged_revenue`` so it is visible, not silently dropped.
-    Per-item segment lives on each ``ItemMargin``; per-segment contribution
-    margin is added in a later slice.
+    Headline ``total_revenue`` is the **gross-sales** headline (issue #71,
+    reversing the slice-04 reliable-rows-only rule for revenue, ADR-0008):
+    every sale's revenue lands in it — mapped or not — so the number a
+    partner reads equals Loyverse Gross sales for the same day.
+    ``total_cogs`` stays recipe-cost over reliable rows only (rows flagged
+    ``unmapped`` / ``unknown_price`` have unknown COGS); ``total_gross_margin
+    = total_revenue - total_cogs`` by construction, so the headline trio is
+    arithmetically consistent. The implicit assumption (flagged revenue
+    carries zero COGS) overstates the margin on the uncosted portion, and
+    the template's "includes N THB of uncosted revenue" callout is the
+    honest labelling for that. The revenue sitting in those flagged rows is
+    surfaced separately as ``flagged_revenue`` so it stays visible as the
+    needs-attention fix path; it names the portion of ``total_revenue`` the
+    flagged items account for (not an additional sum). Per-item segment
+    lives on each ``ItemMargin``; per-segment contribution margin is added
+    in a later slice.
     """
 
     day: date
