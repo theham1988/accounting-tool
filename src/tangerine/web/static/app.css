@@ -2685,6 +2685,279 @@ a.trend-bar:hover .trend-bar__fill {
   margin-bottom: var(--tb-space-4);
 }
 
+/* --- Wave 3 #88: report-surface component vocabulary (look-lift slice 2) ---
+   The lifted vocabulary for the report surfaces (Period, Month, and the
+   Profit-Report screen #84). Additions only — no existing class is rewritten.
+   Every value consumes a --tb-* token (ADR-0006); no hardcoded hex anywhere.
+   `.tb-main` (mobile 480px) and `.tb-main--wide` (960px) stay unchanged;
+   `.tb-main--report` is the third width, parallel to them. The classes land
+   dead here and are proven by consumption in slices 3 and 4. */
+
+/* In-page Tangerine Taps wordmark — distinct from the "Tangerine Books"
+   chrome header above it. Sits inside the report content column. */
+.report-header {
+  margin: 0 0 var(--tb-space-3);
+  padding-bottom: var(--tb-space-3);
+  border-bottom: var(--tb-keyline) solid var(--tb-tango);
+}
+
+.report-header__h1 {
+  margin: 0;
+  font-family: var(--tb-font-display);
+  font-size: 1.75rem;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.02em;
+  line-height: var(--tb-leading-tight);
+}
+
+/* The "Taps" word wears tango. */
+.report-header__h1 b {
+  color: var(--tb-tango);
+  font-weight: var(--tb-weight-bold);
+}
+
+/* The "— Profit Report" suffix drops back to the body face. */
+.report-header__h1 .report-header__suffix {
+  font-family: var(--tb-font-body);
+  font-weight: var(--tb-weight-regular);
+  color: var(--tb-ink-soft);
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.report-header__sub {
+  margin: 0.3rem 0 0;
+  font-size: var(--tb-size-small);
+  color: var(--tb-ink-soft);
+  letter-spacing: 0.02em;
+}
+
+/* Editorial / honesty callout — tango wash + 3px tango keyline. Distinct from
+   .stale-banner (mustard alert) and .headline__uncosted-note (inline footnote). */
+.report-banner {
+  background: color-mix(in srgb, var(--tb-tango) 9%, var(--tb-paper-raised));
+  border: var(--tb-keyline) solid var(--tb-tango);
+  padding: var(--tb-space-3) var(--tb-space-4);
+  margin: 0 0 var(--tb-space-4);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.report-banner__kicker {
+  display: inline;
+  font-family: var(--tb-font-accent);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tb-tango-ink);
+  font-size: 0.8rem;
+  margin-right: 0.4rem;
+}
+
+.report-banner b {
+  font-weight: var(--tb-weight-bold);
+}
+
+/* The report-surface card register — square, 3px ink keyline, cream-raised.
+   Wraps every chart and P&L panel so they share one card form. */
+.report-panel {
+  background: var(--tb-paper-raised);
+  border: var(--tb-keyline) solid var(--tb-ink);
+  padding: var(--tb-space-4);
+  margin: 0 0 var(--tb-space-4);
+}
+
+.report-panel__title {
+  margin: 0 0 var(--tb-space-3);
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.01em;
+}
+
+/* Kicker variant drops to body face, uppercase terracotta. */
+.report-panel__title--kicker {
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--tb-terracotta);
+}
+
+.report-panel__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--tb-ink-soft);
+  line-height: 1.5;
+}
+
+/* Responsive tile grid — reserved for the Profit-Report screen (#84); ships
+   now so #84 composes against a stable token. No Period/Month surface renders
+   tiles in this spec. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 var(--tb-space-4);
+}
+
+.tile {
+  background: var(--tb-paper-raised);
+  border: var(--tb-keyline) solid var(--tb-ink);
+  padding: 0.9rem 1rem;
+}
+
+.tile__label {
+  font-size: var(--tb-size-small);
+  color: var(--tb-ink-soft);
+  letter-spacing: 0.02em;
+}
+
+.tile__value {
+  font-family: var(--tb-font-display);
+  font-size: 1.9rem;
+  font-weight: var(--tb-weight-bold);
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.tile__sub {
+  font-size: 0.8rem;
+  color: var(--tb-ink-soft);
+  margin-top: 0.25rem;
+}
+
+.tile--good .tile__value { color: var(--tb-teal); }
+.tile--bad .tile__value { color: var(--tb-red); }
+.tile--pend .tile__value { color: var(--tb-ink-soft); }
+
+/* P&L table. Joins .segment-cm / .period-days__table in the 1px ink internal-
+   rules register. Row variants make the two-lens pattern possible (#85). */
+.pnl {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl td {
+  padding: 0.45rem 0.5rem;
+}
+
+.pnl td.num {
+  text-align: right;
+}
+
+.pnl__row--major td {
+  font-weight: var(--tb-weight-bold);
+  border-top: var(--tb-keyline-thin) solid var(--tb-ink);
+}
+
+.pnl__row--sub td {
+  color: var(--tb-ink-soft);
+  padding-left: 1.6rem;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+  font-size: 0.9rem;
+}
+
+.pnl__row--total td {
+  font-weight: var(--tb-weight-bold);
+  background: color-mix(in srgb, var(--tb-paper-sunk) 50%, transparent);
+}
+
+.pnl__row--ghost td {
+  color: var(--tb-ink-soft);
+  font-size: 0.85rem;
+}
+
+.pnl__row--neg td.num {
+  color: var(--tb-red);
+}
+
+.pnl__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.82rem;
+  color: var(--tb-ink-soft);
+  line-height: 1.5;
+}
+
+.pnl__note i {
+  font-style: italic;
+}
+
+/* Chart legend + swatch. Swatch is square (--tb-radius: 0), not the HTML's 3px. */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  font-size: 0.85rem;
+  color: var(--tb-ink-soft);
+  margin: 0 0 0.5rem;
+}
+
+.legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+}
+
+/* Split panel pair — single column on mobile, two columns ≥720px.
+   Written mobile-first to match the file's convention. */
+.split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.9rem;
+}
+
+@media (min-width: 720px) {
+  .split {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* SVG chart-text classes — scoped under `svg .chart__*` so they don't collide
+   with any future HTML-scoped class. Space Mono via the existing body token;
+   no --tb-font-data token is introduced (decision 5 of #80). */
+svg .chart__grid {
+  stroke: var(--tb-ink);
+  stroke-width: 1;
+  opacity: 0.35;
+}
+
+svg .chart__tick {
+  font: 11px var(--tb-font-body);
+  fill: var(--tb-ink-soft);
+}
+
+svg .chart__axis-label {
+  font: 12.5px var(--tb-font-body);
+  fill: var(--tb-ink);
+}
+
+svg .chart__value-label {
+  font: var(--tb-weight-bold) 12px var(--tb-font-body);
+  fill: var(--tb-ink);
+}
+
+svg .chart__peak-label {
+  font: var(--tb-weight-bold) 11px var(--tb-font-body);
+  fill: var(--tb-ink-soft);
+}
+
+svg .chart__bar {
+  cursor: pointer;
+}
+
+svg .chart__bar:hover {
+  filter: brightness(1.08);
+}
+
 /* Respect reduced-motion / no animations (user story 45). */
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -2724,6 +2997,13 @@ a.trend-bar:hover .trend-bar__fill {
   /* Wide tables get more room than the reading column. */
   .tb-main--wide {
     max-width: var(--tb-content-max-wide);
+  }
+
+  /* Report surfaces (Period / Month / Profit-Report) get a third width so the
+     P&L table, daily-revenue chart, and spend-by-category chart can breathe
+     side-by-side. Parallels .tb-main--wide; .tb-main (mobile) stays default. */
+  .tb-main--report {
+    max-width: var(--tb-content-max-report);
   }
 
   .review.coverage,
