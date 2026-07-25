@@ -45,6 +45,20 @@
   --tb-health-yellow: #d99a24;
   --tb-health-red: #b8371f;
 
+  /* Chart-series palette — eight-colour set for multi-series charts (legend
+     swatches, daily-revenue bars, spend-by-category bars). Light-mode only:
+     Books has no dark mode. --tb-series-1 is the single-series default for
+     daily-revenue and bestseller charts; tango never appears as a data fill
+     (it stays reserved as the brand accent). */
+  --tb-series-1: #2a78d6;        /* blue — single-series chart default */
+  --tb-series-2: #008300;
+  --tb-series-3: #e87ba4;
+  --tb-series-4: #eda100;
+  --tb-series-5: #1baf7a;
+  --tb-series-6: #eb6834;
+  --tb-series-7: #4a3aa7;
+  --tb-series-8: #e34948;
+
   /* Pure white/black kept as tokens so components never reach past the set */
   --tb-white: #ffffff;
   --tb-black: #000000;

@@ -24,6 +24,11 @@
   /* Layout */
   --tb-content-max: 480px;      /* mobile-first column; a phone is the target */
   --tb-content-max-wide: 960px; /* wide tables (coverage, audit) get more room */
+  /* Report content column — Period / Month / Profit-Report get a third width
+     so the P&L table, daily-revenue chart, and spend-by-category chart can
+     breathe side-by-side rather than stacking. 1040px = HTML's 1060px minus
+     Books' shell side padding. */
+  --tb-content-max-report: 1040px;
   --tb-header-height: 3.25rem;  /* sticky app header */
   --tb-bottomnav-height: 3.5rem;/* sticky four-cell bottom nav */
 }
