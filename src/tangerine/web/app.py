@@ -901,6 +901,150 @@ def create_app(
             return HTMLResponse("Unknown fixed cost.", status_code=404)
         return RedirectResponse(url="/admin/fixed-costs", status_code=303)
 
+    # --- Suppliers admin (issue #94) ------------------------------------------
+    #
+    # The controlled vendor list the cash-spend entry surface (slice #96)
+    # will FK into. Mirrors the fixed-costs admin shape, minus recurring /
+    # one-off / ended-at — vendors have no lifecycle, just CRUD. Every write
+    # is audit-logged through the existing machinery (``table_name=
+    # 'suppliers'``), so ``/audit`` shows the change and Revert works
+    # without any new revert code.
+
+    def _suppliers_page_context(
+        request: Request,
+        *,
+        form_error: str | None = None,
+        form_values: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the suppliers admin page."""
+        cfg: SqliteConfigStore = app.state.config_store
+        return {
+            "request": request,
+            "suppliers": cfg.suppliers(),
+            "form_error": form_error,
+            "form_values": form_values,
+        }
+
+    @app.get("/admin/suppliers", response_class=HTMLResponse)
+    def suppliers_page(request: Request) -> HTMLResponse:
+        """The vendor list (issue #94). One page: add form + current rows."""
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="suppliers.html",
+            context=_suppliers_page_context(request),
+        )
+
+    @app.post("/admin/suppliers", response_model=None)
+    def create_supplier(
+        request: Request,
+        supplier_id: str = Form(""),
+        name: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Add a new vendor from the form, audit-logged.
+
+        On a validation failure the page re-renders (200) with the inline
+        error and the partner's submitted values echoed back — never a bare
+        400, never a silent save (the Wave 1.5 admin-surface pattern). A
+        duplicate ``supplier_id`` re-renders with the same shape: the PK is
+        the FK target for #96's cash-spend rows, so two "makro" rows would
+        silently corrupt per-vendor aggregation.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        supplier_id = supplier_id.strip()
+        name = name.strip()
+
+        def _rerender_with_error(message: str) -> HTMLResponse:
+            return t.TemplateResponse(
+                request=request,
+                name="suppliers.html",
+                context=_suppliers_page_context(
+                    request,
+                    form_error=message,
+                    form_values={"supplier_id": supplier_id, "name": name},
+                ),
+            )
+
+        if not supplier_id or not name:
+            return _rerender_with_error(
+                "Needs an id and a name — nothing was saved."
+            )
+        created = cfg.create_supplier(
+            supplier_id,
+            name=name,
+            created_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not created:
+            return _rerender_with_error(
+                f"A supplier with id '{supplier_id}' already exists"
+                " — nothing was saved."
+            )
+        return RedirectResponse(url="/admin/suppliers", status_code=303)
+
+    @app.post("/admin/suppliers/{supplier_id}/edit", response_model=None)
+    def edit_supplier(
+        request: Request, supplier_id: str, name: str = Form("")
+    ) -> HTMLResponse | RedirectResponse:
+        """Rename a vendor (typo fix). The id is immutable — it is the FK target."""
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        name = name.strip()
+        if not name:
+            return t.TemplateResponse(
+                request=request,
+                name="suppliers.html",
+                context=_suppliers_page_context(
+                    request,
+                    form_error="Needs a name — nothing was saved.",
+                    form_values={"supplier_id": supplier_id, "name": ""},
+                ),
+            )
+        updated = cfg.update_supplier(
+            supplier_id,
+            name=name,
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not updated:
+            return HTMLResponse("Unknown supplier.", status_code=404)
+        return RedirectResponse(url="/admin/suppliers", status_code=303)
+
+    @app.post("/admin/suppliers/{supplier_id}/delete", response_model=None)
+    def delete_supplier(
+        request: Request, supplier_id: str
+    ) -> HTMLResponse | RedirectResponse:
+        """Hard-delete a vendor (logged; revert restores it).
+
+        Refuses with a partner-readable message when the vendor is in use by
+        a cash-spend row — the route-level referential-integrity guard that
+        #96's FK constraint will enforce at the DB layer. The guard ships
+        now against the empty table and stands ready.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        if cfg.supplier_in_use(supplier_id):
+            return t.TemplateResponse(
+                request=request,
+                name="suppliers.html",
+                context=_suppliers_page_context(
+                    request,
+                    form_error=(
+                        f"'{supplier_id}' is in use by cash-spend rows and"
+                        " cannot be deleted — remove those rows first."
+                    ),
+                ),
+            )
+        deleted = cfg.delete_supplier(
+            supplier_id,
+            deleted_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not deleted:
+            return HTMLResponse("Unknown supplier.", status_code=404)
+        return RedirectResponse(url="/admin/suppliers", status_code=303)
+
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request, filter: str | None = Query(default=None)) -> HTMLResponse:
         """The SKU view (Wave 1.5, Slice 2): one row per SKU, mapping/recipe/

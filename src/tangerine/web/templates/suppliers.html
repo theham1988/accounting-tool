@@ -1,0 +1,98 @@
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Suppliers — Tangerine Books{% endblock %}
+{% block content %}
+  {# Suppliers admin is a Reports sub-page: the bottom nav stays (REPORTS
+     active) and a header sub-row points back into Reports, names the page,
+     and tags it ADMIN — the same "sub-page of a primary destination"
+     pattern the fixed-costs page uses (issue #50, ADR-0006 shared chrome).
+     CRUD semantics are unchanged; this template is presentation only. #}
+  <div class="review fixed-costs suppliers">
+    <!--section:suppliers-header-->
+    <header class="fixed-costs__subhead">
+      <a class="fixed-costs__back" href="{{ nav_urls.reports }}">
+        <span aria-hidden="true">&larr;</span>
+        <span class="fixed-costs__back-label">Reports</span>
+      </a>
+      <h1 class="fixed-costs__title">SUPPLIERS</h1>
+      <span class="fixed-costs__admin-tag">ADMIN</span>
+    </header>
+    <!--/section:suppliers-header-->
+
+    <p class="fixed-costs__intro">
+      The controlled vendor list cash-spend rows pick from. Keeping one
+      id per vendor (e.g. <em>makro-phuket</em>, not "Makro" / "Makro
+      Phuket" / "makro") keeps per-vendor aggregation honest.
+    </p>
+
+    <!--section:supplier-form-->
+    <section class="fixed-cost-form">
+      <h2 class="fixed-cost-form__heading">ADD A SUPPLIER</h2>
+      <form method="post" action="/admin/suppliers">
+        <label class="fixed-cost-form__label">
+          <span>ID</span>
+          <input type="text" name="supplier_id"
+                 placeholder="makro-phuket"
+                 value="{{ form_values.supplier_id if form_values else '' }}">
+        </label>
+        <label class="fixed-cost-form__label">
+          <span>NAME</span>
+          <input type="text" name="name"
+                 placeholder="Makro Phuket"
+                 value="{{ form_values.name if form_values else '' }}">
+        </label>
+        {% if form_error %}
+        <p class="fixed-cost-form__error" role="alert">{{ form_error }}</p>
+        {% endif %}
+        <button type="submit" class="fixed-cost-form__save">SAVE</button>
+      </form>
+    </section>
+    <!--/section:supplier-form-->
+
+    <!--section:supplier-list-->
+    <section class="fixed-cost-list-section">
+      <header class="fixed-cost-list-section__header">
+        <h2 class="fixed-cost-list-section__title">CURRENT · {{ suppliers | length }}</h2>
+      </header>
+
+      {% if suppliers %}
+      <ul class="fixed-cost-list">
+        {% for supplier in suppliers %}
+        <li class="fixed-cost-list__row">
+          <div class="fixed-cost-list__top">
+            <span class="fixed-cost-list__label">{{ supplier.name }}</span>
+          </div>
+          <div class="fixed-cost-list__bottom">
+            <span class="fixed-cost-list__meta">{{ supplier.supplier_id }}</span>
+            <span class="fixed-cost-list__actions">
+              <form method="post" action="/admin/suppliers/{{ supplier.supplier_id }}/edit"
+                    class="supplier-edit-form">
+                <input type="text" name="name" value="{{ supplier.name }}"
+                       aria-label="Rename {{ supplier.name }}">
+                <button type="submit" class="fixed-cost-list__end"
+                        title="Rename (typo fix)">RENAME</button>
+              </form>
+              <form method="post" action="/admin/suppliers/{{ supplier.supplier_id }}/delete">
+                <button type="submit" class="fixed-cost-list__delete"
+                        title="Removes the vendor (revertible from the audit log)">DEL</button>
+              </form>
+            </span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="fixed-cost-list fixed-cost-list--empty">
+        No suppliers entered yet. Add the vendors cash-spend rows will pick
+        from — Makro, the wet-market stalls, Fat Dolphin, etc.
+      </p>
+      {% endif %}
+      <p class="fixed-cost-list-section__footer">
+        Every add / rename / delete lands in the audit log and can be
+        reverted there. A vendor referenced by a cash-spend row cannot be
+        deleted (remove those rows first).
+      </p>
+    </section>
+    <!--/section:supplier-list-->
+  </div>
+{% endblock %}
