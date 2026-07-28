@@ -66,13 +66,21 @@ assignees:
 
 def _store(tmp_path: Path) -> SqliteConfigStore:
     """An empty-supplier, freshly-seeded config store (the migration ran)."""
+    return _store_and_conn(tmp_path)[0]
+
+
+def _store_and_conn(tmp_path: Path) -> tuple[SqliteConfigStore, sqlite3.Connection]:
+    """The store plus its underlying connection (for tests that need to plant
+    rows the public API can't yet reach — e.g. simulating slice #96's
+    ``cash_spend`` table before it lands)."""
     recipes = tmp_path / "recipes.yaml"
     recipes.write_text(_recipes_yaml(), encoding="utf-8")
     costs = tmp_path / "costs.yaml"
     costs.write_text(_costs_yaml(), encoding="utf-8")
     conn = sqlite3.connect(":memory:")
     seed_config(conn, recipes_path=recipes, costs_path=costs)
-    return SqliteConfigStore(conn, now=lambda: "2026-07-15T02:00:00+00:00")
+    store = SqliteConfigStore(conn, now=lambda: "2026-07-15T02:00:00+00:00")
+    return store, conn
 
 
 # =============================================================================
@@ -246,19 +254,13 @@ def test_supplier_in_use_is_true_when_a_cash_spend_row_references_it(
 ) -> None:
     """The guard sees the referencing row and reports in-use.
 
-    ``delete_supplier`` then refuses with a clear message (the exception
-    carries the supplier id and the count, so the route can surface it
-    partner-readably).
+    ``delete_supplier`` then returns ``False`` (the row survives). The
+    route layer is what surfaces this as a partner-readable message; the
+    store contract is just the boolean refusal — no exception, no count.
     """
-    recipes = tmp_path / "recipes.yaml"
-    recipes.write_text(_recipes_yaml(), encoding="utf-8")
-    costs = tmp_path / "costs.yaml"
-    costs.write_text(_costs_yaml(), encoding="utf-8")
-    conn = sqlite3.connect(":memory:")
-    seed_config(conn, recipes_path=recipes, costs_path=costs)
-    store = SqliteConfigStore(conn, now=lambda: "2026-07-15T02:00:00+00:00")
+    store, conn = _store_and_conn(tmp_path)
     store.create_supplier("makro", name="Makro", created_by="daniel")
-    _seed_cash_spend_referencing(conn, "makro")
+    _seed_cash_spend_referencing(conn, "makro")  # simulate slice #96's referencing row
 
     assert store.supplier_in_use("makro") is True
 
@@ -287,12 +289,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     property that lets the migration land on a production server that
     reboots nightly.
     """
-    recipes = tmp_path / "recipes.yaml"
-    recipes.write_text(_recipes_yaml(), encoding="utf-8")
-    costs = tmp_path / "costs.yaml"
-    costs.write_text(_costs_yaml(), encoding="utf-8")
-    conn = sqlite3.connect(":memory:")
-    seed_config(conn, recipes_path=recipes, costs_path=costs)
+    _, conn = _store_and_conn(tmp_path)
 
     # The suppliers table exists; applying migrations again must not raise
     # (e.g. UNIQUE constraint on schema_migrations.id, or CREATE TABLE
@@ -300,6 +297,27 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     apply_migrations(conn)  # must not raise
 
     # The schema_migrations row for 0009 is recorded exactly once.
+    count = conn.execute(
+        "SELECT COUNT(*) FROM schema_migrations WHERE id = 9"
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_migration_lands_cleanly_on_an_empty_db(tmp_path: Path) -> None:
+    """The suppliers migration creates its table on a totally bare database.
+
+    The other migration tests seed the DB with config first; this one names
+    the issue's explicit empty-DB case — a fresh ``sqlite3.connect(":memory:")
+    with no prior schema, no seed, no tables. ``apply_migrations`` must build
+    every table from scratch (``suppliers`` included) and must not assume any
+    prerequisite table or row exists.
+    """
+    conn = sqlite3.connect(":memory:")
+    apply_migrations(conn)  # must not raise
+
+    rows = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0]
+    assert rows == 0
+    # The migration is recorded exactly once.
     count = conn.execute(
         "SELECT COUNT(*) FROM schema_migrations WHERE id = 9"
     ).fetchone()[0]
@@ -317,14 +335,8 @@ def test_migration_lands_cleanly_on_a_production_shaped_db(
     acceptance criterion "runs cleanly against the existing production
     database without data loss".
     """
-    recipes = tmp_path / "recipes.yaml"
-    recipes.write_text(_recipes_yaml(), encoding="utf-8")
-    costs = tmp_path / "costs.yaml"
-    costs.write_text(_costs_yaml(), encoding="utf-8")
-    conn = sqlite3.connect(":memory:")
-    seed_config(conn, recipes_path=recipes, costs_path=costs)
+    store, conn = _store_and_conn(tmp_path)
 
-    store = SqliteConfigStore(conn, now=lambda: "2026-07-15T02:00:00+00:00")
     # Plant representative rows in every prior audited table, plus a sale.
     store.create_sku(
         "extra-sku", name="Extra", unit="g", created_by="daniel"
@@ -549,6 +561,62 @@ def test_delete_blocked_when_supplier_in_use_is_surfaced_partner_readably(
 # =============================================================================
 # AC: /audit shows supplier changes and Revert restores them
 # =============================================================================
+
+
+def test_full_partner_flow_add_edit_delete_audit_revert(tmp_path: Path) -> None:
+    """The single end-to-end acceptance flow issue #94 names verbatim:
+
+        add -> edit -> delete -> audit-trail visibility -> revert
+
+    Mirrors the fixed-costs E2E precedent: every step goes through the
+    public HTTP surface (no store calls), and the assertions target the
+    rendered list rows / audit entries rather than whole-page substrings
+    so the page's intro example copy does not leak in.
+    """
+    client = _authed_client(_build_app(tmp_path))
+
+    def _list_labels() -> set[str]:
+        page = client.get("/admin/suppliers").text
+        return set(re.findall(r'class="fixed-cost-list__label"[^>]*>([^<]+)<', page))
+
+    # add — Makro, with a typo in the name.
+    created = client.post(
+        "/admin/suppliers",
+        data={"supplier_id": "makro", "name": "Makr Phuket"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert _list_labels() == {"Makr Phuket"}
+
+    # edit — typo fix.
+    renamed = client.post(
+        "/admin/suppliers/makro/edit",
+        data={"name": "Makro Phuket"},
+        follow_redirects=False,
+    )
+    assert renamed.status_code == 303
+    assert _list_labels() == {"Makro Phuket"}
+
+    # delete.
+    deleted = client.post(
+        "/admin/suppliers/makro/delete",
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert _list_labels() == set()
+
+    # audit-trail visibility — the create + edit + delete all landed and
+    # are visible on /audit with table_name='suppliers'.
+    audit_html = client.get("/audit").text
+    assert "suppliers" in audit_html
+    assert "makro" in audit_html
+
+    # revert — undo the most recent suppliers change (the delete) and see
+    # the row come back on the list.
+    entry_id = _first_revert_entry_id(audit_html)
+    revert = client.post(f"/audit/{entry_id}/revert", follow_redirects=False)
+    assert revert.status_code == 303
+    assert "makro" in client.get("/admin/suppliers").text
 
 
 def test_supplier_changes_show_in_audit_and_revert_restores(tmp_path: Path) -> None:

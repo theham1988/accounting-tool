@@ -1024,6 +1024,13 @@ def create_app(
         """
         cfg: SqliteConfigStore = app.state.config_store
         t: Jinja2Templates = app.state.templates
+        # The authoritative referential-integrity check is the *inner* one —
+        # ``_delete_supplier_impl`` re-checks ``supplier_in_use`` inside the
+        # held transaction (config_store.py), so a referencing row that
+        # appears between this read and the delete still blocks the delete.
+        # This outer read is only here to choose the response shape: re-render
+        # the page with a partner-readable message rather than letting the
+        # store's bare-False fall through to the "not found" branch.
         if cfg.supplier_in_use(supplier_id):
             return t.TemplateResponse(
                 request=request,
