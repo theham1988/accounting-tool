@@ -42,6 +42,21 @@ from .schema import apply_migrations
 
 _MIGRATION_ACTOR = "migration"
 
+#: The six spend buckets the HTML cost-breakdown column shows, in display
+#: order. The seed lands them in this order so the admin page renders them
+#: top-to-bottom as the partner recognises them from the printed map
+#: (issue #95). Issue #82 decision D locked these as the non-empty default
+#: — the analogue of ADR-0009's empty cafe set, except non-empty because
+#: the HTML's six are known.
+_SEEDED_SPEND_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("taps", "Taps"),
+    ("kitchen", "Kitchen"),
+    ("coffee", "Coffee"),
+    ("bakery", "Bakery"),
+    ("staff", "Staff"),
+    ("rent", "Rent"),
+)
+
 
 @dataclass(frozen=True)
 class AuditEntry:
@@ -91,6 +106,31 @@ class CostRow:
     price_per_unit_net: Decimal
     updated_at: date
     updated_by: str
+
+
+@dataclass(frozen=True)
+class SpendBucket:
+    """One row of the ``spend_buckets`` table (issue #95, parent #82).
+
+    The controlled vocabulary cash-spend rows (slice #96) FK into.
+    ``bucket_id`` is the stable slug a partner types or that the seed
+    ships; ``name`` is the display label rendered in the picker and on the
+    page. ``retired_at`` carries the soft-retire timestamp — a retired
+    bucket stays in the table so historical cash-spend rows keep
+    aggregating under it, but is excluded from the new-entry picker.
+
+    A spend bucket is a **product-family / cost-category** concept, never a
+    segment: "taps" means bar-product-family spend, not "the bar segment".
+    Whether a bucket's cost falls against the cafe or bar segment is a
+    downstream P&L computation against recipes (ADR-0007 pure-clock
+    segmentation), not a fact of the purchase.
+    """
+
+    bucket_id: str
+    name: str
+    retired_at: str | None
+    created_at: str
+    created_by: str
 
 
 class SqliteConfigStore:
@@ -593,6 +633,7 @@ class SqliteConfigStore:
         "skus": "sku_id",
         "recipes": "sku_id",
         "fixed_costs": "id",
+        "spend_buckets": "bucket_id",
     }
 
     def _snapshot(self, table_name: str, pk: str) -> dict[str, Any] | None:
@@ -1264,6 +1305,232 @@ class SqliteConfigStore:
             for sku_id, name, segment, unit in rows
         ]
 
+    def spend_buckets(self) -> list[SpendBucket]:
+        """Every spend bucket, in seed-then-creation order (issue #95).
+
+        The seeded six sort first in their HTML display order, then any
+        partner-added buckets in creation order. The admin page renders
+        this list verbatim — retired buckets stay visible (struck-through)
+        so a partner reading the page keeps the historical context that
+        ``retired_at`` preserves. Slice #96's new-entry picker filters to
+        ``retired_at is None`` rows only.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT bucket_id, name, retired_at, created_at, created_by"
+                " FROM spend_buckets ORDER BY"
+                "  CASE bucket_id"
+                "    WHEN 'taps' THEN 0"
+                "    WHEN 'kitchen' THEN 1"
+                "    WHEN 'coffee' THEN 2"
+                "    WHEN 'bakery' THEN 3"
+                "    WHEN 'staff' THEN 4"
+                "    WHEN 'rent' THEN 5"
+                "    ELSE 6"
+                "  END,"
+                "  created_at, bucket_id"
+            ).fetchall()
+        return [
+            SpendBucket(
+                bucket_id=bucket_id,
+                name=name,
+                retired_at=retired_at,
+                created_at=created_at,
+                created_by=created_by,
+            )
+            for bucket_id, name, retired_at, created_at, created_by in rows
+        ]
+
+    def create_spend_bucket(
+        self,
+        bucket_id: str,
+        *,
+        name: str,
+        created_by: str,
+        session_id: str | None = None,
+    ) -> None:
+        """Add a new spend bucket to the vocabulary, audit-logged (issue #95).
+
+        ``bucket_id`` is the stable slug a partner types (and what slice
+        #96's cash-spend rows will FK to); ``name`` is the display label.
+        A duplicate ``bucket_id`` raises :class:`sqlite3.IntegrityError` —
+        the route catches it and explains, because the controlled
+        vocabulary's whole point is one canonical id per bucket.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            self._create_spend_bucket_impl(
+                bucket_id, name=name, created_by=created_by, session_id=session_id
+            )
+        else:
+            with self._lock, self._conn:
+                self._create_spend_bucket_impl(
+                    bucket_id, name=name, created_by=created_by, session_id=session_id
+                )
+
+    def _create_spend_bucket_impl(
+        self,
+        bucket_id: str,
+        *,
+        name: str,
+        created_by: str,
+        session_id: str | None,
+    ) -> None:
+        """The write + audit, assuming the lock + transaction are held."""
+        self._conn.execute(
+            "INSERT INTO spend_buckets"
+            " (bucket_id, name, retired_at, created_at, created_by)"
+            " VALUES (?, ?, NULL, ?, ?)",
+            (bucket_id, name, self._now(), created_by),
+        )
+        self._record_audit(
+            "spend_buckets",
+            bucket_id,
+            old=None,
+            new=self._row_snapshot("spend_buckets", "bucket_id", bucket_id),
+            changed_by=created_by,
+            session_id=session_id,
+        )
+
+    def retire_spend_bucket(
+        self,
+        bucket_id: str,
+        *,
+        retired_at: str,
+        updated_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Soft-retire a bucket (issue #95); it stays in the table, flagged.
+
+        Mirrors fixed-costs' ending-vs-deleting distinction (ADR-0004
+        decision 3): a retired bucket stays in the table so historical
+        cash-spend rows keep aggregating under it, but slice #96's
+        new-entry picker excludes it. Retiring is the partner action for
+        "we no longer use this bucket"; hard-delete is for typos. Returns
+        ``False`` for an unknown id.
+
+        ``retired_at`` is a partner-facing date string (the route passes
+        ``app.state.today.isoformat()``); retiring is dated the day the
+        partner retires it, exactly like ending a fixed cost.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._retire_spend_bucket_impl(
+                bucket_id,
+                retired_at=retired_at,
+                updated_by=updated_by,
+                session_id=session_id,
+            )
+        with self._lock, self._conn:
+            return self._retire_spend_bucket_impl(
+                bucket_id,
+                retired_at=retired_at,
+                updated_by=updated_by,
+                session_id=session_id,
+            )
+
+    def _retire_spend_bucket_impl(
+        self,
+        bucket_id: str,
+        *,
+        retired_at: str,
+        updated_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("spend_buckets", "bucket_id", bucket_id)
+        if old is None:
+            return False
+        self._conn.execute(
+            "UPDATE spend_buckets SET retired_at = ? WHERE bucket_id = ?",
+            (retired_at, bucket_id),
+        )
+        self._record_audit(
+            "spend_buckets",
+            bucket_id,
+            old=old,
+            new=self._row_snapshot("spend_buckets", "bucket_id", bucket_id),
+            changed_by=updated_by,
+            session_id=session_id,
+        )
+        return True
+
+    def delete_spend_bucket(
+        self,
+        bucket_id: str,
+        *,
+        deleted_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Hard-delete a bucket (issue #95); audit-logged, revert restores.
+
+        Deletion is for buckets that should never have existed (a typo, a
+        duplicate); a bucket a partner merely stopped using is *retired*,
+        which keeps its history. The route guards on
+        :meth:`spend_bucket_in_use` before calling this so a bucket with
+        referencing rows is never deleted; the FK constraint itself lands
+        with slice #96. Returns ``False`` for an unknown id.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._delete_spend_bucket_impl(
+                bucket_id, deleted_by=deleted_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._delete_spend_bucket_impl(
+                bucket_id, deleted_by=deleted_by, session_id=session_id
+            )
+
+    def _delete_spend_bucket_impl(
+        self,
+        bucket_id: str,
+        *,
+        deleted_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("spend_buckets", "bucket_id", bucket_id)
+        if old is None:
+            return False
+        self._conn.execute(
+            "DELETE FROM spend_buckets WHERE bucket_id = ?", (bucket_id,)
+        )
+        self._record_audit(
+            "spend_buckets",
+            bucket_id,
+            old=old,
+            new=None,
+            changed_by=deleted_by,
+            session_id=session_id,
+        )
+        return True
+
+    def spend_bucket_in_use(self, bucket_id: str) -> bool:
+        """Whether any cash-spend row currently references ``bucket_id``.
+
+        Slice #96 lands the ``cash_spend`` table and its FK to
+        ``spend_buckets.bucket_id``; until then this returns ``False``
+        (no referencing table exists). The route-level guard calls this
+        before a hard-delete so the surface is honest from day one — the
+        FK constraint that enforces it in the DB lands with #96, at which
+        point this query starts returning ``True`` against real rows.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type = 'table' AND name = 'cash_spend'"
+            ).fetchone()
+            if row is None:
+                return False
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM cash_spend WHERE bucket_id = ?",  # noqa: S608
+                (bucket_id,),
+            ).fetchone()
+        return bool(count and count[0] > 0)
+
 
 def _revert_target(
     old: dict[str, Any] | None,
@@ -1326,6 +1593,12 @@ def seed_config(
     startup neither churns data nor clobbers a partner-measured yield. It
     runs after seeding so ingredient units (seeded from the cost comments)
     are known, which is what lets it exclude count-unit inputs from the sum.
+
+    The spend-bucket seed (issue #95) gates on its *own* table being empty,
+    not on ``skus``: a partner upgrading an existing production DB (skus
+    already populated) must still get the six HTML buckets on the next boot.
+    Once a partner has added, renamed, or retired a bucket the seed is a
+    no-op — never clobber a partner's edits.
     """
     apply_migrations(conn)
     if not _skus_table_has_rows(conn):
@@ -1336,7 +1609,40 @@ def seed_config(
             _seed_mappings(conn, catalog, now)
             if costs_path is not None:
                 _seed_costs(conn, costs_path, now)
+    _seed_spend_buckets_if_empty(conn)
     _backfill_estimated_yields(conn)
+
+
+def _seed_spend_buckets_if_empty(conn: sqlite3.Connection) -> None:
+    """Land the HTML's six spend buckets on first boot against an empty table.
+
+    The seed-on-empty analogue of ADR-0003 decision 1's cost/recipe seeder,
+    applied to a vocabulary table instead of a YAML-backed one (issue #95).
+    The six are the HTML cost-breakdown column's known set — the seed is
+    non-empty where ADR-0009's cafe-category set is empty by default,
+    because here the default is known.
+
+    Once the table holds any row — a seeded bucket, a partner's addition,
+    a partner's rename — this is a no-op. A partner's edits, additions, and
+    retirements are never clobbered by re-running the seeder on boot. The
+    seed writes commit as one transaction so the six land together or not
+    at all; no audit row is written (the seed is a migration, attributed
+    to ``_MIGRATION_ACTOR`` in the row's ``created_by``).
+    """
+    row = conn.execute("SELECT COUNT(*) FROM spend_buckets").fetchone()
+    if row and row[0] > 0:
+        return
+    now = _utc_now_iso()
+    with conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO spend_buckets"
+            " (bucket_id, name, retired_at, created_at, created_by)"
+            " VALUES (?, ?, NULL, ?, ?)",
+            [
+                (bucket_id, name, now, _MIGRATION_ACTOR)
+                for bucket_id, name in _SEEDED_SPEND_BUCKETS
+            ],
+        )
 
 
 def _seed_recipes(conn: sqlite3.Connection, catalog: RecipeCatalog, now: str) -> None:
@@ -1808,6 +2114,7 @@ def _snapshot_updated_at(snapshot: dict[str, Any] | None) -> date | None:
 __all__ = [
     "AuditEntry",
     "CostRow",
+    "SpendBucket",
     "SqliteConfigStore",
     "net_price_per_unit",
     "seed_config",

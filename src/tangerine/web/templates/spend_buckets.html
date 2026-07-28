@@ -1,0 +1,117 @@
+{#
+  Spend buckets — issue #95 (parent #82 "model cash-basis supplier spend").
+
+  The controlled vocabulary cash-spend rows (slice #96) FK into. An Admin
+  sub-page (the bottom nav stays, ADMIN tag in the header) listing the six
+  seeded buckets plus any partner additions, with create / retire / delete
+  actions. Retire vs. delete mirrors fixed-costs' ending-vs-deleting
+  distinction (ADR-0004 decision 3): retiring a bucket soft-flags it so
+  historical aggregation stays honest; deleting removes a typo bucket that
+  no rows reference. Retired buckets render struck-through and stay visible
+  for historical context; slice #96's new-entry picker will filter them out.
+
+  Cash-spend-only: deliberately NOT shared with fixed_costs.category (issue
+  #82 decision D). The structural seams the e2e tests pin against are the
+  section markers (spend-bucket-form, spend-bucket-list) and the per-row
+  retire/delete forms' action URLs.
+#}
+{% extends "_base.html" %}
+{% set nav_active = "today" %}
+{% block title %}Spend buckets — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review spend-buckets">
+    <!--section:spend-bucket-header-->
+    <header class="spend-buckets__subhead">
+      <a class="spend-buckets__back" href="/admin">
+        <span aria-hidden="true">&larr;</span>
+        <span class="spend-buckets__back-label">Admin</span>
+      </a>
+      <h1 class="spend-buckets__title">SPEND BUCKETS</h1>
+      <span class="spend-buckets__admin-tag">ADMIN</span>
+    </header>
+    <!--/section:spend-bucket-header-->
+
+    <p class="spend-buckets__intro">
+      The cost-family buckets cash spend is grouped into — taps, kitchen,
+      coffee, bakery, staff, rent. A bucket is a product-family / cost-
+      category, never a segment: "taps" means bar-product-family spend, and
+      which segment it falls against is a downstream P&amp;L computation.
+    </p>
+
+    <!--section:spend-bucket-form-->
+    <section class="spend-bucket-form">
+      <h2 class="spend-bucket-form__heading">ADD A BUCKET</h2>
+      <form method="post" action="/admin/spend-buckets">
+        <div class="spend-bucket-form__row">
+          <label class="spend-bucket-form__label">
+            <span>ID</span>
+            <input type="text" name="bucket_id" placeholder="cleaning"
+                   value="{{ form_values.bucket_id if form_values else '' }}">
+          </label>
+          <label class="spend-bucket-form__label">
+            <span>NAME</span>
+            <input type="text" name="name" placeholder="Cleaning supplies"
+                   value="{{ form_values.name if form_values else '' }}">
+          </label>
+        </div>
+        {% if form_error %}
+        <p class="spend-bucket-form__error" role="alert">{{ form_error }}</p>
+        {% endif %}
+        <button type="submit" class="spend-bucket-form__save">SAVE</button>
+      </form>
+    </section>
+    <!--/section:spend-bucket-form-->
+
+    <!--section:spend-bucket-list-->
+    <section class="spend-bucket-list-section">
+      <header class="spend-bucket-list-section__header">
+        <h2 class="spend-bucket-list-section__title">BUCKETS · {{ buckets | length }}</h2>
+      </header>
+
+      {% if buckets %}
+      <ul class="spend-bucket-list">
+        {% for bucket in buckets %}
+        {% set _is_retired = bucket.retired_at is not none %}
+        <li class="spend-bucket-list__row{{ ' spend-bucket-list__row--retired' if _is_retired else '' }}">
+          <div class="spend-bucket-list__top">
+            <span class="spend-bucket-list__id">{{ bucket.bucket_id }}</span>
+            <span class="spend-bucket-list__name">{{ bucket.name }}</span>
+          </div>
+          <div class="spend-bucket-list__bottom">
+            <span class="spend-bucket-list__meta">
+              {% if _is_retired %}
+              RETIRED {{ bucket.retired_at }}
+              {% else %}
+              ACTIVE
+              {% endif %}
+            </span>
+            <span class="spend-bucket-list__actions">
+              {% if not _is_retired %}
+              <form method="post" action="/admin/spend-buckets/{{ bucket.bucket_id }}/retire">
+                <button type="submit" class="spend-bucket-list__retire"
+                        title="Hides from new entry; historical rows keep it">RETIRE</button>
+              </form>
+              {% endif %}
+              <form method="post" action="/admin/spend-buckets/{{ bucket.bucket_id }}/delete">
+                <button type="submit" class="spend-bucket-list__delete"
+                        title="Removes the bucket (for typos); refused if rows reference it">DEL</button>
+              </form>
+            </span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="spend-bucket-list spend-bucket-list--empty">
+        No spend buckets yet.
+      </p>
+      {% endif %}
+      <p class="spend-bucket-list-section__footer">
+        RETIRE hides a bucket from new entry but keeps it for historical
+        aggregation. DEL removes a bucket that no rows reference (for typos).
+        Both land in the audit log and can be reverted there.
+      </p>
+    </section>
+    <!--/section:spend-bucket-list-->
+  </div>
+{% endblock %}
