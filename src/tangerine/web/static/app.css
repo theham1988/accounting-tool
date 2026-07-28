@@ -1989,6 +1989,11 @@ textarea {
   }
 }
 
+.spend-bucket-list__row--retired {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
 .fixed-costs-block__lines {
   list-style: none;
   padding: 0;
