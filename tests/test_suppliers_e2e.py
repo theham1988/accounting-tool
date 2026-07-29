@@ -225,27 +225,30 @@ def test_supplier_in_use_is_false_on_a_fresh_database(tmp_path: Path) -> None:
 def _seed_cash_spend_referencing(
     conn: sqlite3.Connection, supplier_id: str
 ) -> None:
-    """Stand up a not-yet-FK'd cash-spend row referencing ``supplier_id``.
+    """Stand up a cash-spend row referencing ``supplier_id``.
 
-    Slice #96 will own the ``cash_spend`` table and its FK to
-    ``suppliers.supplier_id``; until then, this test simulates that future
-    state by creating the referencing row directly, so the route-level
-    guard (which queries for any referencing rows before allowing the
-    delete) has something to refuse against. The guard is forward-looking
-    but correct — it refuses a delete that #96's FK would refuse too.
+    Slice #96 owns the ``cash_spend`` table and its REFERENCES clause to
+    ``suppliers.supplier_id``; this helper inserts a referencing row
+    directly against the real schema so the route-level guard (which
+    queries for any referencing rows before allowing the delete) has
+    something to refuse against. Pre-#96 this helper created a
+    speculative table; the real table landed in #96's migration 0011.
     """
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS cash_spend ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  supplier_id TEXT NOT NULL,"
-        "  amount TEXT NOT NULL,"
-        "  spent_on TEXT NOT NULL"
-        ")"
-    )
-    conn.execute(
-        "INSERT INTO cash_spend (supplier_id, amount, spent_on)"
-        " VALUES (?, ?, ?)",
-        (supplier_id, "500", "2026-07-15"),
+        "INSERT INTO cash_spend"
+        " (date, supplier_id, description, bucket_id, amount,"
+        "  vat_inclusive, created_at, created_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "2026-07-15",
+            supplier_id,
+            "test referencing row",
+            "kitchen",
+            "500",
+            0,
+            "2026-07-15T00:00:00+00:00",
+            "test",
+        ),
     )
 
 

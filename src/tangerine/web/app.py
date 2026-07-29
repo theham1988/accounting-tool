@@ -39,6 +39,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
+from ..cash_spend import CashSpendEntry
 from ..config.loader import load_assignees
 from ..coverage import (
     build_item_coverage,
@@ -1198,6 +1199,322 @@ def create_app(
         if not deleted:
             return HTMLResponse("Unknown spend bucket.", status_code=404)
         return RedirectResponse(url="/admin/spend-buckets", status_code=303)
+
+    # --- Cash spend (issue #96, parent #82) -----------------------------------
+    #
+    # The partner-facing entry surface for cash-basis supplier purchases —
+    # the row that produces the HTML's "Cost of goods — purchases (cash)"
+    # line. Filterable list (by date range + bucket + supplier), create,
+    # edit, delete, behind the existing auth. Supplier and bucket pickers
+    # draw from #94 and #95; retired buckets are not offered in the create
+    # picker (a retired bucket stays in the spend-buckets list so
+    # historical rows keep aggregating under it, but new entry excludes it).
+    #
+    # Every write goes through ``audit_log`` with ``table_name='cash_spend'``
+    # (registered in ``_PK_COLUMNS``), so ``/audit`` shows each change and
+    # the existing per-entry / per-session Revert restores it — the
+    # ADR-0003 pattern, unchanged.
+
+    def _cash_spend_page_context(
+        request: Request,
+        *,
+        rows: list[CashSpendEntry] | None = None,
+        suppliers: list | None = None,
+        buckets: list | None = None,
+        filters: dict[str, str] | None = None,
+        form_error: str | None = None,
+        form_values: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the cash-spend admin page.
+
+        Presentation-only — create / edit / delete semantics live in the
+        store. ``rows`` is already filtered (the route applies the query
+        params before passing them in); ``suppliers`` and ``buckets`` feed
+        the pickers, with retired buckets excluded from the create form's
+        bucket picker by the template filtering on ``retired_at``.
+        """
+        return {
+            "request": request,
+            "rows": rows if rows is not None else [],
+            "suppliers": suppliers if suppliers is not None else [],
+            "buckets": buckets if buckets is not None else [],
+            "filters": filters or {},
+            "form_error": form_error,
+            "form_values": form_values or {},
+        }
+
+    def _parse_row_date(value: str) -> date | None:
+        """Tolerant ISO-date parse for the filter + form inputs."""
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    @app.get("/admin/cash-spend", response_class=HTMLResponse)
+    def cash_spend_page(
+        request: Request,
+        start: str | None = Query(default=None),
+        end: str | None = Query(default=None),
+        bucket: str | None = Query(default=None),
+        supplier_id: str | None = Query(default=None),
+    ) -> HTMLResponse:
+        """The cash-spend entry surface (issue #96).
+
+        Renders the filter form (date range + bucket + supplier) and the
+        matching rows. Retired buckets stay selectable in the *filter*
+        (a partner filtering for historical spend under a now-retired
+        bucket should see those rows); only the *create* picker excludes
+        them.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        all_rows = cfg.cash_spend_rows()
+        start_d = _parse_row_date(start) if start else None
+        end_d = _parse_row_date(end) if end else None
+        bucket_q = bucket.strip() if bucket else None
+        supplier_q = supplier_id.strip() if supplier_id else None
+
+        def _matches(row: CashSpendEntry) -> bool:
+            if start_d is not None and row.date < start_d:
+                return False
+            if end_d is not None and row.date > end_d:
+                return False
+            if bucket_q and row.bucket_id != bucket_q:
+                return False
+            if supplier_q and row.supplier_id != supplier_q:
+                return False
+            return True
+
+        rows = [r for r in all_rows if _matches(r)]
+        filters = {
+            "start": start or "",
+            "end": end or "",
+            "bucket": bucket or "",
+            "supplier_id": supplier_id or "",
+        }
+        return t.TemplateResponse(
+            request=request,
+            name="cash_spend.html",
+            context=_cash_spend_page_context(
+                request,
+                rows=rows,
+                suppliers=cfg.suppliers(),
+                buckets=cfg.spend_buckets(),
+                filters=filters,
+            ),
+        )
+
+    @app.post("/admin/cash-spend", response_model=None)
+    def create_cash_spend_row(
+        request: Request,
+        entry_date: str = Form(""),
+        supplier_id: str = Form(""),
+        description: str = Form(""),
+        bucket_id: str = Form(""),
+        amount: str = Form(""),
+        vat_inclusive: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Add a cash-spend row from the form, audit-logged.
+
+        On a validation failure the page re-renders (200) with the inline
+        error and the partner's submitted values echoed back — never a
+        bare 400, never a silent save (the Wave 1.5 admin-surface pattern).
+        The ``vat_inclusive`` checkbox ships as an unchecked-by-default
+        input; ADR-0003 decision 4's "default false" rule is enforced by
+        the column default and reflected here.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        form_values = {
+            "date": entry_date.strip(),
+            "supplier_id": supplier_id.strip(),
+            "description": description.strip(),
+            "bucket_id": bucket_id.strip(),
+            "amount": amount.strip(),
+            "vat_inclusive": "on" if vat_inclusive else "",
+        }
+
+        def _rerender(message: str) -> HTMLResponse:
+            return t.TemplateResponse(
+                request=request,
+                name="cash_spend.html",
+                context=_cash_spend_page_context(
+                    request,
+                    rows=cfg.cash_spend_rows(),
+                    suppliers=cfg.suppliers(),
+                    buckets=cfg.spend_buckets(),
+                    form_error=message,
+                    form_values=form_values,
+                ),
+            )
+
+        parsed_date = _parse_row_date(entry_date)
+        if parsed_date is None:
+            return _rerender("Needs a valid date (YYYY-MM-DD) — nothing was saved.")
+        if not supplier_id.strip() or not bucket_id.strip():
+            return _rerender(
+                "Needs a supplier and a bucket — nothing was saved."
+            )
+        if not description.strip():
+            return _rerender("Needs a description — nothing was saved.")
+        try:
+            parsed_amount = Decimal(amount.strip())
+        except (InvalidOperation, ValueError):
+            return _rerender(
+                f"Amount '{amount}' is not a number — nothing was saved."
+            )
+        if parsed_amount <= 0:
+            return _rerender(
+                "Amount must be positive — nothing was saved."
+            )
+        # Guard against a partner picking a retired bucket (the picker
+        # excludes them, but a hand-crafted POST could carry one). A
+        # retired bucket stays in the table for history; new entry
+        # against it is refused so the live-vocabulary invariant holds.
+        bucket = next(
+            (b for b in cfg.spend_buckets() if b.bucket_id == bucket_id.strip()),
+            None,
+        )
+        if bucket is None:
+            return _rerender(
+                f"Unknown bucket '{bucket_id}' — nothing was saved."
+            )
+        if bucket.retired_at is not None:
+            return _rerender(
+                f"Bucket '{bucket_id}' is retired — pick a live bucket."
+            )
+        cfg.create_cash_spend(
+            CashSpendEntry(
+                row_id=0,
+                date=parsed_date,
+                supplier_id=supplier_id.strip(),
+                description=description.strip(),
+                bucket_id=bucket_id.strip(),
+                amount=parsed_amount,
+                vat_inclusive=bool(vat_inclusive),
+            ),
+            created_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        return RedirectResponse(url="/admin/cash-spend", status_code=303)
+
+    @app.post("/admin/cash-spend/{row_id}/edit", response_model=None)
+    def edit_cash_spend_row(
+        request: Request,
+        row_id: int,
+        entry_date: str = Form(""),
+        supplier_id: str = Form(""),
+        description: str = Form(""),
+        bucket_id: str = Form(""),
+        amount: str = Form(""),
+        vat_inclusive: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Replace a row from the edit form, audit-logged (revert restores).
+
+        On a validation failure the page re-renders (200) with the inline
+        error and the partner's submitted values echoed back — the same
+        contract as the create route (never a bare 400). The edit form
+        posts the whole row; this writes every field from the posted
+        values. The bucket picker on an edit form may offer the row's
+        *current* bucket even if it is now retired (so a partner can fix
+        an amount typo without first re-routing the row to a live bucket)
+        — but we still refuse to *move* a row onto a different retired
+        bucket.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        existing = next(
+            (r for r in cfg.cash_spend_rows() if r.row_id == row_id), None
+        )
+        if existing is None:
+            return HTMLResponse("Unknown cash-spend row.", status_code=404)
+        form_values = {
+            "date": entry_date.strip(),
+            "supplier_id": supplier_id.strip(),
+            "description": description.strip(),
+            "bucket_id": bucket_id.strip(),
+            "amount": amount.strip(),
+            "vat_inclusive": "on" if vat_inclusive else "",
+        }
+
+        def _rerender(message: str) -> HTMLResponse:
+            return t.TemplateResponse(
+                request=request,
+                name="cash_spend.html",
+                context=_cash_spend_page_context(
+                    request,
+                    rows=cfg.cash_spend_rows(),
+                    suppliers=cfg.suppliers(),
+                    buckets=cfg.spend_buckets(),
+                    form_error=message,
+                    form_values=form_values,
+                ),
+            )
+
+        parsed_date = _parse_row_date(entry_date)
+        if parsed_date is None:
+            return _rerender("Needs a valid date (YYYY-MM-DD) — nothing was saved.")
+        try:
+            parsed_amount = Decimal(amount.strip())
+        except (InvalidOperation, ValueError):
+            return _rerender(
+                f"Amount '{amount}' is not a number — nothing was saved."
+            )
+        if parsed_amount <= 0:
+            return _rerender(
+                "Amount must be positive — nothing was saved."
+            )
+        # Refuse moving a row onto a retired bucket it is not already on.
+        if bucket_id.strip() != existing.bucket_id:
+            bucket = next(
+                (b for b in cfg.spend_buckets() if b.bucket_id == bucket_id.strip()),
+                None,
+            )
+            if bucket is None:
+                return _rerender(
+                    f"Unknown bucket '{bucket_id}' — nothing was saved."
+                )
+            if bucket.retired_at is not None:
+                return _rerender(
+                    f"Bucket '{bucket_id}' is retired — pick a live bucket."
+                )
+        cfg.update_cash_spend(
+            CashSpendEntry(
+                row_id=row_id,
+                date=parsed_date,
+                supplier_id=supplier_id.strip() or existing.supplier_id,
+                description=description.strip() or existing.description,
+                bucket_id=bucket_id.strip() or existing.bucket_id,
+                amount=parsed_amount,
+                vat_inclusive=bool(vat_inclusive),
+            ),
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        return RedirectResponse(url="/admin/cash-spend", status_code=303)
+
+    @app.post("/admin/cash-spend/{row_id}/delete", response_model=None)
+    def delete_cash_spend_row(
+        request: Request, row_id: int
+    ) -> HTMLResponse | RedirectResponse:
+        """Remove a cash-spend row (logged; revert restores it).
+
+        Deletion is for rows that should never have existed (a typo, a
+        duplicate); the audit-log revert is the safety net. Returns 404
+        for an unknown id.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        deleted = cfg.delete_cash_spend(
+            row_id,
+            deleted_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not deleted:
+            return HTMLResponse("Unknown cash-spend row.", status_code=404)
+        return RedirectResponse(url="/admin/cash-spend", status_code=303)
 
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request, filter: str | None = Query(default=None)) -> HTMLResponse:
