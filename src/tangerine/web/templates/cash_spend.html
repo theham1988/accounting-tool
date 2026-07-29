@@ -1,0 +1,265 @@
+{#
+  Cash spend — issue #96 (parent #82 "model cash-basis supplier spend").
+
+  The partner-facing entry surface for cash-basis supplier purchases —
+  the row that produces the HTML's "Cost of goods — purchases (cash)"
+  line and the per-bucket breakdown. One Admin sub-page: a filterable
+  list (by date range + bucket + supplier) and create / edit / delete
+  actions behind the existing auth.
+
+  A multi-bucket bill is N independent rows sharing date + supplier but
+  differing bucket + amount (issue #82 decision A); the storage shape has
+  no parent, and the invoice total is the derived fact
+  SUM(amount) WHERE date+supplier. This first cut enters each row
+  separately; a later slice may offer an "add another bucket on this
+  bill" affordance that pre-fills date+supplier.
+
+  The create form's bucket picker excludes retired buckets (#95); the
+  filter form keeps them selectable so a partner can still surface
+  historical rows under a now-retired bucket. The structural seams the
+  e2e tests pin against are the section markers (cash-spend-form,
+  cash-spend-list) and the per-row edit/delete forms' action URLs.
+#}
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Cash spend — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review cash-spend">
+    <!--section:cash-spend-header-->
+    <header class="cash-spend__subhead">
+      <a class="cash-spend__back" href="{{ nav_urls.reports }}">
+        <span aria-hidden="true">&larr;</span>
+        <span class="cash-spend__back-label">Reports</span>
+      </a>
+      <h1 class="cash-spend__title">CASH SPEND</h1>
+      <span class="cash-spend__admin-tag">ADMIN</span>
+    </header>
+    <!--/section:cash-spend-header-->
+
+    <p class="cash-spend__intro">
+      Cash-basis supplier purchases — the cost of goods bought in cash or
+      on account, grouped by spend bucket (taps, kitchen, coffee, bakery,
+      staff, rent). One row per (date, supplier, bucket); a multi-bucket
+      bill is N rows sharing date + supplier. The VAT-inclusive flag
+      divides the amount by 1.07 at aggregation time, so net totals match
+      the cost book.
+    </p>
+
+    <!--section:cash-spend-filter-->
+    <section class="cash-spend-filter">
+      <h2 class="cash-spend-filter__heading">FILTER</h2>
+      <form method="get" action="/admin/cash-spend">
+        <div class="cash-spend-filter__row">
+          <label class="cash-spend-filter__label">
+            <span>FROM</span>
+            <input type="date" name="start" value="{{ filters.start if filters else '' }}">
+          </label>
+          <label class="cash-spend-filter__label">
+            <span>TO</span>
+            <input type="date" name="end" value="{{ filters.end if filters else '' }}">
+          </label>
+          <label class="cash-spend-filter__label">
+            <span>BUCKET</span>
+            <select name="bucket">
+              <option value="">(any)</option>
+              {% for bucket in buckets %}
+              <option value="{{ bucket.bucket_id }}"
+                {{ 'selected' if filters and filters.bucket == bucket.bucket_id else '' }}>
+                {{ bucket.name }}{% if bucket.retired_at %} (retired){% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="cash-spend-filter__label">
+            <span>SUPPLIER</span>
+            <select name="supplier_id">
+              <option value="">(any)</option>
+              {% for supplier in suppliers %}
+              <option value="{{ supplier.supplier_id }}"
+                {{ 'selected' if filters and filters.supplier_id == supplier.supplier_id else '' }}>
+                {{ supplier.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <button type="submit" class="cash-spend-filter__apply">APPLY</button>
+        <a href="/admin/cash-spend" class="cash-spend-filter__clear">CLEAR</a>
+      </form>
+    </section>
+    <!--/section:cash-spend-filter-->
+
+    <!--section:cash-spend-form-->
+    <section class="cash-spend-form">
+      <h2 class="cash-spend-form__heading">ADD A ROW</h2>
+      <form method="post" action="/admin/cash-spend">
+        <div class="cash-spend-form__row">
+          <label class="cash-spend-form__label">
+            <span>DATE</span>
+            <input type="date" name="entry_date" required
+                   value="{{ form_values.date if form_values else '' }}">
+          </label>
+          <label class="cash-spend-form__label">
+            <span>SUPPLIER</span>
+            <select name="supplier_id" required>
+              <option value="">(pick)</option>
+              {% for supplier in suppliers %}
+              <option value="{{ supplier.supplier_id }}"
+                {{ 'selected' if form_values and form_values.supplier_id == supplier.supplier_id else '' }}>
+                {{ supplier.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="cash-spend-form__label cash-spend-form__label--wide">
+            <span>DESCRIPTION</span>
+            <input type="text" name="description" required
+                   placeholder="HoD beans + grounds"
+                   value="{{ form_values.description if form_values else '' }}">
+          </label>
+        </div>
+        <div class="cash-spend-form__row">
+          <label class="cash-spend-form__label">
+            <span>BUCKET</span>
+            <select name="bucket_id" required>
+              <option value="">(pick)</option>
+              {% for bucket in buckets %}
+              {% if not bucket.retired_at %}
+              <option value="{{ bucket.bucket_id }}"
+                {{ 'selected' if form_values and form_values.bucket_id == bucket.bucket_id else '' }}>
+                {{ bucket.name }}
+              </option>
+              {% endif %}
+              {% endfor %}
+            </select>
+          </label>
+          <label class="cash-spend-form__label">
+            <span>AMOUNT (THB)</span>
+            <input type="text" name="amount" inputmode="decimal" required
+                   placeholder="1200.00"
+                   value="{{ form_values.amount if form_values else '' }}">
+          </label>
+          <label class="cash-spend-form__check">
+            <input type="checkbox" name="vat_inclusive"
+                   {{ 'checked' if form_values and form_values.vat_inclusive else '' }}>
+            <span>VAT-inclusive (divide by 1.07)</span>
+          </label>
+        </div>
+        {% if form_error %}
+        <p class="cash-spend-form__error" role="alert">{{ form_error }}</p>
+        {% endif %}
+        <button type="submit" class="cash-spend-form__save">SAVE</button>
+      </form>
+    </section>
+    <!--/section:cash-spend-form-->
+
+    <!--section:cash-spend-list-->
+    <section class="cash-spend-list-section">
+      <header class="cash-spend-list-section__header">
+        <h2 class="cash-spend-list-section__title">ROWS · {{ rows | length }}</h2>
+      </header>
+
+      {% if rows %}
+      <ul class="cash-spend-list">
+        {% for row in rows %}
+        <li class="cash-spend-list__row">
+          <div class="cash-spend-list__top">
+            <span class="cash-spend-list__date">{{ row.date.isoformat() }}</span>
+            <span class="cash-spend-list__supplier"
+                  data-supplier-id="{{ row.supplier_id }}">{{ row.supplier_id }}</span>
+            <span class="cash-spend-list__bucket"
+                  data-bucket-id="{{ row.bucket_id }}">{{ row.bucket_id }}</span>
+            <span class="cash-spend-list__amount">
+              {{ row.amount }}{% if row.vat_inclusive %} (VAT){% endif %}
+            </span>
+          </div>
+          <div class="cash-spend-list__bottom">
+            <span class="cash-spend-list__description">{{ row.description }}</span>
+            <span class="cash-spend-list__actions">
+              <details class="cash-spend-list__edit-toggle">
+                <summary class="cash-spend-list__edit-button"
+                         title="Edit this row (revertible from the audit log)">EDIT</summary>
+                <form method="post"
+                      action="/admin/cash-spend/{{ row.row_id }}/edit"
+                      class="cash-spend-list__edit-form">
+                  {# The edit form posts the whole row. The bucket picker
+                     offers the row's current bucket even if it is now
+                     retired (so a partner can fix a typo without first
+                     re-routing the row); moving onto a *different* retired
+                     bucket is refused by the route. #}
+                  <div class="cash-spend-form__row">
+                    <label class="cash-spend-form__label">
+                      <span>DATE</span>
+                      <input type="date" name="entry_date" required
+                             value="{{ row.date.isoformat() }}">
+                    </label>
+                    <label class="cash-spend-form__label">
+                      <span>SUPPLIER</span>
+                      <select name="supplier_id" required>
+                        {% for supplier in suppliers %}
+                        <option value="{{ supplier.supplier_id }}"
+                          {{ 'selected' if supplier.supplier_id == row.supplier_id else '' }}>
+                          {{ supplier.name }}
+                        </option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <label class="cash-spend-form__label cash-spend-form__label--wide">
+                      <span>DESCRIPTION</span>
+                      <input type="text" name="description" required
+                             value="{{ row.description }}">
+                    </label>
+                  </div>
+                  <div class="cash-spend-form__row">
+                    <label class="cash-spend-form__label">
+                      <span>BUCKET</span>
+                      <select name="bucket_id" required>
+                        {# Live buckets + this row's current bucket (even if retired). #}
+                        {% for bucket in buckets %}
+                        {% if not bucket.retired_at or bucket.bucket_id == row.bucket_id %}
+                        <option value="{{ bucket.bucket_id }}"
+                          {{ 'selected' if bucket.bucket_id == row.bucket_id else '' }}>
+                          {{ bucket.name }}{% if bucket.retired_at %} (retired){% endif %}
+                        </option>
+                        {% endif %}
+                        {% endfor %}
+                      </select>
+                    </label>
+                    <label class="cash-spend-form__label">
+                      <span>AMOUNT (THB)</span>
+                      <input type="text" name="amount" inputmode="decimal" required
+                             value="{{ row.amount }}">
+                    </label>
+                    <label class="cash-spend-form__check">
+                      <input type="checkbox" name="vat_inclusive"
+                             {{ 'checked' if row.vat_inclusive else '' }}>
+                      <span>VAT-inclusive (÷ 1.07)</span>
+                    </label>
+                  </div>
+                  <button type="submit" class="cash-spend-form__save">SAVE EDIT</button>
+                </form>
+              </details>
+              <form method="post" action="/admin/cash-spend/{{ row.row_id }}/delete">
+                <button type="submit" class="cash-spend-list__delete"
+                        title="Removes the row (revertible from the audit log)">DEL</button>
+              </form>
+            </span>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="cash-spend-list cash-spend-list--empty">
+        No cash-spend rows match the current filters.
+      </p>
+      {% endif %}
+      <p class="cash-spend-list-section__footer">
+        Every add / edit / delete lands in the audit log and can be reverted
+        there. A multi-bucket bill is N independent rows sharing date +
+        supplier — add one row per (bucket, amount) slice of the invoice;
+        the invoice total is the sum of those rows' amounts.
+      </p>
+    </section>
+    <!--/section:cash-spend-list-->
+  </div>
+{% endblock %}

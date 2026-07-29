@@ -237,6 +237,13 @@ produces against a VAT-registered ingredient rose slightly (~7% of COGS) on
 cutover — the old numbers were silently gross, not net, and this is the
 fix, not a regression (ADR-0003 decision 4).
 
+The same rule applies to **cash-spend rows** (ADR-0010): each row carries
+its own `vat_inclusive` flag, default false, set explicitly by the partner
+at entry. The row's amount is stored as paid (gross when the flag is set);
+the aggregation layer divides by 1.07 only when the flag is set, so the
+per-bucket and period totals are net of VAT on the VAT-inclusive rows and
+gross-as-paid on the rest.
+
 ## COGS recognition
 
 The cost the tool attributes to a sale. Two models live in the codebase:
@@ -331,6 +338,55 @@ recurring ones — the cost belongs to the month, not to a day in it, and
 the estimate label covers both. Fixed-cost edits write to the same
 `audit_log` (`table='fixed_costs'`) and revert the same way as every
 other config edit.
+
+## Cash spend
+
+Cash-basis supplier purchases — what the venue *paid* vendors (Makro, the
+wet market, ARO) on a date, for what. This is the **purchases** side of
+the P&L (the "Cost of goods — purchases (cash)" line and its per-bucket
+breakdown), distinct from **recipe-cost COGS** (the *consumption* side,
+which costs what *should* have been used). The two coexist: recipe-cost
+COGS answers "what did the coffee we sold cost to make?", cash spend
+answers "what did we pay Makro this month, and for what?" Neither engine
+knows about the other.
+
+- **Cash-spend row** — the unit: **one bucket's slice of a vendor bill on
+  a date**. A multi-bucket bill (the Makro tax invoice that crosses
+  coffee beans + taps glassware) is entered as **N sibling rows sharing
+  date + supplier but differing bucket + amount** — there is no parent
+  row and no invoice-total column. The invoice total is a **derived
+  fact**: `SUM(amount) WHERE date=X AND supplier_id=Y` reconstructs it.
+  VAT-ness is a property of the *row* (a per-row `vat_inclusive` flag,
+  default false), not the supplier or the bucket — the same SKU bought
+  from a VAT-registered supplier on one occasion and a wet-market stall
+  on another carries a different flag each time. The row's amount is
+  stored **as paid** (gross when VAT-inclusive, net otherwise); the
+  aggregation layer divides by 1.07 only when the flag is set.
+- **Spend bucket** — a **product-family / cost-category aggregation key**
+  (`taps`, `kitchen`, `coffee`, `bakery`, `staff`, `rent`), drawn from a
+  controlled vocabulary seeded from the HTML P&L the partner reconciles
+  against. A bucket is **explicitly not a segment**: "taps" means
+  *bar-product-family spend*, not *the bar segment's cost*. Which segment
+  a bucket's cost falls against is a downstream P&L computation against
+  recipes (per the pure-clock segmentation rule — segments come from the
+  receipt clock, not the item), not a fact of the purchase. A cash-spend
+  row carries no segment attribution by design; conflating bucket with
+  segment is the trap this entry exists to prevent.
+- **Supplier** — **the vendor paid**. A controlled list (Makro, ARO, the
+  wet-market stalls, the landlord if billed), the foreign-key target of
+  cash-spend rows' `supplier_id`. Reused in place from the shared types
+  (the same `Supplier` the dormant accrual purchase flow was built
+  around) — when (or if) the accrual story is revived, the supplier list
+  is already the right one.
+
+Cash-spend rows are **not day-apportioned**. A fixed cost belongs to a
+*month* (so a sub-month range takes a day-fraction of it); a cash
+purchase belongs to its own *date* — a 4,200 THB Makro bill is 4,200 THB
+whether the period is one day or seven, and a row outside `[start, end]`
+is excluded entirely. That single difference is why cash spend lives in
+its own table rather than as a new `fixed_costs` kind. Edits write to
+the same `audit_log` (`table='cash_spend'`) and revert the same way as
+every other config edit (ADR-0010).
 
 ## Reporting periods and modes
 

@@ -472,25 +472,31 @@ def test_hard_delete_a_bucket_with_referencing_rows_is_refused(
 ) -> None:
     """Deleting a bucket that cash-spend rows reference is refused with 409.
 
-    The FK constraint itself lands with #96; this route-level guard ships
-    now so the surface is honest from day one. Until #96 lands the
-    ``cash_spend`` table doesn't exist, so the in-use check answers False
-    and delete proceeds — but the guard is exercised here by creating the
-    table manually and inserting a referencing row, simulating #96's world.
+    The FK constraint lands with #96's migration 0011; the route-level
+    guard ships alongside #95 so the surface is honest from day one.
+    The ``cash_spend`` table is created by the migration, so this test
+    inserts a referencing row directly against the real schema.
     """
     app = _build_app(tmp_path, today=today)
     client = _authed_client(app)
 
-    # Simulate #96's cash_spend table existing with a row pointing at 'taps'.
     cfg = app.state.config_store
     with cfg._lock:
         cfg._conn.execute(
-            "CREATE TABLE cash_spend ("
-            " id INTEGER PRIMARY KEY, bucket_id TEXT NOT NULL, amount TEXT NOT NULL"
-            ")"
-        )
-        cfg._conn.execute(
-            "INSERT INTO cash_spend (id, bucket_id, amount) VALUES (1, 'taps', '500')"
+            "INSERT INTO cash_spend"
+            " (date, supplier_id, description, bucket_id, amount,"
+            "  vat_inclusive, created_at, created_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "2026-07-15",
+                "makro",
+                "test referencing row",
+                "taps",
+                "500",
+                0,
+                "2026-07-15T00:00:00+00:00",
+                "test",
+            ),
         )
         cfg._conn.commit()
 

@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 
+from ..cash_spend import CashSpendEntry
 from ..config.loader import load_costs, load_recipes
 from ..cost import CostBook
 from ..fixed_costs import FixedCostEntry
@@ -632,6 +633,7 @@ class SqliteConfigStore:
         "mappings": "item_id",
         "skus": "sku_id",
         "recipes": "sku_id",
+        "cash_spend": "id",
         "fixed_costs": "id",
         "spend_buckets": "bucket_id",
         "suppliers": "supplier_id",
@@ -1491,6 +1493,228 @@ class SqliteConfigStore:
         self._record_audit(
             "suppliers",
             supplier_id,
+            old=old,
+            new=None,
+            changed_by=deleted_by,
+            session_id=session_id,
+        )
+        return True
+
+    # --- Cash spend (issue #96, parent #82) -----------------------------------
+    #
+    # The row that produces the HTML's "Cost of goods — purchases (cash)"
+    # line and the per-bucket breakdown. A row is one bucket's slice of a
+    # vendor bill on a date (decision A of #82); a multi-bucket bill is N
+    # sibling rows sharing date + supplier, differing bucket + amount, no
+    # parent. The invoice total is the derived fact SUM(amount) WHERE
+    # date+supplier — never stored on a parent.
+    #
+    # Every write goes through the existing ``audit_log`` machinery with
+    # ``table_name='cash_spend'`` (registered in ``_PK_COLUMNS``), so the
+    # existing per-entry / per-session Revert works without new revert
+    # code — the ADR-0003 pattern, unchanged. The route-level
+    # referential-integrity checks (#94's ``supplier_in_use``, #95's
+    # ``spend_bucket_in_use``) already query this table; the migration's
+    # REFERENCES clauses match the 0002 convention (declarative; PRAGMA
+    # foreign_keys stays at its default).
+
+    def cash_spend_rows(self) -> list[CashSpendEntry]:
+        """Every cash-spend row, oldest first (issue #96).
+
+        Returned in the engine's own ``CashSpendEntry`` shape so the
+        reporting surface / P&L view can feed the list straight to
+        :func:`tangerine.cash_spend.cash_spend_for_period`. ``amount`` is
+        the THB amount as paid (gross when ``vat_inclusive``); the
+        aggregation layer divides by 1.07 only when the flag is set — the
+        same rule ADR-0003 decision 4 applied to the cost book, applied
+        here at aggregation time so the raw invoice total still
+        reconstructs from ``SUM(amount)``.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, date, supplier_id, description, bucket_id,"
+                " amount, vat_inclusive"
+                " FROM cash_spend ORDER BY id"
+            ).fetchall()
+        return [
+            CashSpendEntry(
+                row_id=row_id,
+                date=date.fromisoformat(day),
+                supplier_id=supplier_id,
+                description=description,
+                bucket_id=bucket_id,
+                amount=Decimal(amount),
+                vat_inclusive=bool(vat_inclusive),
+            )
+            for row_id, day, supplier_id, description, bucket_id, amount, vat_inclusive in rows
+        ]
+
+    def create_cash_spend(
+        self,
+        entry: CashSpendEntry,
+        *,
+        created_by: str,
+        session_id: str | None = None,
+    ) -> int:
+        """Store a new cash-spend row, audit-logged.
+
+        ``entry.row_id`` is ignored — the table auto-assigns the id and
+        the stored row gets it. Returns the new row's id. The id is only
+        stable once the surrounding batch commits (a rolled-back stroke
+        may have already allocated and discarded the rowid).
+
+        A multi-bucket bill is N independent ``create_cash_spend`` calls
+        (optionally wrapped in a :meth:`batch` for atomicity); the storage
+        shape has no parent row.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._create_cash_spend_impl(
+                entry, created_by=created_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._create_cash_spend_impl(
+                entry, created_by=created_by, session_id=session_id
+            )
+
+    def _create_cash_spend_impl(
+        self,
+        entry: CashSpendEntry,
+        *,
+        created_by: str,
+        session_id: str | None,
+    ) -> int:
+        """The write + audit, assuming the lock + transaction are held."""
+        cursor = self._conn.execute(
+            "INSERT INTO cash_spend"
+            " (date, supplier_id, description, bucket_id, amount,"
+            "  vat_inclusive, created_at, created_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry.date.isoformat(),
+                entry.supplier_id,
+                entry.description,
+                entry.bucket_id,
+                str(entry.amount),
+                1 if entry.vat_inclusive else 0,
+                self._now(),
+                created_by,
+            ),
+        )
+        row_id = int(cursor.lastrowid or 0)
+        self._record_audit(
+            "cash_spend",
+            str(row_id),
+            old=None,
+            new=self._row_snapshot("cash_spend", "id", str(row_id)),
+            changed_by=created_by,
+            session_id=session_id,
+        )
+        return row_id
+
+    def update_cash_spend(
+        self,
+        entry: CashSpendEntry,
+        *,
+        updated_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Replace a cash-spend row with ``entry``, audit-logged.
+
+        ``entry.row_id`` identifies the row to replace; every other field
+        is written from ``entry`` (the edit form always posts the whole
+        row). Returns ``False`` for an unknown id; nothing is written or
+        audited in that case. Reverts of the resulting audit entry restore
+        only the fields the edit moved (the amount, typically), leaving a
+        later edit to a different field intact — the surgical-revert rule.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._update_cash_spend_impl(
+                entry, updated_by=updated_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._update_cash_spend_impl(
+                entry, updated_by=updated_by, session_id=session_id
+            )
+
+    def _update_cash_spend_impl(
+        self,
+        entry: CashSpendEntry,
+        *,
+        updated_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        row_id = str(entry.row_id)
+        old = self._row_snapshot("cash_spend", "id", row_id)
+        if old is None:
+            return False
+        self._conn.execute(
+            "UPDATE cash_spend"
+            " SET date = ?, supplier_id = ?, description = ?,"
+            "     bucket_id = ?, amount = ?, vat_inclusive = ?"
+            " WHERE id = ?",
+            (
+                entry.date.isoformat(),
+                entry.supplier_id,
+                entry.description,
+                entry.bucket_id,
+                str(entry.amount),
+                1 if entry.vat_inclusive else 0,
+                entry.row_id,
+            ),
+        )
+        self._record_audit(
+            "cash_spend",
+            row_id,
+            old=old,
+            new=self._row_snapshot("cash_spend", "id", row_id),
+            changed_by=updated_by,
+            session_id=session_id,
+        )
+        return True
+
+    def delete_cash_spend(
+        self,
+        row_id: int,
+        *,
+        deleted_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Remove a cash-spend row entirely, audit-logged (revert restores).
+
+        Deletion is for rows that should never have existed (a typo, a
+        duplicate). Returns ``False`` for an unknown id. Batch-aware: see
+        :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._delete_cash_spend_impl(
+                row_id, deleted_by=deleted_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._delete_cash_spend_impl(
+                row_id, deleted_by=deleted_by, session_id=session_id
+            )
+
+    def _delete_cash_spend_impl(
+        self,
+        row_id: int,
+        *,
+        deleted_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        pk = str(row_id)
+        old = self._row_snapshot("cash_spend", "id", pk)
+        if old is None:
+            return False
+        self._conn.execute("DELETE FROM cash_spend WHERE id = ?", (row_id,))
+        self._record_audit(
+            "cash_spend",
+            pk,
             old=old,
             new=None,
             changed_by=deleted_by,
