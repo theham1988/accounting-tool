@@ -1052,6 +1052,153 @@ def create_app(
             return HTMLResponse("Unknown supplier.", status_code=404)
         return RedirectResponse(url="/admin/suppliers", status_code=303)
 
+    # --- Spend buckets (issue #95, parent #82) --------------------------------
+    #
+    # The controlled vocabulary cash-spend rows (slice #96) FK into. This
+    # slice ships the partner-facing admin surface: list the seeded six
+    # plus any partner additions, create a new bucket, retire one a partner
+    # no longer uses, hard-delete an empty typo bucket. Every write goes
+    # through ``audit_log`` with ``table_name='spend_buckets'``, so the
+    # existing per-entry / per-session Revert works without new revert
+    # code — the ADR-0003 pattern, unchanged.
+    #
+    # Buckets are cash-spend-only and deliberately NOT shared with
+    # ``fixed_costs.category`` (issue #82 decision D): the cash-spend
+    # buckets are COGS-side product-family; fixed-costs categories are
+    # entity-overhead. They overlap on ``staff`` and ``rent`` only because
+    # the HTML crammed them into one column.
+
+    def _spend_buckets_page_context(
+        request: Request,
+        *,
+        form_error: str | None = None,
+        form_values: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the spend-buckets admin page.
+
+        Presentation-only — create / retire / delete semantics live in the
+        store. The list is rendered verbatim from ``spend_buckets()`` (seeded
+        six first in display order, then partner additions in creation
+        order), including retired rows so a partner keeps the historical
+        context that ``retired_at`` preserves.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        buckets = cfg.spend_buckets()
+        return {
+            "request": request,
+            "buckets": buckets,
+            "form_error": form_error,
+            "form_values": form_values,
+        }
+
+    @app.get("/admin/spend-buckets", response_class=HTMLResponse)
+    def spend_buckets_page(request: Request) -> HTMLResponse:
+        """The spend-bucket vocabulary surface (issue #95).
+
+        One page: the add form plus the current buckets with retire/delete
+        actions. Retired buckets stay visible (struck-through) so a partner
+        reading the page keeps the historical context that ``retired_at``
+        preserves; slice #96's new-entry picker filters them out.
+        """
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="spend_buckets.html",
+            context=_spend_buckets_page_context(request),
+        )
+
+    @app.post("/admin/spend-buckets", response_model=None)
+    def create_spend_bucket(
+        request: Request,
+        bucket_id: str = Form(""),
+        name: str = Form(""),
+    ) -> HTMLResponse | RedirectResponse:
+        """Add a new bucket from the form, audit-logged.
+
+        ``bucket_id`` is the stable slug (lower-cased and trimmed here so
+        ``Taps`` and ``taps`` don't drift into two rows); ``name`` is the
+        display label. On a validation failure the page re-renders with an
+        inline error and the partner's submitted values echoed back — never
+        a bare 400, never a silent save. Nothing is written on a failed
+        submit.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        t: Jinja2Templates = app.state.templates
+        bucket_id = bucket_id.strip().lower()
+        name = name.strip()
+
+        def _rerender_with_error(message: str) -> HTMLResponse:
+            return t.TemplateResponse(
+                request=request,
+                name="spend_buckets.html",
+                context=_spend_buckets_page_context(
+                    request,
+                    form_error=message,
+                    form_values={"bucket_id": bucket_id, "name": name},
+                ),
+            )
+
+        if not bucket_id or not name:
+            return _rerender_with_error(
+                "Needs a bucket id and a name — nothing was saved."
+            )
+        try:
+            cfg.create_spend_bucket(
+                bucket_id,
+                name=name,
+                created_by=request.state.assignee_id,
+                session_id=request.state.session_id,
+            )
+        except sqlite3.IntegrityError:
+            return _rerender_with_error(
+                f"A bucket named '{bucket_id}' already exists — nothing was saved."
+            )
+        return RedirectResponse(url="/admin/spend-buckets", status_code=303)
+
+    @app.post("/admin/spend-buckets/{bucket_id}/retire", response_model=None)
+    def retire_spend_bucket(
+        request: Request, bucket_id: str
+    ) -> HTMLResponse | RedirectResponse:
+        """Soft-retire a bucket (logged; historical aggregation stays honest)."""
+        cfg: SqliteConfigStore = app.state.config_store
+        retired = cfg.retire_spend_bucket(
+            bucket_id,
+            retired_at=app.state.today.isoformat(),
+            updated_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not retired:
+            return HTMLResponse("Unknown spend bucket.", status_code=404)
+        return RedirectResponse(url="/admin/spend-buckets", status_code=303)
+
+    @app.post("/admin/spend-buckets/{bucket_id}/delete", response_model=None)
+    def delete_spend_bucket(
+        request: Request, bucket_id: str
+    ) -> HTMLResponse | RedirectResponse:
+        """Hard-delete an empty bucket (logged; revert restores).
+
+        Deleting a bucket that slice #96's cash-spend rows reference would
+        corrupt historical aggregation, so the route guards on
+        :meth:`SqliteConfigStore.spend_bucket_in_use` and rejects with a
+        partner-readable message. The FK constraint itself lands with #96;
+        this route-level guard ships now so the surface is honest from day
+        one.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        if cfg.spend_bucket_in_use(bucket_id):
+            return HTMLResponse(
+                "That bucket is in use by cash-spend rows — retire it instead.",
+                status_code=409,
+            )
+        deleted = cfg.delete_spend_bucket(
+            bucket_id,
+            deleted_by=request.state.assignee_id,
+            session_id=request.state.session_id,
+        )
+        if not deleted:
+            return HTMLResponse("Unknown spend bucket.", status_code=404)
+        return RedirectResponse(url="/admin/spend-buckets", status_code=303)
+
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request, filter: str | None = Query(default=None)) -> HTMLResponse:
         """The SKU view (Wave 1.5, Slice 2): one row per SKU, mapping/recipe/
