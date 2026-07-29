@@ -37,7 +37,7 @@ from ..fixed_costs import FixedCostEntry
 from ..price_history import PriceChange, PriceHistory
 from ..quantity import estimated_yield
 from ..recipes import RecipeCatalog
-from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord
+from ..types import Recipe, RecipeIngredient, Segment, SkuMapping, SkuRecord, Supplier
 from .schema import apply_migrations
 
 _MIGRATION_ACTOR = "migration"
@@ -634,6 +634,7 @@ class SqliteConfigStore:
         "recipes": "sku_id",
         "fixed_costs": "id",
         "spend_buckets": "bucket_id",
+        "suppliers": "supplier_id",
     }
 
     def _snapshot(self, table_name: str, pk: str) -> dict[str, Any] | None:
@@ -1276,6 +1277,220 @@ class SqliteConfigStore:
         self._record_audit(
             "fixed_costs",
             str(entry_id),
+            old=old,
+            new=None,
+            changed_by=deleted_by,
+            session_id=session_id,
+        )
+        return True
+
+    # --- Suppliers (issue #94) -------------------------------------------------
+    #
+    # A controlled vendor list the cash-spend entry surface (slice #96) will
+    # FK into. Vendors have no lifecycle (no recurring / one-off / ended-at);
+    # this is plain CRUD on a controlled list, because free-form lets "Makro"
+    # / "Makro Phuket" drift and break per-vendor aggregation (decision 2a of
+    # parent #82). Reuses the dormant ``Supplier(supplier_id, name)`` type in
+    # place (decision E of #82).
+    #
+    # Every write goes through the existing ``audit_log`` machinery with
+    # ``table_name='suppliers'`` (registered in ``_PK_COLUMNS``), so the
+    # existing per-entry / per-session Revert works without any new revert
+    # code — the ADR-0003 pattern, unchanged. The FK from ``cash_spend`` lands
+    # with #96; until then the route-level ``supplier_in_use`` guard refuses a
+    # delete that would break referential integrity once that FK is real.
+
+    def suppliers(self) -> list[Supplier]:
+        """Every stored supplier, in ``supplier_id`` order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT supplier_id, name FROM suppliers ORDER BY supplier_id"
+            ).fetchall()
+        return [Supplier(supplier_id=supplier_id, name=name) for supplier_id, name in rows]
+
+    def get_supplier(self, supplier_id: str) -> Supplier | None:
+        """One supplier by id, or ``None`` — the editor route's existence check."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT supplier_id, name FROM suppliers WHERE supplier_id = ?",
+                (supplier_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        found_id, name = row
+        return Supplier(supplier_id=found_id, name=name)
+
+    def create_supplier(
+        self,
+        supplier_id: str,
+        *,
+        name: str,
+        created_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Create a new supplier, audit-logged.
+
+        ``supplier_id`` is the PK the cash-spend rows in #96 will FK to, so
+        re-creating one id is refused (returns ``False``) rather than
+        clobbering the existing row's name. Nothing is written or audited
+        on a refused create.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._create_supplier_impl(
+                supplier_id, name=name, created_by=created_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._create_supplier_impl(
+                supplier_id, name=name, created_by=created_by, session_id=session_id
+            )
+
+    def _create_supplier_impl(
+        self,
+        supplier_id: str,
+        *,
+        name: str,
+        created_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        existing = self._row_snapshot("suppliers", "supplier_id", supplier_id)
+        if existing is not None:
+            return False
+        self._conn.execute(
+            "INSERT INTO suppliers (supplier_id, name, created_at, created_by)"
+            " VALUES (?, ?, ?, ?)",
+            (supplier_id, name, self._now(), created_by),
+        )
+        self._record_audit(
+            "suppliers",
+            supplier_id,
+            old=None,
+            new=self._row_snapshot("suppliers", "supplier_id", supplier_id),
+            changed_by=created_by,
+            session_id=session_id,
+        )
+        return True
+
+    def update_supplier(
+        self,
+        supplier_id: str,
+        *,
+        name: str,
+        updated_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Rename a supplier (the id is immutable — it is the FK target).
+
+        Returns ``False`` for an unknown id; nothing is written or audited
+        in that case. Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._update_supplier_impl(
+                supplier_id, name=name, updated_by=updated_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._update_supplier_impl(
+                supplier_id, name=name, updated_by=updated_by, session_id=session_id
+            )
+
+    def _update_supplier_impl(
+        self,
+        supplier_id: str,
+        *,
+        name: str,
+        updated_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("suppliers", "supplier_id", supplier_id)
+        if old is None:
+            return False
+        self._conn.execute(
+            "UPDATE suppliers SET name = ? WHERE supplier_id = ?",
+            (name, supplier_id),
+        )
+        self._record_audit(
+            "suppliers",
+            supplier_id,
+            old=old,
+            new=self._row_snapshot("suppliers", "supplier_id", supplier_id),
+            changed_by=updated_by,
+            session_id=session_id,
+        )
+        return True
+
+    def supplier_in_use(self, supplier_id: str) -> bool:
+        """Whether any row currently references ``supplier_id``.
+
+        Forward-looking for slice #96: once ``cash_spend`` lands with its FK
+        to ``suppliers.supplier_id``, this is the check the delete route
+        runs to refuse a delete that would break referential integrity.
+        Today the table is empty (or absent), so this answers False; the
+        guard ships now so it is in place the moment the FK is real.
+        """
+        with self._lock:
+            if not self._conn.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type = 'table' AND name = 'cash_spend'"
+            ).fetchone():
+                return False
+            row = self._conn.execute(
+                "SELECT 1 FROM cash_spend WHERE supplier_id = ? LIMIT 1",
+                (supplier_id,),
+            ).fetchone()
+        return row is not None
+
+    def delete_supplier(
+        self,
+        supplier_id: str,
+        *,
+        deleted_by: str,
+        session_id: str | None = None,
+    ) -> bool:
+        """Hard-delete a supplier, audit-logged (revert restores it).
+
+        Refuses (returns ``False``) when the supplier does not exist or when
+        :meth:`supplier_in_use` reports a referencing row — the partner gets
+        a clear message rather than a 500 from a future FK violation. The
+        FK constraint itself lands with slice #96; the guard is correct
+        today against the empty table and stands ready.
+
+        Batch-aware: see :meth:`save_cost`.
+        """
+        if self._in_batch:
+            return self._delete_supplier_impl(
+                supplier_id, deleted_by=deleted_by, session_id=session_id
+            )
+        with self._lock, self._conn:
+            return self._delete_supplier_impl(
+                supplier_id, deleted_by=deleted_by, session_id=session_id
+            )
+
+    def _delete_supplier_impl(
+        self,
+        supplier_id: str,
+        *,
+        deleted_by: str,
+        session_id: str | None,
+    ) -> bool:
+        """The write + audit, assuming the lock + transaction are held."""
+        old = self._row_snapshot("suppliers", "supplier_id", supplier_id)
+        if old is None:
+            return False
+        # Re-check in-use inside the held transaction so a concurrent
+        # cash-spend write cannot slip in between the route's check and the
+        # delete. ``supplier_in_use`` takes the lock itself; we are already
+        # inside ``self._lock`` (an RLock), so this re-enters cleanly.
+        if self.supplier_in_use(supplier_id):
+            return False
+        self._conn.execute(
+            "DELETE FROM suppliers WHERE supplier_id = ?", (supplier_id,)
+        )
+        self._record_audit(
+            "suppliers",
+            supplier_id,
             old=old,
             new=None,
             changed_by=deleted_by,
