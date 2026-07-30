@@ -35,11 +35,12 @@ Two prior wayfinder issues settled the mechanics this ADR stands on:
 #70's grilling ([resolution comment](https://github.com/theham1988/accounting-tool/issues/70))
 locked five decisions that #72 deliberately left open — the partner-facing
 semantics: *which number, which items, what happens to Loyverse-side edits, when
-the file is produced, and what paper trail the export leaves*. The implementation
-landed in three slices (#101 round-trip CSV, #102 paper trail, #103 drift badge)
-and the partners have exercised the flow in production. This ADR records what was
-decided and why, now that its consequences have been observed rather than guessed
-at.
+the file is produced, and what paper trail the export leaves*. This ADR records
+what was decided and why. The implementation is **pending**: three slices are
+specified (#101 round-trip CSV, #102 paper trail, #103 drift badge) but not yet
+on `main` as of this ADR's acceptance; they ship as separate PRs against this
+decision. The five resolutions were validated against working-slice code and the
+partner's grilling, not guessed at.
 
 ## The gate
 
@@ -200,7 +201,7 @@ they can land and evolve on separate cadences.
 - ADR-0003 — decision 2 (audit-and-revert posture; "too small for gates", which
   decision 3 and decision 5 inherit) and decision 4 (net-of-VAT cost, which
   decision 1 mirrors exactly)
-- ADR-0005 — `CostResolver.cost_per_unit`, the single public costing face
+- ADR-0011 — `CostResolver.cost_per_unit`, the single public costing face
   decision 1 emits
 - ADR-0008 — the gross-sales headline, which is why Loyverse's gross-profit
   *number* cannot mirror (the gross-profit-number caveat)
