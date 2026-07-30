@@ -46,6 +46,7 @@ from ..cost import CostBook
 from ..cost_mirror import (
     DriftStatus,
     InvalidLoyverseExportError,
+    drift_payload_json,
     emit_filled_csv,
     prepare as prepare_cost_mirror,
 )
@@ -2556,7 +2557,15 @@ def create_app(
         The ``Content-Disposition`` filename includes today's date so the
         partner can find it in Downloads. On a wrong-file / missing-column
         error the route serves a clear HTML error page (not a corrupt
-        download). Slice 1 writes no audit row; the paper trail lands in 2.
+        download).
+
+        Slice 2 (#102): a successful confirm also writes one row to the
+        dedicated ``loyverse_exports`` table — the paper trail (who, when,
+        ``item_count`` / ``changed_count``, and the drift payload the partner
+        was shown). This is **not** an ``audit_log`` write: a Loyverse confirm
+        is a mirror action, not a config edit, so it bypasses the 9am "N
+        config changes" count (the Q5 decision, #70 / #100). A zero-drift
+        confirm still writes a row — PRD user story 9.
         """
         text, filename, error_msg = _resolve_text_and_filename(request, file)
         if error_msg is not None or text is None:
@@ -2569,6 +2578,23 @@ def create_app(
             )
         except InvalidLoyverseExportError as exc:
             return HTMLResponse(_not_a_loyverse_export_error(exc), status_code=400)
+
+        # Slice 2 (#102): record the paper-trail row on the dedicated
+        # ``loyverse_exports`` table. This is NOT an audit-log write — a
+        # Loyverse confirm is a mirror action, not a config edit, so it must
+        # not feed ``unreviewed_changes`` / the 9am "N config changes" count
+        # (the Q5 dedicated-vs-audit-log decision, #70 resolution / #100).
+        # A zero-drift confirm still records a row (``changed_count = 0``,
+        # ``drift_payload = "[]"``) — PRD user story 9. The store's injectable
+        # clock stamps ``confirmed_at``; the logged-in partner's id is the
+        # attributing key, threaded from login the same way every Admin write is.
+        cfg: SqliteConfigStore = app.state.config_store
+        cfg.record_loyverse_export(
+            partner_id=request.state.assignee_id,
+            item_count=result.item_count,
+            changed_count=result.changed_count,
+            drift_payload=drift_payload_json(result),
+        )
 
         filled = emit_filled_csv(result)
         stamp = app.state.today.isoformat()
