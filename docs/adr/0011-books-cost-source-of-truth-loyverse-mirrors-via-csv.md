@@ -36,11 +36,16 @@ Two prior wayfinder issues settled the mechanics this ADR stands on:
 locked five decisions that #72 deliberately left open — the partner-facing
 semantics: *which number, which items, what happens to Loyverse-side edits, when
 the file is produced, and what paper trail the export leaves*. This ADR records
-what was decided and why. The implementation is **pending**: three slices are
-specified (#101 round-trip CSV, #102 paper trail, #103 drift badge) but not yet
-on `main` as of this ADR's acceptance; they ship as separate PRs against this
-decision. The five resolutions were validated against working-slice code and the
-partner's grilling, not guessed at.
+what was decided and why. The implementation has **landed** on `main`: the
+three slices shipped as PRs [#108](https://github.com/theham1988/accounting-tool/pull/108)
+(round-trip CSV, #101), [#109](https://github.com/theham1988/accounting-tool/pull/109)
+(paper trail, #102), and [#110](https://github.com/theham1988/accounting-tool/pull/110)
+(drift badge, #103). The five resolutions were validated against working-slice
+code and the partner's grilling, not guessed at. (An earlier draft of this ADR
+falsely claimed the slices had landed and been exercised in production; PR
+[#107](https://github.com/theham1988/accounting-tool/pull/107) corrected that to
+"pending" while the slices shipped, and this sentence flips it back now that they
+have.)
 
 ## The gate
 
