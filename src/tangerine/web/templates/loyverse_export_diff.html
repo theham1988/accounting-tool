@@ -1,0 +1,118 @@
+{#
+  Loyverse cost-mirror — drift diff page (issue #101).
+
+  The partner uploaded a Loyverse items export; Books parsed it, joined its
+  recipe costs onto each row, and here shows the per-row diff before
+  anything is written. Each row is labelled:
+
+    - "filled"                              — mapped + costable; Books' cost shown
+    - "no Books cost: unmapped"             — no recipe for that SKU
+    - "no Books cost: unknown-price"        — recipe has an unpriced ingredient
+    - "differs: Loyverse X → Books Y"       — costable, Loyverse value disagrees
+
+  Confirm re-derives the diff from current state (a cost edit between prepare
+  and confirm is reflected in the served file) and serves the filled CSV.
+  The diff is the visibility layer; on confirm Books overwrites ``Cost`` for
+  every costable row, drifted or not (Books is source of truth).
+
+  Slice 1 writes no audit row and records nothing — slice 2 adds the
+  ``loyverse_exports`` paper trail.
+#}
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Loyverse cost import — review — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review loyverse-export loyverse-export--diff">
+    <header class="loyverse-export__subhead">
+      <a class="loyverse-export__back" href="/admin/loyverse-export">
+        <span aria-hidden="true">&larr;</span>
+        <span class="loyverse-export__back-label">Cost import</span>
+      </a>
+      <h1 class="loyverse-export__title">REVIEW COST DIFF</h1>
+      <span class="loyverse-export__admin-tag">ADMIN</span>
+    </header>
+
+    <p class="loyverse-export__summary">
+      {{ result.item_count }} items in <strong>{{ filename }}</strong> ·
+      {{ result.filled_count }} Books can cost ·
+      {{ result.changed_count }} will change on confirm.
+    </p>
+
+    <p class="loyverse-export__intro">
+      Books fills the <code>Cost</code> column for every item it can cost and
+      leaves it <strong>blank</strong> for the ones it can't (so Loyverse
+      keeps whatever cost it already had). Confirm downloads the filled file;
+      upload it back to Loyverse Back Office to mirror.
+    </p>
+
+    <!--section:loyverse-export-diff-->
+    <section class="loyverse-export__diff">
+      <h2 class="loyverse-export__step-label">2. Review the diff</h2>
+      <table class="loyverse-export__diff-table">
+        <thead>
+          <tr>
+            <th class="loyverse-export__diff-name">Item</th>
+            <th class="loyverse-export__diff-status">Status</th>
+            <th class="loyverse-export__diff-loyverse">Loyverse</th>
+            <th class="loyverse-export__diff-books">Books</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in result.drift_rows %}
+          <tr class="loyverse-export__diff-row loyverse-export__diff-row--{{ row.status.value }}">
+            <td class="loyverse-export__diff-name">
+              {{ row.name or row.sku }}
+              {% if row.sku %}<span class="loyverse-export__diff-sku">{{ row.sku }}</span>{% endif %}
+            </td>
+            <td class="loyverse-export__diff-status">
+              {% if row.status.value == "differs" %}
+                differs: Loyverse {{ row.loyverse_cost }} → Books {{ row.books_cost }}
+              {% else %}
+                {{ row.status.value }}
+              {% endif %}
+            </td>
+            <td class="loyverse-export__diff-loyverse">
+              {{ row.loyverse_cost if row.loyverse_cost is not none else "—" }}
+            </td>
+            <td class="loyverse-export__diff-books">
+              {{ row.books_cost if row.books_cost is not none else "—" }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    <!--/section:loyverse-export-diff-->
+
+    <!--section:loyverse-export-confirm-->
+    <section class="loyverse-export__confirm">
+      <h2 class="loyverse-export__step-label">3. Confirm and download</h2>
+      <p class="loyverse-export__step-copy">
+        Books re-derives the diff from current state on confirm — a cost edit
+        since you opened this page is reflected in the file. The download is
+        UTF-8 with every Loyverse column preserved; only <code>Cost</code> is
+        touched.
+      </p>
+      <form method="post" action="/admin/loyverse-export/confirm"
+            enctype="multipart/form-data" class="loyverse-export__confirm-form">
+        {# Confirm does not require a re-upload: Books holds the parsed upload
+           keyed by this session from the prepare step (issue #101 AC). A
+           partner may optionally re-upload here (e.g. on a fresh browser);
+           a posted file wins and refreshes the held shape. The diff is
+           always re-derived via prepare() from current Books state, so a
+           stale hold can never serve a file built from old costs. #}
+        <label class="loyverse-export__refile-hint">
+          <input type="file" name="file" accept=".csv,text/csv"
+                 class="loyverse-export__file-input--optional"
+                 aria-label="Optionally re-upload the Loyverse items CSV">
+          Re-upload only if you started a fresh browser; otherwise Books uses
+          the file you just prepared.
+        </label>
+        <button type="submit" class="loyverse-export__btn loyverse-export__btn--primary">
+          CONFIRM &amp; DOWNLOAD FILLED CSV
+        </button>
+      </form>
+    </section>
+    <!--/section:loyverse-export-confirm-->
+  </div>
+{% endblock %}

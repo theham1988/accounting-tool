@@ -26,6 +26,7 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -41,6 +42,13 @@ from starlette.background import BackgroundTask
 
 from ..cash_spend import CashSpendEntry
 from ..config.loader import load_assignees
+from ..cost import CostBook
+from ..cost_mirror import (
+    DriftStatus,
+    InvalidLoyverseExportError,
+    emit_filled_csv,
+    prepare as prepare_cost_mirror,
+)
 from ..coverage import (
     build_item_coverage,
     build_sku_coverage,
@@ -447,6 +455,15 @@ def create_app(
     app.state.auth_config = auth_config
     app.state.authenticator = authenticator
     app.state.now_epoch = now_epoch
+    # In-memory hold of the most recent Loyverse items export each session
+    # prepared, so the confirm step does not require a re-upload (issue #101
+    # AC). Keyed by ``session_id``; the value is the ``(text, filename)``
+    # tuple. Confirm *always* re-derives the diff via ``prepare(...)`` from
+    # current Books state — the held text is a convenience, never a trust
+    # path (the "re-derive defensively" AC). A single-process dict is
+    # sufficient: the app runs under one uvicorn worker behind nginx, and a
+    # server restart simply asks the partner to re-prepare.
+    app.state.loyverse_export_held_uploads = {}
 
     # The auth gate sits between Starlette's routing and our route handlers.
     # Public paths (``/login``, ``/static``) bypass it; everything else
@@ -2349,6 +2366,220 @@ def create_app(
         applied_count = len(preview.mapping_changes) + len(preview.cost_changes)
         return RedirectResponse(
             url=f"/upload?applied={applied_count}", status_code=303
+        )
+
+    # --- Loyverse cost-mirror (issue #101, parent spec #100) ----------------
+    #
+    # The partner-facing cost-mirror UX minus the audit trail (slice 1). A
+    # partner uploads a Loyverse back-office items export; Books fills the
+    # ``Cost`` column from its recipes via :class:`CostResolver`, shows a
+    # drift diff, and on confirm serves the filled round-trip CSV for
+    # download. The partner then uploads that file to Loyverse Back Office
+    # themselves (Loyverse's own recommended export→edit→re-import flow).
+    #
+    # Books is the cost source of truth; Loyverse mirrors via CSV. (The ADR
+    # recording that decision lands with slice 2's audit trail.) This slice
+    # ships no paper trail and no drift badge — those land in slices 2 and 3.
+    # The pure engine is :mod:`tangerine.cost_mirror`; these routes own HTTP.
+
+    def _loyverse_export_page_context(
+        request: Request,
+        *,
+        error: str | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the cost-mirror landing/upload page."""
+        return {"request": request, "error": error}
+
+    #: The three wrong-file error messages, shared by the prepare and confirm
+    #: routes so they cannot drift apart. Each names what the partner should
+    #: do (export Items from Loyverse Back Office) — the AC's "clear error
+    #: page, not a corrupt file".
+    _NO_FILE_MSG = "Choose a Loyverse items export CSV first."
+    _NOT_UTF8_MSG = (
+        "That file isn't a UTF-8 CSV. Export 'Items' from Loyverse Back "
+        "Office and upload the .csv file."
+    )
+
+    def _not_a_loyverse_export_error(exc: InvalidLoyverseExportError) -> str:
+        return (
+            "That CSV doesn't look like a Loyverse items export "
+            f"({exc}). Export 'Items' from Loyverse Back Office and "
+            "upload that file."
+        )
+
+    @app.get("/admin/loyverse-export", response_class=HTMLResponse)
+    def loyverse_export_page(request: Request) -> HTMLResponse:
+        """The cost-mirror landing: an upload form for the Loyverse items export.
+
+        Linked from ``/admin`` beside the cost book. Auth-required, like every
+        Admin route. The prepare step takes the uploaded file and renders the
+        drift diff; this page is just the entry point.
+        """
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="loyverse_export.html",
+            context=_loyverse_export_page_context(request),
+        )
+
+    def _cost_mirror_books_inputs() -> tuple[RecipeCatalog, CostBook]:
+        """Read current Books state into the shapes ``cost_mirror`` consumes.
+
+        The pure engine takes a :class:`RecipeCatalog` + :class:`CostBook`;
+        the store supplies both. Built fresh on every call so prepare and
+        confirm see the same current state (confirm re-derives rather than
+        trusting a held payload — the AC).
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        catalog = RecipeCatalog(list(cfg.recipes()), list(cfg.mappings()))
+        return catalog, cfg.cost_book()
+
+    def _decode_upload(file: UploadFile) -> str:
+        """Read an uploaded file to text, stripping the UTF-8 BOM Excel prepends.
+
+        ``utf-8-sig`` decodes UTF-8 with or without a BOM, so the same code
+        handles a Loyverse export (no BOM) and an Excel-saved edit (BOM). A
+        decoding failure (a binary file uploaded by mistake — e.g. an XLSX)
+        surfaces as a clear error rather than a corrupt diff.
+        """
+        raw = file.file.read()
+        return raw.decode("utf-8-sig")
+
+    @dataclass(frozen=True)
+    class HeldUpload:
+        """A parsed Loyverse export held server-side keyed by session.
+
+        Held so confirm need not re-upload (the AC); the held text is a
+        convenience only — confirm always re-derives via ``prepare(...)``
+        from current state, so a stale hold can never serve a file built
+        from old costs.
+        """
+
+        text: str
+        filename: str
+
+    def _resolve_text_and_filename(
+        request: Request, file: UploadFile | None
+    ) -> tuple[str | None, str | None, str | None]:
+        """Resolve the CSV text + filename for prepare/confirm, or return an error.
+
+        Shared by both routes so the decode-or-fall-back-to-held shape lives
+        in one place. Returns ``(text, filename, error_msg)``: on success
+        ``error_msg`` is None; on failure ``text`` and ``filename`` are None
+        and ``error_msg`` carries the user-facing message. A posted file
+        always wins over the held upload; a missing file falls back to the
+        held upload from prepare (so confirm does not require a re-upload).
+        """
+        if file is not None and file.filename:
+            try:
+                text = _decode_upload(file)
+            except UnicodeDecodeError:
+                return None, None, _NOT_UTF8_MSG
+            session_id = request.state.session_id
+            if session_id is not None:
+                held_uploads[session_id] = HeldUpload(text, file.filename)
+            return text, file.filename, None
+        session_id = request.state.session_id
+        held = held_uploads.get(session_id) if session_id is not None else None
+        if held is None:
+            return None, None, _NO_FILE_MSG
+        return held.text, held.filename, None
+
+    held_uploads: dict[str, HeldUpload] = app.state.loyverse_export_held_uploads
+
+    @app.post("/admin/loyverse-export/prepare", response_class=HTMLResponse)
+    def loyverse_export_prepare(
+        request: Request,
+        file: UploadFile | None = None,
+    ) -> HTMLResponse:
+        """Parse an uploaded Loyverse items export and render the drift diff.
+
+        Each row is labelled "filled" (mapped + costable, Books' number shown),
+        "no Books cost: unmapped" (no recipe for that SKU), "no Books cost:
+        unknown-price" (recipe has an unpriced ingredient), or "differs:
+        Loyverse X → Books Y" (costable, Loyverse value disagrees). The page
+        carries a Confirm button that POSTs to ``/confirm``.
+
+        The uploaded text + filename are held server-side keyed by the
+        partner's session so confirm does not require a re-upload (AC). Wrong-
+        file / missing-column errors re-render the landing page with a clear
+        message naming the missing column — never a corrupt diff.
+        """
+        t: Jinja2Templates = app.state.templates
+        text, filename, error_msg = _resolve_text_and_filename(request, file)
+        if error_msg is not None or text is None:
+            return t.TemplateResponse(
+                request=request,
+                name="loyverse_export.html",
+                context=_loyverse_export_page_context(request, error=error_msg),
+            )
+
+        catalog, cost = _cost_mirror_books_inputs()
+        try:
+            result = prepare_cost_mirror(
+                csv_text=text, recipes=catalog, cost=cost
+            )
+        except InvalidLoyverseExportError as exc:
+            return t.TemplateResponse(
+                request=request,
+                name="loyverse_export.html",
+                context=_loyverse_export_page_context(
+                    request, error=_not_a_loyverse_export_error(exc)
+                ),
+            )
+
+        return t.TemplateResponse(
+            request=request,
+            name="loyverse_export_diff.html",
+            context={
+                "request": request,
+                "result": result,
+                "filename": filename,
+            },
+        )
+
+    @app.post("/admin/loyverse-export/confirm")
+    def loyverse_export_confirm(
+        request: Request,
+        file: UploadFile | None = None,
+    ) -> Response:
+        """Re-derive the diff from current state and serve the filled CSV.
+
+        If a fresh file is posted, it wins (and updates the held shape); if
+        not, the held upload from prepare is used — confirm does not require a
+        re-upload (AC). Either way the diff is re-derived via ``prepare(...)``
+        from current Books state, so a cost edit between prepare and confirm
+        is reflected in the served file (the "re-derive defensively" AC).
+
+        The served file is UTF-8 with BOM, every uploaded column preserved,
+        only ``Cost`` touched (filled for costable rows, blank for uncostable).
+        The ``Content-Disposition`` filename includes today's date so the
+        partner can find it in Downloads. On a wrong-file / missing-column
+        error the route serves a clear HTML error page (not a corrupt
+        download). Slice 1 writes no audit row; the paper trail lands in 2.
+        """
+        text, filename, error_msg = _resolve_text_and_filename(request, file)
+        if error_msg is not None or text is None:
+            return HTMLResponse(error_msg, status_code=400)
+
+        catalog, cost = _cost_mirror_books_inputs()
+        try:
+            result = prepare_cost_mirror(
+                csv_text=text, recipes=catalog, cost=cost
+            )
+        except InvalidLoyverseExportError as exc:
+            return HTMLResponse(_not_a_loyverse_export_error(exc), status_code=400)
+
+        filled = emit_filled_csv(result)
+        stamp = app.state.today.isoformat()
+        return Response(
+            content=filled,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="loyverse-costs-{stamp}.csv"'
+                )
+            },
         )
 
     @app.post("/sync", response_class=HTMLResponse)
