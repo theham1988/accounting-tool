@@ -7,10 +7,18 @@
   parses it, joins Books' recipe costs, and renders the drift diff; confirm
   serves the filled round-trip CSV for the partner to upload to Loyverse.
 
-  Slice 1 ships no drift badge and no audit trail — those land in slices 2
-  and 3. This page is just the upload form plus a clear error message when
-  the wrong file is uploaded (AC: "wrong-file / missing-column errors render
-  a clear error page, not a corrupt file").
+  Slice 3 (issue #103) adds the drift badge — a quiet line that makes
+  "Loyverse is stale" detectable from inside Books. The badge reads the most
+  recent ``loyverse_exports.confirmed_at`` and the count of cost edits since;
+  it is suppressed before any export (no "stale since forever" message) and
+  counts cost edits only (a recipe edit alone does not inflate it). The
+  wording reads "since the last Loyverse import" but the value is the last
+  *export* — Books does not track whether the partner uploaded the file or
+  whether Loyverse ingested it (Q5 trust-boundary resolution, issue #70 /
+  spec #100); the wording is honest about what Books can verify.
+
+  This page is the only surface for the badge — no banner on the daily
+  review, no notification.
 #}
 {% extends "_base.html" %}
 {% set nav_active = "reports" %}
@@ -32,6 +40,14 @@
       and Books fills the <code>Cost</code> column from your recipes. Confirm
       the diff, download the filled file, and upload it back to Loyverse.
     </p>
+
+    {% if drift_badge %}
+    {% set changed = drift_badge[0] %}
+    {% set last_import_date = drift_badge[1] %}
+    <!--section:loyverse-export-drift-badge-->
+    <p class="loyverse-export__drift-badge">{{ changed }} item cost{{ "" if changed == 1 else "s" }} changed in Books since the last Loyverse import on {{ last_import_date }}.</p>
+    <!--/section:loyverse-export-drift-badge-->
+    {% endif %}
 
     {% if error %}
     <!--section:loyverse-export-error-->
