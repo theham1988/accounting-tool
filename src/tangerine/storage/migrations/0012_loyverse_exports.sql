@@ -27,18 +27,45 @@
 -- (ADR-0003), not this database. ``confirmed_at`` is TEXT (UTC ISO-8601)
 -- stamped by the store's injectable clock (the same ``now=`` seam
 -- ``cash_spend`` and every other audited write uses), so tests pin the
--- timestamp. ``drift_payload`` is TEXT holding a JSON array of
--- ``{sku, name, loyverse_cost, books_cost}`` for the changed rows — the
--- exact diff the prepare step rendered (issue #101), so "what did we
--- overwrite and when" is answerable later without reconstruction.
+-- timestamp.
+--
+-- ``changed_count`` vs ``drift_payload`` — the intentional asymmetry (issue
+-- #105, decision option 1). The two fields answer genuinely different
+-- questions and are deliberately NOT aligned:
+--
+--   * ``changed_count`` answers "how many ``Cost`` cells in this file moved
+--     on import?" — the partner-facing, import-shape fact. A cell "moves"
+--     when (a) Loyverse had a ``Cost`` and it disagreed with Books' number
+--     (a DIFFERS row), or (b) Loyverse's ``Cost`` was blank and Books is
+--     adding one (a blank-fill FILLED row). A rounded match does not count
+--     as a move.
+--   * ``drift_payload`` answers "where did Books overwrite a value Loyverse
+--     actually held?" — the audit-trail fact. It carries the DIFFERS rows
+--     only; each entry is ``{sku, name, loyverse_cost, books_cost}``. A
+--     blank-fill is NOT an overwrite of a Loyverse value (there was nothing
+--     there), so blank-fill FILLED rows count toward ``changed_count`` but
+--     do NOT appear in the payload.
+--
+-- So ``len(drift_payload)`` can be strictly less than ``changed_count``.
+-- The clearest case — a first-ever confirm where Books fills Loyverse's
+-- blanks — records e.g. ``changed_count = 2, drift_payload = '[]'``, and
+-- that is correct, not contradictory: two cells moved (Loyverse gained
+-- costs it didn't have), but Books overwrote zero Loyverse-held values.
+-- Aligning the payload to the count (option 2) would force
+-- ``loyverse_cost: null`` entries into the payload, breaking its "both
+-- values present" shape and its match with what the diff page rendered;
+-- adding a third ``differs_count`` field (option 3) would add a count
+-- column for a distinction these comments + the ``cost_mirror`` docstrings
+-- already carry. Decision recorded in #105; this comment is the schema-
+-- level leg of that decision.
 
 CREATE TABLE IF NOT EXISTS loyverse_exports (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     partner_id     TEXT NOT NULL,                       -- confirming partner's assignee id
     confirmed_at   TEXT NOT NULL,                       -- UTC ISO-8601, from the store's injectable clock
     item_count     INTEGER NOT NULL,                    -- rows in the emitted file
-    changed_count  INTEGER NOT NULL,                    -- rows where Books' number differed from Loyverse's (0 on a no-drift confirm)
-    drift_payload  TEXT NOT NULL                        -- JSON array of {sku,name,loyverse_cost,books_cost} for the changed rows
+    changed_count  INTEGER NOT NULL,                    -- cells that moved (differs + blank-fills); see #105 — a blank Loyverse Cost that Books fills counts as a move, a rounded match does not
+    drift_payload  TEXT NOT NULL                        -- DIFFERS rows only (where Loyverse had a value to overwrite); blank-fill FILLED rows count toward changed_count but not here. See #105.
 );
 
 CREATE INDEX IF NOT EXISTS idx_loyverse_exports_confirmed_at
