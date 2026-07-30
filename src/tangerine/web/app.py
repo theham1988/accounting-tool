@@ -62,6 +62,7 @@ from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
 from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
+from ..loyverse.parser import VENUE_TIMEZONE
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
 from ..margin import CostResolver, cost_breakdown
@@ -2388,8 +2389,33 @@ def create_app(
         *,
         error: str | None = None,
     ) -> dict[str, object]:
-        """Shared template context for the cost-mirror landing/upload page."""
-        return {"request": request, "error": error}
+        """Shared template context for the cost-mirror landing/upload page.
+
+        Slice 3 (issue #103): carries the drift badge — ``None`` when there is
+        no prior export (the template suppresses it), else a
+        ``(changed_count, last_import_date)`` pair the template renders as
+        "N item cost(s) changed since the last Loyverse import on <date>."
+
+        The trust-boundary caveat (Q5 resolution, issue #70 / spec #100): the
+        wording reads "since the last Loyverse import" but the value backing
+        it is the last *export* (``loyverse_exports.confirmed_at``). Books does
+        not track whether the partner uploaded the file to Loyverse or whether
+        Loyverse ingested it — the wording is honest about what Books can
+        verify. The rendered date is the venue-local calendar date of the most
+        recent confirm, so the partner sees a day they recognise.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        exports = cfg.loyverse_exports()
+        drift_badge: tuple[int, str] | None = None
+        if exports:
+            most_recent = exports[0]
+            changed = cfg.cost_edits_since(most_recent.confirmed_at)
+            drift_badge = (changed, _venue_date_label(most_recent.confirmed_at))
+        return {
+            "request": request,
+            "error": error,
+            "drift_badge": drift_badge,
+        }
 
     #: The three wrong-file error messages, shared by the prepare and confirm
     #: routes so they cannot drift apart. Each names what the partner should
@@ -2683,6 +2709,21 @@ def _month_label(day: date) -> str:
 def _day_label(day: date) -> str:
     """The breadcrumb's day wording, e.g. ``15 Jul`` (no zero padding)."""
     return f"{day.day} {day.strftime('%b')}"
+
+
+def _venue_date_label(iso_utc: str) -> str:
+    """A UTC ISO-8601 timestamp rendered as the venue-local calendar date.
+
+    The drift badge (issue #103) shows a partner the day of the most recent
+    Loyverse cost-mirror export, not a UTC instant — a 03:00 UTC confirm is
+    ``10:00`` in Phuket the same day, and a 20:00 UTC confirm is ``03:00`` the
+    *next* day. Rendering the venue-local date means the partner sees a day
+    they recognise, matching the calendar the rest of the tool runs on
+    (``Asia/Bangkok``, the same timezone the Loyverse parser shifts to). The
+    format (``29 Jul 2026``) echoes the breadcrumb's ``_day_label`` + year.
+    """
+    local = datetime.fromisoformat(iso_utc).astimezone(VENUE_TIMEZONE)
+    return f"{local.day} {local.strftime('%b')} {local.year}"
 
 
 def _day_crumbs(day: date) -> list[dict[str, str | None]]:

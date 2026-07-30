@@ -1841,6 +1841,44 @@ class SqliteConfigStore:
             )
             return int(cursor.lastrowid or 0)
 
+    def cost_edits_since(self, since: str) -> int:
+        """Count ``audit_log`` rows for cost edits newer than ``since``.
+
+        The drift badge's backing read (issue #103, parent spec #100): "how
+        many item costs have changed in Books since the most recent Loyverse
+        cost-mirror export?" The caller passes the most recent
+        :attr:`LoyverseExport.confirmed_at` as ``since``; this counts
+        ``audit_log`` rows with ``table_name = 'costs'`` and
+        ``changed_at > since``.
+
+        Three rules this holds, mirroring the badge's AC:
+
+        - **Cost edits only.** The filter is ``table_name = 'costs'`` — a
+          recipe edit (``table_name = 'recipes'``) does not count. The
+          mirrored cost comes from :class:`~tangerine.margin.CostResolver`
+          over the cost book, so a recipe change between two exports does
+          not move the number Books would write to Loyverse.
+        - **Strict comparison.** ``changed_at > since`` (not ``>=``): an edit
+          stamped at the same instant as the confirm is not "since" it. The
+          badge reads zero immediately after a confirm because the confirm's
+          own timestamp is the new ``since``.
+        - **Zero is zero.** Returns ``0`` (never ``None``, never negative)
+          when nothing qualifies, so the badge renders "0 item costs
+          changed" rather than a blank.
+
+        ``since`` is a UTC ISO-8601 string (the same shape
+        :meth:`record_loyverse_export` stamps via the store's clock), so the
+        comparison is lexicographic over matching-shape strings — correct
+        for ISO-8601 UTC timestamps and what every audited write records.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM audit_log"
+                " WHERE table_name = 'costs' AND changed_at > ?",
+                (since,),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
 

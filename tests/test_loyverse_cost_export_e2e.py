@@ -41,6 +41,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tangerine.loyverse.parser import VENUE_TIMEZONE
 from tangerine.storage.config_store import SqliteConfigStore
 from tangerine.web.app import create_app
 from tangerine.web.auth import SESSION_COOKIE
@@ -817,4 +818,346 @@ def test_confirm_attributed_to_the_logged_in_partner(tmp_path: Path, today: date
 
     (export,) = _config_store(app).loyverse_exports()
     assert export.partner_id == "noi"
+
+
+# =============================================================================
+# Slice 3 (issue #103): the drift badge on GET /admin/loyverse-export
+# =============================================================================
+#
+# The staleness signal: a quiet line on the cost-mirror page that makes
+# "Loyverse is stale" detectable from inside Books, without opening Loyverse
+# and without a Loyverse API read. The badge reads the most recent
+# ``loyverse_exports.confirmed_at`` (the "as-of" timestamp) and the count of
+# ``audit_log`` cost edits newer than that (``cost_edits_since``).
+#
+# Three rules the badge holds (the slice's AC):
+#
+# - **Suppressed before any export.** No ``loyverse_exports`` row, no badge — a
+#   fresh deployment does not see a misleading "stale since forever" message.
+# - **Counts cost edits only.** A recipe edit does not inflate the count — the
+#   mirrored number comes from the cost book, not the recipe.
+# - **Resets to zero after a confirm.** The confirm writes a new
+#   ``loyverse_exports`` row whose ``confirmed_at`` is now the as-of; cost
+#   edits after that re-increment the count.
+#
+# Trust-boundary caveat (settled Q5, issue #70 / spec #100): the badge's
+# wording reads "since the last Loyverse import" but the value is the last
+# *export* (``loyverse_exports.confirmed_at``). Books does not track whether
+# the partner uploaded the file to Loyverse or whether Loyverse ingested it —
+# the wording is honest about what Books can verify, even if a partner who
+# confirmed but forgot to upload leaves the badge reading zero while Loyverse
+# is in fact stale. That is a procedural miss, not a defect.
+
+
+def _confirm_export(client, upload: str) -> None:  # type: ignore[no-untyped-def]
+    """POST a confirm so the page has a most-recent export to badge against."""
+    client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+
+
+# The badge reads ``audit_log.changed_at > loyverse_exports.confirmed_at``
+# (strict ``>``), so a test that confirms and then edits needs the edit's
+# ``changed_at`` to be strictly newer than the confirm's ``confirmed_at``. The
+# store's clock reads the wall clock (``datetime.now(timezone.utc).isoformat()``
+# — microsecond-resolution ISO-8601), so real time advancing between the two
+# POSTs is what makes the edit's timestamp strictly later. The store never
+# truncates to whole seconds, so two sequential TestClient requests cannot
+# land in the same tick — the ordering is deterministic without sleeping or
+# reaching into the store's clock.
+#
+# The venue-date assertion derives the expected label from the stored
+# ``confirmed_at`` (the source of truth) rather than hardcoding a calendar
+# date, so the test is honest about *when* it ran. The helper mirrors the
+# route's ``_venue_date_label`` shape — ``"<d> <Mon> <YYYY>"`` in Phuket time.
+from datetime import datetime as _datetime
+
+
+def _expected_venue_date(confirmed_at: str) -> str:
+    """The venue-local calendar date label for an ISO-8601 UTC timestamp.
+
+    Mirrors the route's ``_venue_date_label`` so the date assertion is
+    independent of when the test runs — the badge's date is whatever day the
+    confirm happened on in Phuket, not a hardcoded calendar date.
+    """
+    local = _datetime.fromisoformat(confirmed_at).astimezone(VENUE_TIMEZONE)
+    return f"{local.day} {local.strftime('%b')} {local.year}"
+
+
+def _badge_text(body: str) -> str:
+    """Extract the rendered badge line from the page body.
+
+    The badge is the text between the ``loyverse-export-drift-badge`` section
+    markers. Asserting on this slice (rather than the whole body) keeps the
+    wording checks honest — they target the badge, not whatever else the page
+    happens to carry.
+    """
+    start = body.find("<!--section:loyverse-export-drift-badge-->")
+    end = body.find("<!--/section:loyverse-export-drift-badge-->")
+    assert start != -1, "no drift-badge section rendered"
+    return body[start:end]
+
+
+def test_badge_suppressed_before_any_export(tmp_path: Path, today: date) -> None:
+    """The AC: "``GET /admin/loyverse-export`` with no prior export shows no
+    stale-since message." A fresh deployment never sees a misleading "stale
+    since forever" line — the badge is entirely absent until the first
+    confirm writes a ``loyverse_exports`` row."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+
+    response = client.get("/admin/loyverse-export")
+
+    assert response.status_code == 200
+    body = response.text
+    # No badge section rendered, and the staleness wording is absent.
+    assert "<!--section:loyverse-export-drift-badge-->" not in body
+    assert "since the last Loyverse import" not in body
+    assert "item costs changed" not in body.lower()
+
+
+def test_badge_reads_zero_immediately_after_a_confirm(
+    tmp_path: Path, today: date
+) -> None:
+    """The AC: "After a confirm, ``GET /admin/loyverse-export`` shows '0 item
+    costs changed since the last Loyverse import on <date>.' "
+
+    The confirm writes a ``loyverse_exports`` row whose ``confirmed_at`` is
+    now the badge's as-of; no cost edit has happened since, so the badge
+    reads zero (the strict-``>`` comparison in ``cost_edits_since`` keeps
+    even a same-instant edit from counting).
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    response = client.get("/admin/loyverse-export")
+
+    assert response.status_code == 200
+    badge = _badge_text(response.text)
+    expected_date = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "0 item costs changed in Books since the last Loyverse import"
+        f" on {expected_date}." in badge
+    )
+
+
+def test_badge_increments_after_a_cost_edit(tmp_path: Path, today: date) -> None:
+    """The AC: "After a ``save_cost`` call post-confirm, the badge reads '1
+    item cost changed…' "
+
+    One cost edit (re-pricing butter) between the confirm and the next page
+    load increments the badge from 0 to 1. The wording is singular ("1 item
+    cost changed"). Real time advancing between the confirm POST and the cost
+    edit POST is what makes the edit's ``changed_at`` strictly newer than the
+    confirm's ``confirmed_at``.
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    # One cost edit after the confirm. The store's wall-clock ``now`` has
+    # advanced past the confirm's timestamp between the two POSTs.
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "10", "pack_quantity": "2500"},
+        follow_redirects=False,
+    )
+
+    response = client.get("/admin/loyverse-export")
+    badge = _badge_text(response.text)
+    expected_date = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "1 item cost changed in Books since the last Loyverse import"
+        f" on {expected_date}." in badge
+    )
+    # The plural form is NOT shown for one edit.
+    assert "1 item costs changed" not in badge
+
+
+def test_badge_increments_to_two_after_two_cost_edits(
+    tmp_path: Path, today: date
+) -> None:
+    """The AC: "two cost edits → '2 item costs changed…'". The badge reads the
+    partner's edit volume, not a boolean — two distinct cost saves both land
+    in ``audit_log`` after the confirm, so the count is 2 (plural wording)."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    # Two cost edits after the confirm (butter repriced twice). Each save
+    # lands a distinct ``costs`` audit row, both newer than the confirm.
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "10", "pack_quantity": "2500"},
+        follow_redirects=False,
+    )
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "12", "pack_quantity": "2500"},
+        follow_redirects=False,
+    )
+
+    response = client.get("/admin/loyverse-export")
+    badge = _badge_text(response.text)
+    expected_date = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "2 item costs changed in Books since the last Loyverse import"
+        f" on {expected_date}." in badge
+    )
+
+
+def test_badge_resets_to_zero_after_a_fresh_confirm(
+    tmp_path: Path, today: date
+) -> None:
+    """The AC: "confirm resets the badge to zero."
+
+    After a confirm that inflated the badge to 1, a *second* confirm writes a
+    newer ``loyverse_exports`` row whose ``confirmed_at`` is now the as-of.
+    The badge reads ``cost_edits_since(<new confirmed_at>)`` — zero cost
+    edits have happened since that second confirm, so the badge is back to 0.
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    # One cost edit inflates the badge to 1.
+    client.post(
+        "/skus/butter/cost",
+        data={"pack_price": "10", "pack_quantity": "2500"},
+        follow_redirects=False,
+    )
+    mid = client.get("/admin/loyverse-export")
+    mid_expected = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "1 item cost changed in Books since the last Loyverse import"
+        f" on {mid_expected}." in _badge_text(mid.text)
+    )
+
+    # A fresh confirm re-stamps the as-of; the badge reads zero again.
+    _confirm_export(client, upload)
+    after = client.get("/admin/loyverse-export")
+    badge = _badge_text(after.text)
+    after_expected = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "0 item costs changed in Books since the last Loyverse import"
+        f" on {after_expected}." in badge
+    )
+    assert "1 item cost changed" not in badge
+
+
+def test_badge_unaffected_by_a_recipe_edit(tmp_path: Path, today: date) -> None:
+    """The AC: "A recipe edit (``save_recipe``) between two exports does not
+    change the badge count — only cost edits count."
+
+    The mirrored cost comes from ``CostResolver`` over the cost book, not the
+    recipe, so changing the croissant's butter quantity from 50 g to 60 g does
+    not move the number Books would write to Loyverse and must not inflate the
+    badge. The recipe edit lands in ``audit_log`` as ``table_name='recipes'``,
+    which ``cost_edits_since`` excludes by construction.
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    # A recipe edit (after the confirm) — bump the croissant's butter from
+    # 50 g to 60 g. Lands a ``recipes`` audit row, not a ``costs`` one.
+    client.post(
+        "/skus/croissant/recipe",
+        data={
+            "ingredient_sku_id": "butter",
+            "quantity": "60",
+            "yield_qty": "1",
+        },
+        follow_redirects=False,
+    )
+
+    response = client.get("/admin/loyverse-export")
+    badge = _badge_text(response.text)
+    expected_date = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert (
+        "0 item costs changed in Books since the last Loyverse import"
+        f" on {expected_date}." in badge
+    )
+
+
+def test_badge_names_the_last_export_date_not_an_ingestion_event(
+    tmp_path: Path, today: date
+) -> None:
+    """The AC: "The badge's wording names the last **export**
+    (``loyverse_exports.confirmed_at``), not a Loyverse-side ingestion event."
+
+    The trust-boundary caveat (Q5 resolution, issue #70 / spec #100): Books
+    does not track whether the partner uploaded the file to Loyverse or
+    whether Loyverse ingested it. The badge's wording reads "since the last
+    Loyverse import" but the value backing it is the last *export* — the
+    honest framing of what Books can verify. The rendered date is the venue-
+    local calendar date of the most recent ``confirmed_at``, so the partner
+    sees a day they recognise, not a UTC instant."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    response = client.get("/admin/loyverse-export")
+    badge = _badge_text(response.text)
+    # The wording names the last export via its venue-local date.
+    assert "since the last Loyverse import on" in badge
+    expected_date = _expected_venue_date(
+        _config_store(app).loyverse_exports()[0].confirmed_at
+    )
+    assert expected_date in badge
+
+
+def test_badge_only_on_loyverse_export_page_not_daily_review(
+    tmp_path: Path, today: date
+) -> None:
+    """The AC: "The badge is on ``/admin/loyverse-export`` only — no banner on
+    the daily review, no notification surface."
+
+    The daily review is the home page; the cost-mirror's staleness signal does
+    not leak there. A confirm writes a ``loyverse_exports`` row, but the daily
+    review must not render the drift badge's wording."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+    _confirm_export(client, upload)
+
+    review = client.get("/")
+    assert review.status_code == 200
+    assert "since the last Loyverse import" not in review.text
+    assert "<!--section:loyverse-export-drift-badge-->" not in review.text
 
