@@ -41,6 +41,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tangerine.loyverse.parser import VENUE_TIMEZONE
 from tangerine.storage.config_store import SqliteConfigStore
 from tangerine.web.app import create_app
 from tangerine.web.auth import SESSION_COOKIE
@@ -871,11 +872,7 @@ def _confirm_export(client, upload: str) -> None:  # type: ignore[no-untyped-def
 # ``confirmed_at`` (the source of truth) rather than hardcoding a calendar
 # date, so the test is honest about *when* it ran. The helper mirrors the
 # route's ``_venue_date_label`` shape — ``"<d> <Mon> <YYYY>"`` in Phuket time.
-from datetime import datetime as _datetime  # noqa: E402
-
-from zoneinfo import ZoneInfo as _ZoneInfo  # noqa: E402
-
-_VENUE_TZ = _ZoneInfo("Asia/Bangkok")
+from datetime import datetime as _datetime
 
 
 def _expected_venue_date(confirmed_at: str) -> str:
@@ -885,7 +882,7 @@ def _expected_venue_date(confirmed_at: str) -> str:
     independent of when the test runs — the badge's date is whatever day the
     confirm happened on in Phuket, not a hardcoded calendar date.
     """
-    local = _datetime.fromisoformat(confirmed_at).astimezone(_VENUE_TZ)
+    local = _datetime.fromisoformat(confirmed_at).astimezone(VENUE_TIMEZONE)
     return f"{local.day} {local.strftime('%b')} {local.year}"
 
 
