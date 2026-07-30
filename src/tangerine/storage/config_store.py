@@ -134,6 +134,38 @@ class SpendBucket:
     created_by: str
 
 
+@dataclass(frozen=True)
+class LoyverseExport:
+    """One row of the ``loyverse_exports`` table (issue #102, parent spec #100).
+
+    The Loyverse cost-mirror's paper trail. Every confirmed export — including
+    a zero-drift confirm — leaves one row here, so "the mirror was confirmed
+    current on <date>" is a visible fact rather than something inferred from
+    the absence of a later edit. The drift badge (slice 3, issue #103) reads
+    this newest-first to answer "how stale is Loyverse?"; any future export-
+    history surface reads the same rows.
+
+    This is a **dedicated table**, deliberately not a ``kind`` on
+    :class:`AuditEntry` / ``audit_log``. ``audit_log`` feeds the 9am "N
+    changes since last review" count (``unreviewed_changes``); a Loyverse-
+    bound export is a mirror action, not a config edit, and would pollute
+    that count. The dedicated-vs-audit-log decision is the Q5 resolution in
+    issue #70 / spec #100.
+
+    ``drift_payload`` is the raw JSON string the table holds — an array of
+    ``{sku, name, loyverse_cost, books_cost}`` for the changed rows, exactly
+    the diff the prepare step (issue #101) rendered. Kept as a string so the
+    read side need not re-parse to answer "when was the last export?".
+    """
+
+    id: int
+    partner_id: str
+    confirmed_at: str
+    item_count: int
+    changed_count: int
+    drift_payload: str
+
+
 class SqliteConfigStore:
     """Read-side view over the config tables.
 
@@ -1722,6 +1754,93 @@ class SqliteConfigStore:
         )
         return True
 
+    # --- Loyverse cost-mirror paper trail (issue #102, parent spec #100) ------
+    #
+    # The dedicated ``loyverse_exports`` table — every confirmed cost-mirror
+    # export leaves one row here. Deliberately NOT routed through
+    # ``_record_audit``: ``audit_log`` feeds ``unreviewed_changes`` and the
+    # 9am "N config changes since last review" count, and a Loyverse-bound
+    # export is a mirror action, not a config edit — including it would
+    # pollute that count (the Q5 dedicated-vs-audit-log decision, issue #70
+    # resolution / spec #100). Writes go straight to the dedicated table; the
+    # read side (``loyverse_exports()``) is what slice 3's drift badge and any
+    # future export-history surface consume.
+    #
+    # ``confirmed_at`` is stamped by the store's injectable clock (the same
+    # ``now=`` seam ``cash_spend`` and every other audited write uses), so
+    # tests pin the timestamp and the route never passes a wall-clock value.
+
+    def loyverse_exports(self) -> list[LoyverseExport]:
+        """Every confirmed Loyverse cost-mirror export, newest-first.
+
+        Newest-first (highest id first) is the read order the drift badge
+        (slice 3, issue #103) wants: "when was the most recent confirm?" is
+        the first row. Empty before any confirm has happened — the null state
+        slice 3 hides behind (no "stale since forever" message).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, partner_id, confirmed_at, item_count,"
+                " changed_count, drift_payload"
+                " FROM loyverse_exports ORDER BY id DESC"
+            ).fetchall()
+        return [
+            LoyverseExport(
+                id=row_id,
+                partner_id=partner_id,
+                confirmed_at=confirmed_at,
+                item_count=item_count,
+                changed_count=changed_count,
+                drift_payload=drift_payload,
+            )
+            for (
+                row_id,
+                partner_id,
+                confirmed_at,
+                item_count,
+                changed_count,
+                drift_payload,
+            ) in rows
+        ]
+
+    def record_loyverse_export(
+        self,
+        *,
+        partner_id: str,
+        item_count: int,
+        changed_count: int,
+        drift_payload: str,
+    ) -> int:
+        """Record one confirmed Loyverse cost-mirror export, return its id.
+
+        Writes a single row to the dedicated ``loyverse_exports`` table.
+        ``confirmed_at`` is stamped by the store's injectable clock — the
+        caller does not pass a timestamp, mirroring ``cash_spend`` and every
+        other audited write so tests pin the moment via ``now=``.
+
+        This is **not** an audited write: it bypasses ``_record_audit`` and
+        lands directly on the dedicated table, so ``unreviewed_changes`` and
+        the 9am config-changes count are unaffected by construction. A zero-
+        drift confirm still calls this (``changed_count = 0``,
+        ``drift_payload = "[]"``) — PRD user story 9: the null-state proof
+        is visible, not inferred from absence.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO loyverse_exports"
+                " (partner_id, confirmed_at, item_count, changed_count,"
+                "  drift_payload)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    partner_id,
+                    self._now(),
+                    item_count,
+                    changed_count,
+                    drift_payload,
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
     def skus(self) -> list[SkuRecord]:
         """Every row in the ``skus`` table, in ``sku_id`` order.
 
@@ -2553,6 +2672,7 @@ def _snapshot_updated_at(snapshot: dict[str, Any] | None) -> date | None:
 __all__ = [
     "AuditEntry",
     "CostRow",
+    "LoyverseExport",
     "SpendBucket",
     "SqliteConfigStore",
     "net_price_per_unit",

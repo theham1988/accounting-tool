@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
@@ -338,6 +339,37 @@ def emit_filled_csv(result: PrepareResult) -> str:
     return out.getvalue()
 
 
+def drift_payload_json(result: PrepareResult) -> str:
+    """The per-SKU drift payload that lands in ``loyverse_exports`` (slice 2).
+
+    A JSON array of ``{sku, name, loyverse_cost, books_cost}`` for the rows
+    the diff flagged as ``DIFFERS`` — the costable rows whose uploaded
+    ``Cost`` both *was present* and *disagreed* with Books' number. These are
+    the rows where Books overwrites a value Loyverse actually held (the
+    "differs: Loyverse X → Books Y" lines), so "what did we overwrite and
+    when" is answerable from the payload alone without reconstruction.
+
+    Money values serialise as their 2-dp string form (``"0.99"``,
+    ``"0.20"``), matching the cells the emitted CSV carries and what the diff
+    page rendered — one truth, three surfaces. A zero-drift confirm (no
+    ``DIFFERS`` rows) yields ``"[]"``; PRD user story 9 still records the row.
+    Rows whose ``Cost`` was blank (a ``FILLED`` row Books adds a cost to) are
+    not drift — Loyverse had nothing there to differ from — so they do not
+    appear here, even though they count toward ``PrepareResult.changed_count``.
+    """
+    entries = [
+        {
+            "sku": row.sku,
+            "name": row.name,
+            "loyverse_cost": str(row.loyverse_cost),
+            "books_cost": str(row.books_cost),
+        }
+        for row in result.drift_rows
+        if row.drift
+    ]
+    return json.dumps(entries)
+
+
 # --- internals ---------------------------------------------------------------
 
 
@@ -410,4 +442,5 @@ __all__ = [
     "InvalidLoyverseExportError",
     "prepare",
     "emit_filled_csv",
+    "drift_payload_json",
 ]

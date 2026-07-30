@@ -32,6 +32,7 @@ The worked examples pin the slice-1 acceptance criteria:
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -40,6 +41,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tangerine.storage.config_store import SqliteConfigStore
 from tangerine.web.app import create_app
 from tangerine.web.auth import SESSION_COOKIE
 
@@ -619,3 +621,200 @@ def test_cost_editor_route_still_works(tmp_path: Path, today: date) -> None:
     response = client.get("/skus/butter")
 
     assert response.status_code == 200
+
+
+# =============================================================================
+# Slice 2 (issue #102): the paper trail — confirm writes a loyverse_exports row
+# =============================================================================
+
+
+def _config_store(app: FastAPI) -> SqliteConfigStore:
+    """The store the app reads/writes config through — the public read path
+    the paper trail is observed over."""
+    return app.state.config_store
+
+
+def test_confirm_writes_one_loyverse_exports_row_with_drift(
+    tmp_path: Path, today: date
+) -> None:
+    """A confirm where Books' cost differs from Loyverse's writes exactly one
+    ``loyverse_exports`` row, attributed to the confirming partner, carrying
+    the right counts and a drift payload matching the diff the prepare step
+    rendered.
+
+    The croissant costs 0.20 in Books (50 g butter × 0.004); the upload
+    declares 0.99 — a drifted row. The latte is unknown-price (unpriced
+    milk) and the mystery item is unmapped, so neither counts as a change.
+    ``item_count`` is every row in the file; ``changed_count`` is the one
+    drifted row.
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", "0.99"),
+        ("latte", "latte-12oz", "Caffe Latte 12oz", "60.00", ""),
+        ("mystery", "sku-not-in-books", "Mystery Dish", "40.00", ""),
+    ])
+
+    response = client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    exports = _config_store(app).loyverse_exports()
+    assert len(exports) == 1
+    export = exports[0]
+    assert export.partner_id == "daniel"
+    assert export.item_count == 3
+    assert export.changed_count == 1
+    # confirmed_at is stamped by the store clock — non-empty, ISO-8601 shaped.
+    assert export.confirmed_at
+    assert "T" in export.confirmed_at
+    # drift_payload matches the diff the partner was shown: one entry for the
+    # drifted croissant, with Loyverse value vs Books value.
+    payload = json.loads(export.drift_payload)
+    assert payload == [
+        {
+            "sku": "croissant",
+            "name": "Butter Croissant",
+            "loyverse_cost": "0.99",
+            "books_cost": "0.20",
+        }
+    ]
+
+
+def test_confirm_drift_payload_matches_prepare_diff_exactly(
+    tmp_path: Path, today: date
+) -> None:
+    """The drift payload recorded on confirm is the exact diff the prepare
+    step rendered — same ``{sku, name, loyverse_cost, books_cost}`` entries,
+    same order. Captured by scraping the prepare page's differs rows and
+    comparing against the recorded JSON."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", "0.99"),
+        ("mystery2", "sku-not-in-books-2", "Mystery Two", "40.00", "0.50"),
+    ])
+
+    prepare_page = client.post(
+        "/admin/loyverse-export/prepare",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+    # The prepare page names the drifted row with both values.
+    assert "differs" in prepare_page.text.lower()
+    assert "0.99" in prepare_page.text
+    assert "0.20" in prepare_page.text
+
+    client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+
+    (export,) = _config_store(app).loyverse_exports()
+    payload = json.loads(export.drift_payload)
+    # Only the costable drifted row (croissant) is in the payload — the
+    # unmapped mystery2 row is not a "change" (its Cost stays blank).
+    (entry,) = payload
+    assert entry["sku"] == "croissant"
+    assert entry["loyverse_cost"] == "0.99"
+    assert entry["books_cost"] == "0.20"
+
+
+def test_confirm_zero_drift_still_writes_a_row(tmp_path: Path, today: date) -> None:
+    """A confirm where every costable row already matches Loyverse still
+    writes a row (``changed_count = 0``, ``drift_payload = "[]"``) — PRD user
+    story 9: "the mirror was confirmed current on <date>" is visible rather
+    than inferred from absence.
+
+    The round-trip path: emit a file via confirm, re-upload it; every
+    costable row now matches what Books just wrote, so ``changed_count = 0``.
+    """
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    first_upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+
+    served = client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", first_upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+    assert served.status_code == 200
+
+    # Re-upload the served file — every costable row now matches Books.
+    second = client.post(
+        "/admin/loyverse-export/confirm",
+        files={
+            "file": (
+                "items-filled.csv",
+                served.content,  # keep the BOM Books wrote
+                "text/csv",
+            )
+        },
+        follow_redirects=False,
+    )
+    assert second.status_code == 200
+
+    exports = _config_store(app).loyverse_exports()
+    assert len(exports) == 2
+    zero_drift = exports[0]  # newest-first
+    assert zero_drift.changed_count == 0
+    assert zero_drift.drift_payload == "[]"
+    assert zero_drift.item_count == 1
+
+
+def test_confirm_does_not_pollute_the_9am_config_changes_count(
+    tmp_path: Path, today: date
+) -> None:
+    """The dedicated-vs-audit-log decision (issue #70 / spec #100): a Loyverse
+    confirm is a mirror action, not a config edit, so it must NOT land in
+    ``audit_log`` and must NOT inflate the 9am "N changes since last review"
+    count. After a confirm, ``unreviewed_changes`` and ``audit_entries`` are
+    still empty."""
+    app = _build_app(tmp_path, today=today)
+    client = _authed_client(app)
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", "0.99"),
+    ])
+
+    client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+
+    store = _config_store(app)
+    assert store.audit_entries() == []
+    assert store.unreviewed_changes("daniel") == []
+
+
+def test_confirm_attributed_to_the_logged_in_partner(tmp_path: Path, today: date) -> None:
+    """The paper-trail row carries the confirming partner's assignee id —
+    ``request.state.assignee_id``, threaded from the login the same way every
+    other Admin write is. A confirm under Noi's session records Noi."""
+    app = _build_app(tmp_path, today=today)
+    client = TestClient(app)
+    client.post(
+        "/login",
+        data={"passphrase": _TEST_PASSPHRASE, "assignee_id": "noi"},
+        follow_redirects=False,
+    )
+    upload = _items_export([
+        ("croissant", "croissant", "Butter Croissant", "75.00", ""),
+    ])
+
+    client.post(
+        "/admin/loyverse-export/confirm",
+        files={"file": ("items.csv", upload.encode("utf-8"), "text/csv")},
+        follow_redirects=False,
+    )
+
+    (export,) = _config_store(app).loyverse_exports()
+    assert export.partner_id == "noi"
+

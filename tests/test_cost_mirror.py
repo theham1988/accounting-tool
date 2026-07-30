@@ -24,6 +24,7 @@ from tangerine.cost_mirror import (
     DriftRow,
     DriftStatus,
     InvalidLoyverseExportError,
+    drift_payload_json,
     emit_filled_csv,
     prepare,
 )
@@ -437,6 +438,92 @@ def test_prepare_counts_match_the_row_classifications() -> None:
     # rows only, drifted or not (the unconditional-overwrite rule). The
     # uncostable rows keep their blank, so they are not "changes".
     assert result.changed_count == 2  # latte (blank→0.20) + mocha (0.99→0.25)
+
+
+# =============================================================================
+# AC: drift_payload_json — the per-SKU payload that lands in loyverse_exports
+# (slice 2, issue #102)
+# =============================================================================
+
+
+def test_drift_payload_json_captures_only_differs_rows_with_both_values() -> None:
+    """The payload that ``record_loyverse_export`` stores is a JSON array of
+    ``{sku, name, loyverse_cost, books_cost}`` for the ``DIFFERS`` rows only —
+    the costable rows whose uploaded ``Cost`` both *was present* and
+    *disagreed* with Books' number. These are the rows where Books overwrites
+    a value Loyverse actually held, so "what did we overwrite?" is answerable
+    from the payload alone."""
+    import json
+
+    recipes = [
+        _recipe("latte-12oz", ingredients=(RecipeIngredient("beans", D("10")),)),
+        _recipe("croissant", ingredients=(RecipeIngredient("butter", D("50")),)),
+    ]
+    catalog = _catalog(
+        recipes,
+        [
+            SkuMapping(item_id="latte", sku_id="latte-12oz"),
+            SkuMapping(item_id="croissant", sku_id="croissant"),
+            SkuMapping(item_id="mystery", sku_id="sku-none"),
+        ],
+    )
+    cost = _cost_book({"beans": "0.020", "butter": "0.004"})
+    export = (
+        "Handle,SKU,Name,Price,Cost\n"
+        "latte,latte-12oz,Latte,60.00,\n"          # FILLED (blank → 0.20)
+        "croissant,croissant,Croissant,75.00,0.99\n"  # DIFFERS (0.99 → 0.20)
+        "mystery,sku-none,Mystery,40.00,\n"        # NO_BOOKS_COST_UNMAPPED
+    )
+    result = prepare(csv_text=export, recipes=catalog, cost=cost)
+
+    payload = json.loads(drift_payload_json(result))
+
+    assert len(payload) == 1  # only the differs row
+    (entry,) = payload
+    assert entry == {
+        "sku": "croissant",
+        "name": "Croissant",
+        "loyverse_cost": "0.99",
+        "books_cost": "0.20",
+    }
+
+
+def test_drift_payload_json_is_empty_array_on_zero_drift() -> None:
+    """A prepare with no ``DIFFERS`` rows yields ``"[]"`` — what a zero-drift
+    confirm records. PRD user story 9 still writes the row; the payload is
+    just empty."""
+    recipes = [
+        _recipe("latte-12oz", ingredients=(RecipeIngredient("beans", D("10")),)),
+    ]
+    catalog = _catalog(
+        recipes, [SkuMapping(item_id="latte", sku_id="latte-12oz")]
+    )
+    cost = _cost_book({"beans": "0.020"})
+    export = "Handle,SKU,Name,Price,Cost\nlatte,latte-12oz,Latte,60.00,0.20\n"
+    result = prepare(csv_text=export, recipes=catalog, cost=cost)
+
+    assert drift_payload_json(result) == "[]"
+
+
+def test_drift_payload_json_money_serialises_as_2dp_string() -> None:
+    """The payload's money values serialise as their 2-dp string form
+    (``"0.20"``), matching the cells the emitted CSV carries and what the diff
+    page rendered — one truth across the three surfaces."""
+    import json
+
+    recipes = [
+        _recipe("latte-12oz", ingredients=(RecipeIngredient("beans", D("10")),)),
+    ]
+    catalog = _catalog(
+        recipes, [SkuMapping(item_id="latte", sku_id="latte-12oz")]
+    )
+    cost = _cost_book({"beans": "0.020"})
+    export = "Handle,SKU,Name,Price,Cost\nlatte,latte-12oz,Latte,60.00,0.99\n"
+    result = prepare(csv_text=export, recipes=catalog, cost=cost)
+
+    (entry,) = json.loads(drift_payload_json(result))
+    assert entry["books_cost"] == "0.20"
+    assert entry["loyverse_cost"] == "0.99"
 
 
 # =============================================================================
