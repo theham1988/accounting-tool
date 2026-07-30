@@ -1,0 +1,71 @@
+{#
+  Loyverse cost-mirror — upload page (issue #101, parent spec #100).
+
+  The entry surface of the cost-mirror: a partner uploads a Loyverse back-
+  office items export (the file Loyverse itself recommends for the export→
+  edit→re-import flow). The prepare step (``/admin/loyverse-export/prepare``)
+  parses it, joins Books' recipe costs, and renders the drift diff; confirm
+  serves the filled round-trip CSV for the partner to upload to Loyverse.
+
+  Slice 1 ships no drift badge and no audit trail — those land in slices 2
+  and 3. This page is just the upload form plus a clear error message when
+  the wrong file is uploaded (AC: "wrong-file / missing-column errors render
+  a clear error page, not a corrupt file").
+#}
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Loyverse cost import — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review loyverse-export">
+    <header class="loyverse-export__subhead">
+      <a class="loyverse-export__back" href="/admin">
+        <span aria-hidden="true">&larr;</span>
+        <span class="loyverse-export__back-label">Admin</span>
+      </a>
+      <h1 class="loyverse-export__title">PREPARE LOYVERSE COST IMPORT</h1>
+      <span class="loyverse-export__admin-tag">ADMIN</span>
+    </header>
+
+    <p class="loyverse-export__intro">
+      Books is the source of truth for costs; Loyverse mirrors. Export
+      <strong>Items</strong> from Loyverse Back Office, upload the file here,
+      and Books fills the <code>Cost</code> column from your recipes. Confirm
+      the diff, download the filled file, and upload it back to Loyverse.
+    </p>
+
+    {% if error %}
+    <!--section:loyverse-export-error-->
+    <div class="loyverse-export__error" role="alert">
+      <strong>Couldn't read that file.</strong>
+      <span class="loyverse-export__error-message">{{ error }}</span>
+    </div>
+    <!--/section:loyverse-export-error-->
+    {% endif %}
+
+    <!--section:loyverse-export-form-->
+    <section class="loyverse-export__form">
+      <h2 class="loyverse-export__step-label">1. Upload the Loyverse items export</h2>
+      <p class="loyverse-export__step-copy">
+        In Loyverse Back Office, open <em>Items</em>, choose
+        <em>Export</em>, and save the CSV. The file needs the
+        <code>Handle</code>, <code>SKU</code>, and <code>Cost</code> columns
+        — a real items export carries all three.
+      </p>
+      <form method="post" action="/admin/loyverse-export/prepare"
+            enctype="multipart/form-data" class="loyverse-export__upload">
+        <label class="loyverse-export__dropzone">
+          <span class="loyverse-export__dropzone-prompt">
+            TAP TO CHOOSE THE LOYVERSE ITEMS CSV
+          </span>
+          <input type="file" name="file" accept=".csv,text/csv" required
+                 class="loyverse-export__file-input"
+                 aria-label="Choose the Loyverse items export CSV">
+        </label>
+        <button type="submit" class="loyverse-export__btn loyverse-export__btn--primary">
+          PREPARE COST IMPORT
+        </button>
+      </form>
+    </section>
+    <!--/section:loyverse-export-form-->
+  </div>
+{% endblock %}
