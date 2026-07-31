@@ -1,0 +1,112 @@
+{% extends "_base.html" %}
+{% set nav_active = "reports" %}
+{% block title %}Profit Report — Tangerine Books{% endblock %}
+{% block content %}
+  {# Profit Report (issue #113, parent spec #112) — a 4th Reports tab that
+     composes the recipe-cost lens (``build_period_review``) and the cash-
+     basis lens (``cash_spend_for_period``) on the same calendar month. The
+     spine lands here: report chrome (Tangerine Taps header + banner), the
+     range navigator (prev/next month + jump-to-month), a 4-tile summary
+     (Revenue / Cash-basis GP / Recipe-cost GM / Net profit), and the
+     "month in progress" marker. The two-lens P&L table, charts, and
+     bestseller lists land in later tickets and extend the composition
+     module this screen already renders.
+
+     Period / Month stay recipe-cost-only — this is the *only* surface that
+     carries the cash-basis lens (regression-guarded in #114). #}
+
+  <div class="review reports reports--profit">
+    {% include "_breadcrumb.html" %}
+    {% include "_reports_tabs.html" %}
+
+    <!--section:report-header-->
+    <header class="report-header">
+      <h1 class="report-header__h1">Tangerine <b>Taps</b>
+        <span class="report-header__suffix">— Profit Report</span>
+      </h1>
+      <p class="report-header__sub">Two-lens P&amp;L · recipe-cost beside cash-basis</p>
+    </header>
+    <!--/section:report-header-->
+
+    <!--section:range-nav-->
+    <section class="range-nav range-nav--arrows" aria-label="Report range">
+      <a
+        class="range-nav__arrow range-nav__arrow--prev{% if prev_dimmed %} range-nav__arrow--dimmed{% endif %}"
+        {% if not prev_dimmed %}href="{{ prev_range_url }}"{% else %}aria-disabled="true"{% endif %}
+        title="Previous month"
+      >&larr;</a>
+
+      <div class="range-nav__label-block">
+        <div class="range-nav__kicker">Month</div>
+        <div class="range-nav__label">{{ range_label }}</div>
+        <form class="range-nav__jump" method="get" action="/review">
+          <input type="hidden" name="mode" value="profit">
+          <label class="range-nav__jump-label">
+            <span class="visually-hidden">Jump to month</span>
+            <input class="range-nav__input" type="month" name="month"
+                   value="{{ review.start.strftime('%Y-%m') }}"
+                   aria-label="Jump to month">
+          </label>
+          <button type="submit" class="range-nav__apply">Show</button>
+        </form>
+      </div>
+
+      <a
+        class="range-nav__arrow range-nav__arrow--next{% if next_dimmed %} range-nav__arrow--dimmed{% endif %}"
+        {% if not next_dimmed %}href="{{ next_range_url }}"{% else %}aria-disabled="true"{% endif %}
+        title="Next month"
+      >&rarr;</a>
+    </section>
+    <!--/section:range-nav-->
+
+    <!--section:report-banner-->
+    <aside class="report-banner" role="note">
+      {% if report.in_progress %}
+      <span class="report-banner__kicker">Month in progress</span>
+      This month is not yet closed — the numbers below cover
+      <b>{{ review.start.strftime('%B') }}</b> through
+      <b>{{ review.end.strftime('%d %b %Y') }}</b> only, and will keep moving
+      as the month fills out. A closed month carries no such marker.
+      {% else %}
+      <span class="report-banner__kicker">Profit Report</span>
+      Two lenses on one month — <b>recipe-cost</b> (what should have been
+      consumed) beside <b>cash-basis</b> (what actually left the bank).
+      {% endif %}
+    </aside>
+    <!--/section:report-banner-->
+
+    <div id="review-body">
+    <p class="day visually-hidden">For {{ review.start.isoformat() }} to {{ review.end.isoformat() }}
+      ({{ review.goal.days_in_range }} day{{ "" if review.goal.days_in_range == 1 else "s" }})</p>
+
+    <!--section:tiles-->
+    <section class="tiles" aria-label="Profit summary">
+      <div class="tile">
+        <p class="tile__label">Revenue</p>
+        <p class="tile__value">{{ report.tiles.revenue | money }}
+          <span class="tile__unit">THB</span></p>
+        <p class="tile__sub">Gross sales — every sale, mapped or not (ADR-0008)</p>
+      </div>
+      <div class="tile{% if report.tiles.cash_basis_gp < 0 %} tile--bad{% endif %}">
+        <p class="tile__label">Cash-basis GP</p>
+        <p class="tile__value">{{ report.tiles.cash_basis_gp | money }}
+          <span class="tile__unit">THB</span></p>
+        <p class="tile__sub">Revenue − cash spend (net of VAT)</p>
+      </div>
+      <div class="tile">
+        <p class="tile__label">Recipe-cost GM</p>
+        <p class="tile__value">{{ report.tiles.recipe_cost_gm | money }}
+          <span class="tile__unit">THB</span></p>
+        <p class="tile__sub">Revenue − recipe COGS at as-of-date prices</p>
+      </div>
+      <div class="tile{% if report.tiles.net_profit < 0 %} tile--bad{% endif %}">
+        <p class="tile__label">Net profit</p>
+        <p class="tile__value">{{ report.tiles.net_profit | money }}
+          <span class="tile__unit">THB</span></p>
+        <p class="tile__sub">Recipe-cost GM − entity fixed costs</p>
+      </div>
+    </section>
+    <!--/section:tiles-->
+    </div><!-- /#review-body -->
+  </div>
+{% endblock %}
