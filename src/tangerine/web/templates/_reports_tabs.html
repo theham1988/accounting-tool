@@ -1,10 +1,15 @@
-{# Reports header tabs (Wave 3 #47) — PERIOD / MONTH / TRENDS.
+{# Reports header tabs (Wave 3 #47, #113) — PERIOD / MONTH / TRENDS / PROFIT.
 
    The mode switcher minus Day, restyled as the Reports screen's tab row.
    Ordinary links to the existing mode URLs (ADR-0004): deep-linkable, no
    client JavaScript. Reuses the ``mode-switcher`` section seam and the
    ``mode-switcher__link--active`` hook so the wider test suite keeps
-   slicing the active tab. Expects ``mode`` and ``switcher`` in context. #}
+   slicing the active tab. Expects ``mode`` and ``switcher`` in context.
+
+   The Profit tab (issue #113, parent #112) is the 4th tab — a dedicated
+   two-lens P&L screen that composes the recipe-cost and cash-basis lenses
+   on the same calendar month. Period / Month stay recipe-cost-only; the
+   two-lens panel lives only on Profit Report. #}
 <!--section:mode-switcher-->
 <nav id="mode-switcher" class="mode-switcher mode-switcher--reports" aria-label="Report mode">
   <a class="mode-switcher__link{% if mode == 'period' %} mode-switcher__link--active{% endif %}"
@@ -13,5 +18,7 @@
      href="{{ switcher.month }}">Month</a>
   <a class="mode-switcher__link{% if mode == 'trends' %} mode-switcher__link--active{% endif %}"
      href="{{ switcher.trends }}">Trends</a>
+  <a class="mode-switcher__link{% if mode == 'profit' %} mode-switcher__link--active{% endif %}"
+     href="{{ switcher.profit }}">Profit</a>
 </nav>
 <!--/section:mode-switcher-->

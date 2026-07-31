@@ -40,7 +40,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
-from ..cash_spend import CashSpendEntry
+from ..cash_spend import CashSpendEntry, cash_spend_for_period
 from ..config.loader import load_assignees
 from ..cost import CostBook
 from ..cost_mirror import (
@@ -60,6 +60,7 @@ from ..coverage import (
 )
 from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
+from ..profit_report import build_profit_report
 from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
 from ..loyverse.parser import VENUE_TIMEZONE
@@ -660,10 +661,14 @@ def create_app(
         so pre-Wave-2 deep links keep resolving.
         ``?mode=period&start=...&end=...`` is the period engine over an
         arbitrary inclusive range; ``?mode=month&month=YYYY-MM`` is the same
-        engine over the calendar month. ``?mode=trends&metric=...&span=...``
-        is the trend view (slice 5): the period engine per weekly/monthly
-        bucket, rendered as server-side SVG. Malformed or backwards params
-        are client errors (400) rather than misleading zero-filled reports.
+        engine over the calendar month. ``?mode=profit&month=YYYY-MM`` is the
+        Profit Report — a 4th Reports tab (issue #113) that composes the
+        recipe-cost and cash-basis lenses on the same calendar month;
+        without ``month`` it defaults to the current calendar month.
+        ``?mode=trends&metric=...&span=...`` is the trend view (slice 5): the
+        period engine per weekly/monthly bucket, rendered as server-side SVG.
+        Malformed or backwards params are client errors (400) rather than
+        misleading zero-filled reports.
 
         In Day mode ``?rank=margin|volume`` (issue #45) selects which
         TOP & BOTTOM pair the page shows; the default is ``margin``.
@@ -723,6 +728,25 @@ def create_app(
             return _render_period_review(
                 request, app, first_day, last_day, mode="month"
             )
+        if mode == "profit":
+            # Profit Report (issue #113, parent #112): a 4th Reports tab that
+            # puts the recipe-cost and cash-basis lenses side by side on the
+            # same calendar month. Default range is the current calendar month
+            # (so opening the tab shows this month's profit immediately); a
+            # ``?month=YYYY-MM`` selects any month. Range nav steps calendar
+            # months, mirroring the Month-mode pattern.
+            if month is None:
+                first_day = app.state.today.replace(day=1)
+            else:
+                try:
+                    first_day = date.fromisoformat(f"{month}-01")
+                except ValueError:
+                    return HTMLResponse(
+                        "Invalid month (expected YYYY-MM).", status_code=400
+                    )
+            days_in_month = calendar.monthrange(first_day.year, first_day.month)[1]
+            last_day = first_day.replace(day=days_in_month)
+            return _render_profit_review(request, app, first_day, last_day)
         if mode == "item":
             if item is None or start is None or end is None:
                 return HTMLResponse(
@@ -743,7 +767,7 @@ def create_app(
         if mode == "trends":
             return _render_trends(request, app, metric=metric, span=span)
         return HTMLResponse(
-            "Unknown mode (expected day, period, month, item, or trends).",
+            "Unknown mode (expected day, period, month, profit, item, or trends).",
             status_code=400,
         )
 
@@ -2772,15 +2796,18 @@ def _item_crumbs(name: str, start: date, end: date) -> list[dict[str, str | None
 
 
 def _mode_switcher_urls(anchor: date) -> dict[str, str]:
-    """The mode control's four deep-linkable targets, anchored on a date.
+    """The mode control's deep-linkable targets, anchored on a date.
 
     From any view whose anchor day is ``anchor``: Day is that day, Period is
-    the 7 days ending on it, Month is its calendar month, Trends is the
-    default trend view (always anchored on yesterday — a trend is about the
-    business's shape now, not about the day being viewed). Every target is an
-    ordinary URL (mode + date/range as query params), so switching modes
-    works without JavaScript and every state is shareable (ADR-0004
-    decision 4).
+    the 7 days ending on it, Month is its calendar month, Profit is its
+    calendar month (the Profit Report is month-anchored — its default range
+    is the current calendar month, but from any other tab it links to the
+    anchor's month so a partner reading June's Period can jump straight to
+    June's Profit Report), Trends is the default trend view (always anchored
+    on yesterday — a trend is about the business's shape now, not about the
+    day being viewed). Every target is an ordinary URL (mode + date/range
+    as query params), so switching modes works without JavaScript and every
+    state is shareable (ADR-0004 decision 4).
     """
     week_start = anchor - timedelta(days=6)
     return {
@@ -2790,6 +2817,7 @@ def _mode_switcher_urls(anchor: date) -> dict[str, str]:
             f"&end={anchor.isoformat()}"
         ),
         "month": f"/review?mode=month&month={anchor.strftime('%Y-%m')}",
+        "profit": f"/review?mode=profit&month={anchor.strftime('%Y-%m')}",
         "trends": "/review?mode=trends",
     }
 
@@ -2896,6 +2924,38 @@ def _period_range_nav(
         "next_range_url": (
             f"/review?mode=period&start={next_start.isoformat()}"
             f"&end={next_end.isoformat()}"
+        ),
+        "range_label": f"{start.isoformat()} — {end.isoformat()}",
+    }
+
+
+def _profit_range_nav(
+    app: FastAPI, start: date, end: date
+) -> dict[str, Any]:
+    """Prev/next month URLs and dimming for the Profit Report range navigator.
+
+    Mirrors Month mode's nav exactly (the Profit Report is always a calendar
+    month, so the partner walks months the same way on both tabs), but
+    pointed at ``mode=profit`` so the arrows stay on the Profit tab. Arrows
+    dim at the synced sales bounds — the same target-month rule
+    ``_period_range_nav`` applies for Month mode (dim when the *target*
+    month falls entirely outside the synced range).
+    """
+    earliest, latest = _review_date_bounds(app)
+    prev_month = _shift_month(start, months=-1)
+    next_month = _shift_month(start, months=1)
+    prev_days = calendar.monthrange(prev_month.year, prev_month.month)[1]
+    prev_end = prev_month.replace(day=prev_days)
+    prev_dimmed = prev_end < earliest
+    next_dimmed = next_month > latest
+    return {
+        "prev_dimmed": prev_dimmed,
+        "next_dimmed": next_dimmed,
+        "prev_range_url": (
+            f"/review?mode=profit&month={prev_month.strftime('%Y-%m')}"
+        ),
+        "next_range_url": (
+            f"/review?mode=profit&month={next_month.strftime('%Y-%m')}"
         ),
         "range_label": f"{start.isoformat()} — {end.isoformat()}",
     }
@@ -3141,6 +3201,54 @@ def _render_period_review(
             "switcher": _mode_switcher_urls(end),
             "breadcrumb": _period_crumbs(start, end, mode),
             "fixed_costs_summary": _fixed_costs_summary(review),
+            **range_nav,
+        },
+    )
+
+
+def _render_profit_review(
+    request: Request,
+    app: FastAPI,
+    start: date,
+    end: date,
+) -> HTMLResponse:
+    """Build the Profit Report for the calendar month ``[start, end]`` and render.
+
+    Composition only (issue #113, parent #112): runs the two existing engines
+    — ``build_period_review`` (recipe-cost lens) and ``cash_spend_for_period``
+    (cash-basis lens) — over the same inclusive month range, then hands their
+    outputs to :func:`tangerine.profit_report.build_profit_report`, which pairs
+    them into the 4-tile summary and computes the in-progress flag. No new
+    data, no new tables.
+
+    Range nav mirrors Month mode (prev/next calendar-month arrows + a
+    jump-to-month input), so the Profit tab and the Month tab cannot drift
+    apart on how a partner walks between months.
+    """
+    templates: Jinja2Templates = app.state.templates
+    source: StoreSource = app.state.source
+    cfg: SqliteConfigStore = app.state.config_store
+
+    review = build_period_review(
+        source=source, start=start, end=end, fixed_costs=cfg.fixed_costs()
+    )
+    cash_spend = cash_spend_for_period(
+        start=start, end=end, entries=cfg.cash_spend_rows()
+    )
+    report = build_profit_report(
+        review=review, cash_spend=cash_spend, today=app.state.today
+    )
+    range_nav = _profit_range_nav(app, start, end)
+    return templates.TemplateResponse(
+        request=request,
+        name="profit_report.html",
+        context={
+            "request": request,
+            "mode": "profit",
+            "report": report,
+            "review": review,
+            "switcher": _mode_switcher_urls(end),
+            "breadcrumb": _period_crumbs(start, end, "profit"),
             **range_nav,
         },
     )
