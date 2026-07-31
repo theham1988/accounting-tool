@@ -39,9 +39,11 @@ _TEST_PASSPHRASE = "profit-report-test-passphrase"
 _TEST_SIGNING_SECRET = "profit-report-test-signing-secret"
 
 
-# One cafe recipe (latte) + one bar recipe (chang). Cash-spend rows land
-# against the seeded six buckets (the seed ships taps/kitchen/coffee/bakery/
-# staff/rent), so this config is enough to exercise both lenses.
+# One cafe recipe (latte) + one bar recipe (chang), each mapped to the Loyverse
+# item the seeded sales use, so both lenses have something real to aggregate.
+# Cash-spend rows land against the seeded six buckets (the seed ships
+# taps/kitchen/coffee/bakery/staff/rent), so this config exercises both lenses
+# and lets the GMs be asserted against the worked example in ``_july_sales``.
 def _recipes_yaml() -> str:
     return """
 recipes:
@@ -56,6 +58,9 @@ recipes:
     segment: bar
     ingredients:
       - { sku_id: chang-keg, quantity: "500" }
+mappings:
+  - { item_id: i-latte, sku_id: espresso-latte }
+  - { item_id: i-chang, sku_id: chang-draft-500 }
 """
 
 
@@ -644,6 +649,215 @@ def test_in_progress_marker_absent_on_a_fully_future_month(
     assert "Month in progress" not in banner
 
 
+# --- two-lens P&L panel (#114): cash-basis GP beside recipe-cost GM ------------
+
+
+def test_two_lens_pnl_panel_renders_with_both_rows_and_percentages(
+    tmp_path: Path,
+) -> None:
+    """AC #114: the ``.pnl`` table renders two adjacent rows on Profit Report.
+
+        Cash-basis GP    = revenue − cash_spend_for_period.total
+        Recipe-cost GM   = review.gross_margin (= revenue − cogs)
+
+    Both percentages are computed against the same ``revenue`` (apples-to-
+    apples), and both absolute THB values render inside the panel. Worked
+    example over July 2026 (seeded sales + cash spend):
+
+        revenue         = 1190.00
+        cogs            = 560.00
+        gross_margin    = 630.00    →  630 / 1190 × 100 = 52.94%
+        cash_spend      = 1471.50
+        cash_basis_gp   = -281.50   →  -281.50 / 1190 × 100 = -23.66%
+
+    The two lenses disagree by design — that is the whole point of the
+    screen — and the panel carries both honestly rather than one hiding
+    the other.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    assert "<!--section:pnl-->" in html
+    pnl = html.split("<!--section:pnl-->")[1].split("<!--/section:pnl-->")[0]
+
+    # Both lens rows are present and labelled.
+    assert "Cash-basis GP" in pnl
+    assert "Recipe-cost GM" in pnl
+
+    # Both absolute THB values render (money filter → 2dp).
+    assert "-281.50" in pnl  # cash-basis GP
+    assert "630.00" in pnl  # recipe-cost GM
+
+    # Both percentages render against the same revenue base, to 2dp.
+    # Cash-basis: -281.50 / 1190 × 100 = -23.66%; Recipe-cost: 52.94%.
+    assert "-23.66%" in pnl
+    assert "52.94%" in pnl
+
+    # Revenue is the shared base — stated once in the panel so the
+    # apples-to-apples comparison is explicit, not implicit.
+    assert "1190.00" in pnl
+
+
+def test_pnl_percentages_are_absent_when_revenue_is_zero(tmp_path: Path) -> None:
+    """AC #114: a month with no sales shows no ``%`` on either lens.
+
+    ``gross_margin_pct`` returns None when revenue is zero (no division by
+    zero, no misleading "0%"). The panel renders a placeholder for both
+    rows rather than fabricating a percentage.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),  # sales in July
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    # August has no sales in the seed.
+    html = client.get("/review?mode=profit&month=2026-08").text
+    pnl = html.split("<!--section:pnl-->")[1].split("<!--/section:pnl-->")[0]
+
+    # The rows still render (both lenses present, all amounts 0.00); every
+    # % cell — both lens rows *and* the revenue ghost row — is the em-dash
+    # placeholder, not a fabricated percentage. No lens says "0.00%", no
+    # ghost row says "100.00%" of zero revenue. The only rendered "%" in
+    # the panel is the column header "% of revenue" (standing chrome).
+    assert "Cash-basis GP" in pnl
+    assert "Recipe-cost GM" in pnl
+
+    # Three em-dash % cells: two lens rows + the revenue ghost row.
+    em_dash_cells = pnl.count('<td class="num">\u2014</td>')
+    assert em_dash_cells == 3
+    # The only "%" token left is the column header — no fabricated
+    # percentage anywhere in the panel body.
+    assert pnl.count("%") == 1
+
+
+# --- honesty callout (#114): mirror #71 / ADR-0008 on flagged revenue ----------
+
+
+def test_honesty_callout_when_flagged_revenue_present(tmp_path: Path) -> None:
+    """AC #114: a callout shows when ``review.flagged_revenue > 0``.
+
+    Mirrors the period_review.html ``headline__uncosted-note`` pattern (#71,
+    ADR-0008): "Revenue includes N THB of sales whose cost the tool cannot
+    compute". The recipe-cost lens implicitly zero-costs the uncosted
+    portion; the callout is the honest labelling for that — it links the
+    partner to the fix path.
+    """
+    # An unmapped sale (no recipe) lands in flagged_revenue.
+    unmapped_sale = _sale_record(
+        receipt_number="r-mystery",
+        item_id="i-mystery",  # no recipe maps this
+        day=date(2026, 7, 12),
+        price="100",
+        line_id="li-mystery",
+        segment=Segment.CAFE,
+    )
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales() + [unmapped_sale],
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    assert "<!--section:pnl-flagged-->" in html
+    callout = html.split("<!--section:pnl-flagged-->")[1].split(
+        "<!--/section:pnl-flagged-->"
+    )[0]
+
+    # The callout names the uncosted revenue and points at the fix path,
+    # same labelling the period headline carries.
+    assert "100.00" in callout  # the flagged revenue amount
+    assert "cannot compute" in callout.lower() or "uncosted" in callout.lower()
+
+
+def test_honesty_callout_absent_when_no_flagged_revenue(tmp_path: Path) -> None:
+    """AC #114: the callout section does not render when nothing is flagged.
+
+    Every seeded sale in ``_july_sales()`` maps to a recipe, so July has no
+    flagged revenue — the honesty callout is absent (not rendered empty).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+
+    assert "<!--section:pnl-flagged-->" not in html
+
+
+def test_callout_needs_attention_link_resolves_to_a_rendered_section(
+    tmp_path: Path,
+) -> None:
+    """ADR-0008 pair: the callout's ``#needs-attention`` link must resolve.
+
+    The honesty callout mirrors the period/daily pattern (#71 / ADR-0008):
+    a callout *plus* a ``id="needs-attention"`` card one click apart. The
+    Profit Report must render the card too — otherwise the callout promises
+    a destination that isn't there (a dead anchor on a screen whose entire
+    job is honesty about the numbers). ``review.needs_attention`` is already
+    on the composition module's review object; this test pins that the
+    card is rendered whenever the callout is.
+    """
+    unmapped_sale = _sale_record(
+        receipt_number="r-mystery",
+        item_id="i-mystery",
+        day=date(2026, 7, 12),
+        price="100",
+        line_id="li-mystery",
+        segment=Segment.CAFE,
+    )
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales() + [unmapped_sale],
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+
+    # The anchor target renders on the same page as the callout.
+    assert 'id="needs-attention"' in html
+    # And the card lists the uncosted item by id (deep-link target of the row).
+    assert "i-mystery" in html
+
+
+def test_needs_attention_section_absent_when_nothing_is_flagged(
+    tmp_path: Path,
+) -> None:
+    """The ``id="needs-attention"`` card renders only when there's a fix path.
+
+    Mirror of the period view: the section is gated on
+    ``review.needs_attention`` being non-empty. A clean month (every sale
+    mapped) renders neither the callout nor the card.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+
+    assert 'id="needs-attention"' not in html
+
+
 # --- regression guard: Period/Month stay recipe-cost-only (#114 territory) -----
 
 
@@ -669,10 +883,80 @@ def test_period_view_does_not_render_two_lens_or_cash_basis_tile(
         "/review?mode=period&start=2026-07-01&end=2026-07-31"
     ).text
 
-    # The Period template renders neither the tiles block nor the cash-basis
-    # vocabulary that is Profit-Report-only.
+    # The Period template renders neither the tiles block, the .pnl two-lens
+    # panel, nor the cash-basis vocabulary — all Profit-Report-only.
     assert "<!--section:tiles-->" not in period_html
+    assert "<!--section:pnl-->" not in period_html
     assert "Cash-basis GP" not in period_html
+
+
+def test_month_view_does_not_render_two_lens_pnl_panel(
+    tmp_path: Path,
+) -> None:
+    """AC #114: Month mode also stays recipe-cost-only — no two-lens panel.
+
+    The Period/Month-recipe-cost-only decision applies to *both* Period and
+    Month templates (they share ``period_review.html``). Pinning Month
+    separately guards against a future template split that could regress
+    one without the other.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    month_html = client.get("/review?mode=month&month=2026-07").text
+
+    assert "<!--section:pnl-->" not in month_html
+    assert "Cash-basis GP" not in month_html
+
+
+def test_recipe_cost_gm_on_profit_equals_period_view_for_same_range(
+    tmp_path: Path,
+) -> None:
+    """AC #114: the recipe-cost GM on Profit Report equals Period/Month's GM.
+
+    The two screens must never disagree on the number they share. The
+    Profit Report's recipe-cost GM row carries the same value the Period
+    and Month views' headline hero shows for the same ``[start, end]``
+    (shared as-of-date pricing, by construction — both Period and Month
+    route through ``_render_period_review`` → ``build_period_review``).
+    The cross-screen agreement is pinned at the rendered-string level so
+    a future drift surfaces here. Both Period and Month are asserted
+    because the AC says "Period/Month" and a future template split could
+    regress one without the other.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    period_html = client.get(
+        "/review?mode=period&start=2026-07-01&end=2026-07-31"
+    ).text
+    month_html = client.get("/review?mode=month&month=2026-07").text
+    profit_html = client.get("/review?mode=profit&month=2026-07").text
+
+    # Both Period and Month wear the same hero (they share period_review.html);
+    # extract once and confirm the Month page agrees with the Period page too.
+    period_hero = period_html.split('class="headline__hero-value">')[1].split("<")[0]
+    month_hero = month_html.split('class="headline__hero-value">')[1].split("<")[0]
+    assert period_hero == month_hero  # Period ↔ Month
+
+    profit_pnl = profit_html.split("<!--section:pnl-->")[1].split(
+        "<!--/section:pnl-->"
+    )[0]
+
+    # The hero value (630.00) appears verbatim in the Profit Report's
+    # recipe-cost GM row — all three surfaces agree on the shared number.
+    assert period_hero in profit_pnl  # Profit ↔ Period
+    assert month_hero in profit_pnl  # Profit ↔ Month
 
 
 # --- deep-linkable: every state is a URL --------------------------------------

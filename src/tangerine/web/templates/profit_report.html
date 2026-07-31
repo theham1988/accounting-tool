@@ -2,15 +2,19 @@
 {% set nav_active = "reports" %}
 {% block title %}Profit Report — Tangerine Books{% endblock %}
 {% block content %}
-  {# Profit Report (issue #113, parent spec #112) — a 4th Reports tab that
-     composes the recipe-cost lens (``build_period_review``) and the cash-
-     basis lens (``cash_spend_for_period``) on the same calendar month. The
-     spine lands here: report chrome (Tangerine Taps header + banner), the
-     range navigator (prev/next month + jump-to-month), a 4-tile summary
+  {# Profit Report (issue #113, parent spec #112; two-lens panel in #114) — a
+     4th Reports tab that composes the recipe-cost lens
+     (``build_period_review``) and the cash-basis lens
+     (``cash_spend_for_period``) on the same calendar month. The spine (#113)
+     lands the report chrome (Tangerine Taps header + banner), the range
+     navigator (prev/next month + jump-to-month), the 4-tile summary
      (Revenue / Cash-basis GP / Recipe-cost GM / Net profit), and the
-     "month in progress" marker. The two-lens P&L table, charts, and
+     "month in progress" marker. #114 adds the two-lens P&L table — the
+     honesty model, and the reason the screen exists — with the cash-basis
+     and recipe-cost lenses side by side, each with its % against the same
+     revenue base. The daily-revenue chart, spend-by-category chart, and
      bestseller lists land in later tickets and extend the composition
-     module this screen already renders.
+     module this screen renders.
 
      Period / Month stay recipe-cost-only — this is the *only* surface that
      carries the cash-basis lens (regression-guarded in #114). #}
@@ -107,6 +111,128 @@
       </div>
     </section>
     <!--/section:tiles-->
+
+    {# The two-lens P&L table (#114) — the reason the screen exists. Two
+       adjacent rows put the cash-basis lens (what actually left the bank)
+       beside the recipe-cost lens (what should have been consumed), each
+       with its % against the same revenue base. This is the *only* surface
+       the two-lens panel appears on (regression-guarded above); Period and
+       Month stay recipe-cost-only.
+
+       The two lenses disagree by design — a big Makro restock shows a
+       healthy recipe-cost GM but a thin (or negative) cash-basis GP, the
+       beans will sell later but the cash has already left. Surfacing both
+       honestly is the whole point; the panel never picks a winner.
+
+       Percentages are computed in-template against the shared revenue,
+       matching ``tangerine.margin.gross_margin_pct``'s 2dp quantisation
+       (None when revenue is zero — no division by zero, no misleading
+       "0%"). #}
+    {% set ns = namespace(cash_pct=none, recipe_pct=none) %}
+    {% if report.tiles.revenue != 0 %}
+      {% set ns.cash_pct = (report.tiles.cash_basis_gp / report.tiles.revenue * 100) | round(2) %}
+      {% set ns.recipe_pct = (report.tiles.recipe_cost_gm / report.tiles.revenue * 100) | round(2) %}
+    {% endif %}
+
+    <!--section:pnl-->
+    <section class="pnl-block" aria-label="Two-lens profit and loss">
+      <h2 class="pnl-block__h">Two lenses on {{ review.start.strftime('%B %Y') }}</h2>
+      <table class="pnl">
+        <thead>
+          <tr>
+            <th scope="col">Lens</th>
+            <th scope="col">Basis</th>
+            <th scope="col" class="num">Amount</th>
+            <th scope="col" class="num">% of revenue</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="pnl__row{% if report.tiles.cash_basis_gp < 0 %} pnl__row--neg{% endif %}">
+            <th scope="row">Cash-basis GP</th>
+            <td>Revenue − cash spend</td>
+            <td class="num">{{ report.tiles.cash_basis_gp | money }} THB</td>
+            <td class="num">{% if ns.cash_pct is not none %}{{ ns.cash_pct }}%{% else %}—{% endif %}</td>
+          </tr>
+          <tr class="pnl__row">
+            <th scope="row">Recipe-cost GM</th>
+            <td>Revenue − recipe COGS</td>
+            <td class="num">{{ report.tiles.recipe_cost_gm | money }} THB</td>
+            <td class="num">{% if ns.recipe_pct is not none %}{{ ns.recipe_pct }}%{% else %}—{% endif %}</td>
+          </tr>
+          <tr class="pnl__row--ghost">
+            <td colspan="2">Revenue (shared base)</td>
+            <td class="num">{{ report.tiles.revenue | money }} THB</td>
+            <td class="num">{% if ns.cash_pct is not none %}100.00%{% else %}—{% endif %}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="pnl__note">
+        The two lenses answer different questions and <i>disagree by design</i>
+        — recipe-cost GM costs what <i>should</i> have been consumed (at as-of-
+        date prices), cash-basis GP costs what <i>actually</i> left the bank.
+        A big restock month shows a healthy GM beside a thin (or negative) GP;
+        the beans will sell later, but the cash has already gone.
+      </p>
+
+      {# Honesty callout (#114) — mirrors #71 / ADR-0008 on period_review.html:
+         when the month includes flagged (uncosted) revenue, the recipe-cost
+         lens implicitly zero-costs that portion and so overstates the GM on
+         it. The callout names the uncosted revenue and links the partner to
+         the fix path so the overstatement is honest, not silent. Gated on
+         ``review.needs_attention`` (not ``flagged_revenue > 0``) so the
+         callout and its ``#needs-attention`` target below appear and
+         disappear together — ADR-0008's callout is a pair, and a dead
+         anchor would defeat the "one click to the fix" promise. #}
+      {% if review.needs_attention %}
+      <!--section:pnl-flagged-->
+      <p class="headline__uncosted-note">
+        Revenue includes <strong>{{ review.flagged_revenue | money }} THB</strong>
+        of sales whose cost the tool cannot compute — the recipe-cost GM above
+        implicitly zero-costs them and so overstates the margin on that
+        portion. Map the items in <a href="#needs-attention">Needs a fix</a>
+        to cost them.
+      </p>
+      <!--/section:pnl-flagged-->
+      {% endif %}
+    </section>
+    <!--/section:pnl-->
+
+    {# Needs-attention card (#114) — the target half of ADR-0008's callout
+       pair. Inlined here (not a partial) mirroring ``period_review.html``'s
+       card verbatim, so the callout's ``#needs-attention`` link resolves on
+       this screen too. The Profit Report carries ``review.needs_attention``
+       on its composition module's review object (the same
+       ``build_period_review`` engine Period/Month use), so no new data —
+       only the fix path the callout already promises. #}
+    {% if review.needs_attention %}
+    <section class="needs-attention needs-attention--card" id="needs-attention">
+      <h2>Needs a fix · {{ review.needs_attention | length }}</h2>
+      <!--section:needs-attention-->
+      <p class="needs-attention__note">
+        These items sold this month but their cost could not be computed.
+        Their revenue is in the headline above (so it ties to Loyverse Gross
+        sales) but their COGS is unknown — the recipe-cost GM implicitly
+        zero-costs them.
+      </p>
+      <ul class="needs-attention__list">
+        {% for row in review.needs_attention %}
+        <li>
+          <a class="needs-attention__row" href="/items?item={{ row.item_id }}">
+            <span class="needs-attention__name">{{ row.name }}</span>
+            <span class="needs-attention__detail">
+              {{ row.units_sold }} unit{{ "" if row.units_sold == 1 else "s" }} this month
+            </span>
+            <span class="needs-attention__amount">{{ row.revenue | money }} THB</span>
+            {% if row.unmapped %}<span class="needs-attention__reason">unmapped</span>{% endif %}
+            {% if row.unknown_price %}<span class="needs-attention__reason">unknown price</span>{% endif %}
+            <span class="needs-attention__link" aria-hidden="true">&rarr;</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+      <!--/section:needs-attention-->
+    </section>
+    {% endif %}
     </div><!-- /#review-body -->
   </div>
 {% endblock %}

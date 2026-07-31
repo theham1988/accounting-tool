@@ -2890,6 +2890,27 @@ a.trend-bar:hover .trend-bar__fill {
   font-style: italic;
 }
 
+/* P&L block wrapper (#114): the section that carries the two-lens .pnl table
+   on the Profit Report. The wrapper owns the heading and the spacing between
+   the tiles above and the table below; the table itself reuses the shared
+   .pnl styles already defined. */
+.pnl-block {
+  margin: 0 0 var(--tb-space-4);
+}
+
+.pnl-block__h {
+  font-family: var(--tb-font-display);
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+}
+
+/* The honesty callout sits inside the P&L block, just under the table. Reuses
+   .headline__uncosted-note (#71 / ADR-0008) so the labelling matches the
+   period/day headlines — same tango left-rule, same voice. */
+.pnl-block .headline__uncosted-note {
+  margin-top: 0.6rem;
+}
+
 /* Chart legend + swatch. Swatch is square (--tb-radius: 0), not the HTML's 3px. */
 .legend {
   display: flex;
