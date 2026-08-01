@@ -291,6 +291,80 @@
       {% endif %}
     </section>
     <!--/section:spend-by-category-chart-->
+
+    {# Bestseller rankings (#116, parent #112) — two sales-side lists: top-N
+       by total sales volume (THB) and top-N by total items (unit count).
+       Both rankings share one per-item aggregation over the *same per-day
+       ``ItemMargin`` rows the recipe-cost lens consumes* (``margins_over_
+       range`` → ``DayMargins.item_margins``), so they are sourced from the
+       same sales the period engine already costed. The two lists are two
+       sorts of that one aggregation (``rank_bestsellers``), each descending
+       with ties broken by ``item_id``.
+
+       The spec is explicit that these are **sales-side rankings, not
+       contribution-margin** — the profit story lives in the tiles and the
+       two-lens panel above; bestsellers answers "what are we moving a lot
+       of?" The visible note records that, so a future reader doesn't "fix"
+       the lists toward profit.
+
+       Unmapped / unpriced items appear (their revenue counts toward the
+       ranking) with a "CM unknown" marker — they sold, so they belong in
+       the ranking; their cost is just unknown, so their margin is not
+       shown. Fewer-than-N items renders what exists (no padding). #}
+    <!--section:bestsellers-->
+    <section class="bestsellers" aria-label="Bestsellers">
+      <div class="bestsellers__head">
+        <h2>Bestsellers · {{ review.start.strftime('%B %Y') }}</h2>
+        <p class="bestsellers__note">{{ bestsellers.note }}</p>
+      </div>
+
+      <div class="bestsellers__grid">
+        <div class="bestsellers__list bestsellers__list--revenue">
+          <h3 class="bestsellers__list-h">By sales volume
+            <span class="bestsellers__list-unit">(THB)</span></h3>
+          {% if bestsellers.by_revenue %}
+          <ol class="bestsellers__items">
+            {% for row in bestsellers.by_revenue %}
+            <li class="bestsellers__item{% if row.cm_unknown %} bestsellers__item--cm-unknown{% endif %}">
+              <span class="bestsellers__rank">{{ loop.index }}</span>
+              <span class="bestsellers__name">{{ row.name }}</span>
+              {% if row.cm_unknown %}
+              <span class="bestsellers__cm">CM unknown</span>
+              {% endif %}
+              <span class="bestsellers__value bestsellers__value--revenue">{{ row.revenue | money }} THB</span>
+              <span class="bestsellers__sub">{{ row.units_sold }} unit{{ "" if row.units_sold == 1 else "s" }}</span>
+            </li>
+            {% endfor %}
+          </ol>
+          {% else %}
+          <p class="bestsellers__empty">No sales this month.</p>
+          {% endif %}
+        </div>
+
+        <div class="bestsellers__list bestsellers__list--units">
+          <h3 class="bestsellers__list-h">By items sold
+            <span class="bestsellers__list-unit">(units)</span></h3>
+          {% if bestsellers.by_units %}
+          <ol class="bestsellers__items">
+            {% for row in bestsellers.by_units %}
+            <li class="bestsellers__item{% if row.cm_unknown %} bestsellers__item--cm-unknown{% endif %}">
+              <span class="bestsellers__rank">{{ loop.index }}</span>
+              <span class="bestsellers__name">{{ row.name }}</span>
+              {% if row.cm_unknown %}
+              <span class="bestsellers__cm">CM unknown</span>
+              {% endif %}
+              <span class="bestsellers__value bestsellers__value--units">{{ row.units_sold }}</span>
+              <span class="bestsellers__sub">{{ row.revenue | money }} THB</span>
+            </li>
+            {% endfor %}
+          </ol>
+          {% else %}
+          <p class="bestsellers__empty">No sales this month.</p>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+    <!--/section:bestsellers-->
     </div><!-- /#review-body -->
   </div>
 {% endblock %}

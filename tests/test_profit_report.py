@@ -28,10 +28,12 @@ from tangerine.period_review import PeriodGoal, PeriodReview
 from tangerine.profit_report import (
     ProfitReport,
     ProfitTiles,
+    aggregate_item_sales,
     build_profit_report,
     is_month_in_progress,
+    rank_bestsellers,
 )
-from tangerine.types import Money, Segment, SegmentMargin
+from tangerine.types import ItemMargin, Money, Segment, SegmentMargin
 
 
 def _empty_review(start: date, end: date, *, revenue: Money = D("0")) -> PeriodReview:
@@ -264,3 +266,290 @@ def test_in_progress_on_the_last_day_of_the_current_month() -> None:
     )
 
     assert report.in_progress is True
+
+
+# --- bestseller aggregation + ranking (#116, parent #112) -----------------------
+#
+# AC #116: two sales-side rankings on the Profit Report — top-N by total sales
+# volume (THB) and top-N by total items (unit count). Both rankings share one
+# per-item aggregation; the two lists are two sorts of the same aggregation.
+# Sorting is descending by the chosen metric; ties are broken deterministically
+# by ``item_id``; fewer-than-N items renders what exists. Unmapped items appear
+# (their revenue counts toward the ranking) with a ``cm_unknown`` marker.
+#
+# The pure aggregation is fed per-day ``ItemMargin`` rows — the *same rows the
+# period engine already produces* (``margins_over_range`` → ``DayMargins.item_
+# margins``), so the rankings are sourced from the same sales the recipe-cost
+# lens consumes. ``cm_unknown`` is True for any item that is ``unmapped`` OR
+# ``unknown_price`` on its rows (a contribution-margin number cannot be honestly
+# derived for either); the marker is the visible labelling for that, per the
+# "sales-side, not contribution-margin" note the spec requires.
+
+
+def _im(
+    *,
+    item_id: str,
+    name: str | None = None,
+    day: date | None = None,
+    units_sold: int = 1,
+    revenue: str = "0",
+    unmapped: bool = False,
+    unknown_price: bool = False,
+) -> ItemMargin:
+    """A minimal ``ItemMargin`` carrying only what the aggregation reads.
+
+    ``revenue`` and ``units_sold`` are what the ranking sums; ``unmapped`` /
+    ``unknown_price`` drive ``cm_unknown``; ``name`` falls back to ``item_id``
+    (matching how the margin engine names an unmapped item — see
+    ``compute_item_margins``'s ``name=item_id`` fallback). The other margin
+    fields are irrelevant to the aggregation.
+    """
+    return ItemMargin(
+        item_id=item_id,
+        name=name if name is not None else item_id,
+        segment=Segment.CAFE,
+        day=day if day is not None else date(2026, 7, 1),
+        units_sold=units_sold,
+        sell_price=D("0"),
+        cost_per_unit=D("0"),
+        revenue=D(revenue),
+        cogs=D("0"),
+        gross_margin=D("0"),
+        gross_margin_pct=None,
+        unmapped=unmapped,
+        unknown_price=unknown_price,
+    )
+
+
+def test_aggregate_groups_per_day_rows_by_item_id() -> None:
+    """The aggregation collapses multi-day per-item rows into one row per item.
+
+    ``margins_over_range`` emits one ``ItemMargin`` per day per item; the
+    aggregation sums ``revenue`` and ``units_sold`` across those days. Worked
+    example — latte sold on two days, chang on one:
+
+        latte day 1: 1 unit, 80 THB
+        latte day 2: 2 units, 160 THB   -> latte total: 3 units, 240 THB
+        chang day 1: 1 unit, 90 THB     -> chang total: 1 unit,  90 THB
+
+    The aggregated rows are keyed by ``item_id`` so the two rankings share
+    one source list.
+    """
+    rows = [
+        _im(item_id="i-latte", day=date(2026, 7, 1), units_sold=1, revenue="80"),
+        _im(item_id="i-chang", day=date(2026, 7, 1), units_sold=1, revenue="90"),
+        _im(
+            item_id="i-latte", day=date(2026, 7, 2), units_sold=2, revenue="160"
+        ),
+    ]
+
+    aggregated = aggregate_item_sales(rows)
+
+    by_id = {a.item_id: a for a in aggregated}
+    assert by_id["i-latte"].units_sold == 3
+    assert by_id["i-latte"].revenue == D("240")
+    assert by_id["i-chang"].units_sold == 1
+    assert by_id["i-chang"].revenue == D("90")
+
+
+def test_aggregate_marks_an_unmapped_item_cm_unknown() -> None:
+    """An unmapped item appears in the aggregation with ``cm_unknown=True``.
+
+    Unmapped items (no recipe) cannot have a contribution margin derived —
+    they appear in the rankings (their revenue counts) with a ``cm_unknown``
+    marker so the template can label them. The marker is the visible
+    labelling the spec requires ("CM unknown"), not an exclusion.
+    """
+    rows = [
+        _im(item_id="i-latte", revenue="80"),
+        _im(item_id="i-mystery", revenue="100", unmapped=True),
+    ]
+
+    aggregated = aggregate_item_sales(rows)
+
+    by_id = {a.item_id: a for a in aggregated}
+    assert by_id["i-latte"].cm_unknown is False
+    assert by_id["i-mystery"].cm_unknown is True
+
+
+def test_aggregate_marks_an_unknown_price_item_cm_unknown() -> None:
+    """A mapped-but-unpriced item is also ``cm_unknown``.
+
+    A mapped item with an unpriced ingredient has unknown COGS, so its
+    contribution margin cannot be honestly derived either — same marker,
+    same treatment (it appears; its revenue counts).
+    """
+    rows = [
+        _im(item_id="i-latte", revenue="80"),
+        _im(item_id="i-stockout", revenue="100", unknown_price=True),
+    ]
+
+    by_id = {a.item_id: a for a in aggregate_item_sales(rows)}
+    assert by_id["i-stockout"].cm_unknown is True
+
+
+# --- ranking: two orderings, ties, fewer-than-N, zero-unit items ---------------
+
+
+def test_rank_by_revenue_sorts_descending() -> None:
+    """Top-N by total sales volume (THB) is sorted high-to-low by revenue.
+
+        chang: 630 THB   -> rank 1
+        latte: 240 THB   -> rank 2
+
+    ``rank_bestsellers`` sorts the shared aggregation (computed once, fed
+    into both rankings); the test mirrors that contract by aggregating
+    then ranking.
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-latte", revenue="240"),
+            _im(item_id="i-chang", revenue="630"),
+        ]
+    )
+
+    ranked = rank_bestsellers(aggregated, metric="revenue", limit=10)
+
+    assert [r.item_id for r in ranked] == ["i-chang", "i-latte"]
+
+
+def test_rank_by_units_sorts_descending() -> None:
+    """Top-N by total items (unit count) is a *separate* sort of the same data.
+
+        latte:  3 units   -> rank 1
+        chang:  1 unit    -> rank 2
+
+    The revenue ranking above (chang > latte) and the units ranking here
+    (latte > chang) disagree — that is the whole point of two rankings: a
+    partner sees both "what brings in the money" and "what we move a lot of".
+    Both sorts consume the *same* aggregation (the spec's "shared
+    aggregation" contract).
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-latte", units_sold=3, revenue="240"),
+            _im(item_id="i-chang", units_sold=1, revenue="630"),
+        ]
+    )
+
+    ranked = rank_bestsellers(aggregated, metric="units", limit=10)
+
+    assert [r.item_id for r in ranked] == ["i-latte", "i-chang"]
+
+
+def test_rank_breaks_ties_deterministically_by_item_id() -> None:
+    """Equal metric values tie-break by ``item_id`` (ascending).
+
+    Two items with identical revenue: ``i-aaa`` and ``i-bbb`` both at 100 THB.
+    The tie-break is ``item_id`` ascending, so ``i-aaa`` precedes ``i-bbb``
+    regardless of input order. Determinism matters: the same aggregation
+    must produce the same ranking every time.
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-bbb", revenue="100"),
+            _im(item_id="i-aaa", revenue="100"),
+            _im(item_id="i-ccc", revenue="500"),  # unambiguous rank 1
+        ]
+    )
+
+    ranked = rank_bestsellers(aggregated, metric="revenue", limit=10)
+
+    assert [r.item_id for r in ranked] == ["i-ccc", "i-aaa", "i-bbb"]
+
+
+def test_rank_limits_to_top_n() -> None:
+    """``limit=N`` caps the list at N rows after sorting + tie-breaking."""
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-c", revenue="300"),
+            _im(item_id="i-a", revenue="100"),
+            _im(item_id="i-b", revenue="200"),
+        ]
+    )
+
+    ranked = rank_bestsellers(aggregated, metric="revenue", limit=2)
+
+    assert [r.item_id for r in ranked] == ["i-c", "i-b"]
+
+
+def test_rank_renders_what_exists_when_fewer_than_n_items() -> None:
+    """Fewer items than ``limit`` renders every item, not padding.
+
+    Two items, ``limit=10`` — the list carries both, in order, with no
+    zero-fill rows.
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-latte", revenue="240"),
+            _im(item_id="i-chang", revenue="630"),
+        ]
+    )
+
+    ranked = rank_bestsellers(aggregated, metric="revenue", limit=10)
+
+    assert len(ranked) == 2
+    assert [r.item_id for r in ranked] == ["i-chang", "i-latte"]
+
+
+def test_rank_excludes_items_with_no_sales_this_month() -> None:
+    """Items with zero units AND zero revenue never sold — they don't rank.
+
+    A zero-row would be a row from ``margins_over_range`` for an item that
+    sold nothing (there shouldn't be any — the engine emits a row per
+    (item, segment) that *sold* that day — but guarding against it keeps
+    a stale or future drift from polluting the ranking with empty rows).
+    An item that sold but earned zero revenue is different and *does*
+    rank (it moved units), so the guard is ``units == 0 and revenue == 0``.
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-silent", units_sold=0, revenue="0"),  # never sold
+            _im(item_id="i-freebie", units_sold=2, revenue="0"),  # given away
+            _im(item_id="i-latte", units_sold=3, revenue="240"),
+        ]
+    )
+
+    ranked_by_rev = rank_bestsellers(aggregated, metric="revenue", limit=10)
+    ranked_by_units = rank_bestsellers(aggregated, metric="units", limit=10)
+
+    # The silent item is gone; the freebie (moved 2 units) still ranks.
+    ids_by_rev = [r.item_id for r in ranked_by_rev]
+    ids_by_units = [r.item_id for r in ranked_by_units]
+    assert "i-silent" not in ids_by_rev
+    assert "i-silent" not in ids_by_units
+    assert "i-freebie" in ids_by_units
+
+
+def test_rank_preserves_cm_unknown_marker_through_both_orderings() -> None:
+    """An unmapped item's marker survives into both ranked lists.
+
+    The marker is set during aggregation and carried through ranking so
+    the template can render the "CM unknown" label next to the item in
+    *both* lists (revenue and units) — not just one.
+    """
+    aggregated = aggregate_item_sales(
+        [
+            _im(item_id="i-latte", units_sold=3, revenue="240"),
+            _im(
+                item_id="i-mystery",
+                units_sold=5,
+                revenue="500",
+                unmapped=True,
+            ),
+        ]
+    )
+
+    by_rev = rank_bestsellers(aggregated, metric="revenue", limit=10)
+    by_units = rank_bestsellers(aggregated, metric="units", limit=10)
+
+    mystery_rev = next(r for r in by_rev if r.item_id == "i-mystery")
+    mystery_units = next(r for r in by_units if r.item_id == "i-mystery")
+    assert mystery_rev.cm_unknown is True
+    assert mystery_units.cm_unknown is True
+
+
+def test_rank_empty_input_returns_empty_list() -> None:
+    """A month with no sales aggregates to nothing — both lists empty."""
+    assert rank_bestsellers([], metric="revenue", limit=10) == []
+    assert rank_bestsellers([], metric="units", limit=10) == []

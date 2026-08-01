@@ -21,10 +21,10 @@ two-lens surface" decision (Period/Month stay recipe-cost-only).
 This module is **pure composition** — it owns no I/O, no storage imports.
 The web layer supplies the two engines' already-computed results plus
 ``today`` (for the in-progress flag); this module pairs them into the
-report shape the template renders. The spine lands here: the 4-tile
-summary + the in-progress flag. The two-lens ``.pnl`` table, the daily-
-revenue chart, the spend-by-category chart, and the bestseller lists land
-in later tickets and extend this module's outputs.
+report shape the template renders. The spine landed the 4-tile summary
++ the in-progress flag; later tickets added the two-lens ``.pnl`` table
+(#114), the daily-revenue and spend-by-category charts (#115), and the
+bestseller rankings (#116) — each extending this module's outputs.
 
 The two-lens honesty model (parent #112 "Two-lens honesty model"):
 
@@ -42,10 +42,11 @@ from __future__ import annotations
 import calendar
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 from .cash_spend import CashSpendForPeriod
 from .period_review import PeriodReview
-from .types import Money
+from .types import ItemMargin, Money
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,144 @@ def is_month_in_progress(*, start: date, end: date, today: date) -> bool:
     return (end.year, end.month) == (start.year, start.month)
 
 
+@dataclass(frozen=True)
+class ItemSalesTotal:
+    """One item's sales totals across the selected month (issue #116).
+
+    The shared per-item aggregation the two bestseller rankings sort. Both
+    rankings (total sales volume / total items) are two sorts of the same
+    list, so the aggregation is computed once and sorted twice.
+
+    - ``item_id``       the Loyverse item id (the aggregation key)
+    - ``name``          the item's display name. For a mapped item this is
+                        the recipe name; for an unmapped one it falls back
+                        to the item id (how ``compute_item_margins`` names
+                        an unmapped row) so the rankings always carry a
+                        readable label.
+    - ``units_sold``    total units sold in the month, summed across days
+    - ``revenue``       total revenue (THB) in the month, summed across days
+    - ``cm_unknown``    True when the item's contribution margin cannot be
+                        honestly derived — either ``unmapped`` (no recipe) or
+                        ``unknown_price`` (a recipe ingredient is unpriced).
+                        The item still appears in the rankings (its revenue
+                        counts); the marker is the visible "CM unknown"
+                        labelling the spec requires, *not* an exclusion.
+    """
+
+    item_id: str
+    name: str
+    units_sold: int
+    revenue: Money
+    cm_unknown: bool
+
+
+#: The bestseller metric to rank by. Two values, one per ranking (issue #116):
+#: total revenue (THB) and total units (item count). Both sorts share one
+#: aggregation; the metric selects the descending key.
+_BestsellerMetric = str  # "revenue" | "units"
+
+
+def aggregate_item_sales(rows: list[ItemMargin]) -> list[ItemSalesTotal]:
+    """Collapse per-day ``ItemMargin`` rows into one ``ItemSalesTotal`` per item.
+
+    Pure aggregation over the same per-day rows the recipe-cost lens consumes
+    (``margins_over_range`` → ``DayMargins.item_margins``): ``revenue`` and
+    ``units_sold`` sum across the days the item sold; the flags collapse to
+    a single ``cm_unknown`` (True when *any* of the item's rows is flagged
+    ``unmapped`` or ``unknown_price``).
+
+    Rows for items that sold nothing in the month are not produced by the
+    margin engine (it emits a row per ``(item, segment)`` that *sold* that
+    day), so this function does not filter zero rows either — the ranking
+    function owns that guard (see :func:`rank_bestsellers`).
+
+    Output order is ``item_id`` ascending (deterministic), so the two rankings
+    start from a stable base before applying their own metric sort. ``name``
+    is taken from the first row seen for an item; it is the recipe name for a
+    mapped item and the item id for an unmapped one (matching how
+    ``compute_item_margins`` names an unmapped row).
+    """
+    by_item: dict[str, list[ItemMargin]] = {}
+    for im in rows:
+        by_item.setdefault(im.item_id, []).append(im)
+    totals: list[ItemSalesTotal] = []
+    for item_id in sorted(by_item):
+        item_rows = by_item[item_id]
+        totals.append(
+            ItemSalesTotal(
+                item_id=item_id,
+                name=item_rows[0].name,
+                units_sold=sum(im.units_sold for im in item_rows),
+                revenue=sum((im.revenue for im in item_rows), Money("0")),
+                cm_unknown=any(
+                    im.unmapped or im.unknown_price for im in item_rows
+                ),
+            )
+        )
+    return totals
+
+
+def rank_bestsellers(
+    items: list[ItemSalesTotal],
+    *,
+    metric: _BestsellerMetric,
+    limit: int,
+) -> list[ItemSalesTotal]:
+    """Rank items into a descending top-N list (issue #116).
+
+    Two sales-side rankings share one aggregation — call
+    :func:`aggregate_item_sales` once, then sort its result twice (once per
+    metric) so the per-item rows are computed a single time:
+
+    - ``metric="revenue"`` — top-N by total sales volume (THB)
+    - ``metric="units"``   — top-N by total items (unit count)
+
+    Sorting is descending by the chosen metric; ties are broken
+    deterministically by ``item_id`` ascending (so the same aggregation
+    always produces the same ranking). Fewer-than-N items renders what
+    exists — no padding. Items that never sold (zero units *and* zero
+    revenue) are dropped so a stale or future drift cannot pollute the
+    ranking with empty rows; an item that moved units but earned zero
+    revenue (a giveaway) still ranks.
+
+    ``cm_unknown`` is carried through from the aggregation so the template
+    can render the "CM unknown" marker on either ranking — the item is not
+    excluded, only labelled.
+    """
+    ranked_input = [
+        t
+        for t in items
+        if not (t.units_sold == 0 and t.revenue == 0)
+    ]
+    # Descending by metric, ascending by ``item_id`` as the deterministic
+    # tie-break. Negate the numeric metric for the descending sort; keep
+    # ``item_id`` positive so the tie-break is ascending. Both metrics
+    # promote to Decimal (int converts cleanly), so the sign flip is
+    # well-typed regardless of which metric was chosen.
+    ranked = sorted(
+        ranked_input, key=lambda t: (-_metric_value(t, metric), t.item_id)
+    )
+    return ranked[:limit]
+
+
+def _metric_value(total: ItemSalesTotal, metric: _BestsellerMetric) -> Decimal:
+    """The sort key for a ranking — the metric value as a ``Decimal``.
+
+    Validates ``metric`` up front (the only two legal values are
+    ``"revenue"`` and ``"units"``) and returns a ``Decimal`` so the caller's
+    sign-flip for the descending sort is well-typed. ``units_sold`` (int)
+    converts to ``Decimal`` cleanly; ``revenue`` is already ``Money``
+    (``Decimal``).
+    """
+    if metric == "revenue":
+        return total.revenue
+    if metric == "units":
+        return Decimal(total.units_sold)
+    raise ValueError(
+        f"unknown bestseller metric {metric!r}; expected 'revenue' or 'units'"
+    )
+
+
 def build_profit_report(
     *,
     review: PeriodReview,
@@ -165,8 +304,11 @@ def build_profit_report(
 
 
 __all__ = [
+    "ItemSalesTotal",
     "ProfitReport",
     "ProfitTiles",
+    "aggregate_item_sales",
     "build_profit_report",
     "is_month_in_progress",
+    "rank_bestsellers",
 ]

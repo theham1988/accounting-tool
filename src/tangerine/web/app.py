@@ -60,13 +60,17 @@ from ..coverage import (
 )
 from ..daily_review import DailyReview, build_daily_review
 from ..period_review import build_item_performance, build_period_review
-from ..profit_report import build_profit_report
+from ..profit_report import (
+    aggregate_item_sales,
+    build_profit_report,
+    rank_bestsellers,
+)
 from ..trends import WeekdayAggregate, build_trends
 from ..loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
 from ..loyverse.parser import VENUE_TIMEZONE
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
-from ..margin import CostResolver, cost_breakdown
+from ..margin import CostResolver, cost_breakdown, margins_over_range
 from ..quantity import QuantityError, estimated_yield, parse_quantity
 from ..recipes import RecipeCatalog, find_recipe_cycle
 from ..serving_recipe import (
@@ -3039,6 +3043,67 @@ def _spend_by_category_chart(
     }
 
 
+#: How many items each bestseller list shows. The spec (parent #112) calls the
+#: rankings "top-N"; ten is a defensible default — long enough to surface the
+#: real movers, short enough to fit beside the two-lens panel and charts on
+#: one screen. Fewer-than-N items renders what exists (the ranking function
+#: caps, never pads).
+_BESTSELLER_LIMIT = 10
+
+
+def _bestseller_rankings(
+    source: StoreSource, start: date, end: date
+) -> dict[str, object]:
+    """The two bestseller rankings for the Profit Report (issue #116).
+
+    Both rankings share one per-item aggregation over the *same per-day
+    ``ItemMargin`` rows the recipe-cost lens consumes* (``margins_over_range``
+    → ``DayMargins.item_margins``), so the rankings are sourced from the same
+    sales the period engine already costed — no second pass over the data.
+
+    The two lists are two sorts of that one aggregation:
+
+    - **by_revenue** — top-N by total sales volume (THB)
+    - **by_units**   — top-N by total items (unit count)
+
+    The per-item aggregation runs **once** (:func:`aggregate_item_sales`)
+    and both rankings sort its result, matching the spec's "shared
+    aggregation" literally. Sorting (descending, ties broken by
+    ``item_id``) and the fewer-than-N / zero-row rules live in the pure
+    :func:`tangerine.profit_report.rank_bestsellers`; this helper only runs
+    the shared ``margins_over_range`` pass, aggregates once, and feeds the
+    aggregation into both sorts.
+
+    The per-day pass is the same one ``build_period_review`` runs internally;
+    re-running it here keeps the composition module pure (no ``source``
+    import) at the cost of one extra pass over the month. The pass is cheap
+    (a single catalog build + per-day costing) and the Profit Report is a
+    once-a-month strategic view, not a hot path.
+    """
+    slices = margins_over_range(source, start, end)
+    rows = [im for s in slices for im in s.item_margins]
+    aggregated = aggregate_item_sales(rows)
+    by_revenue = rank_bestsellers(
+        aggregated, metric="revenue", limit=_BESTSELLER_LIMIT
+    )
+    by_units = rank_bestsellers(
+        aggregated, metric="units", limit=_BESTSELLER_LIMIT
+    )
+    return {
+        "by_revenue": by_revenue,
+        "by_units": by_units,
+        "limit": _BESTSELLER_LIMIT,
+        "note": (
+            "Rankings are sales-side — total revenue and units sold — not "
+            "contribution-margin. A top seller by revenue is not necessarily "
+            "a top earner by profit; the profit story lives in the tiles and "
+            "two-lens panel above. Items marked \u201cCM unknown\u201d sold "
+            "but their cost could not be computed, so their margin is not "
+            "shown here."
+        ),
+    }
+
+
 def _fixed_costs_summary(review: Any) -> str:
     """Short meta line for the Fixed Costs row-link card."""
     lines = review.fixed_costs.lines
@@ -3318,6 +3383,7 @@ def _render_profit_review(
     )
     daily_chart = _daily_revenue_chart(review)
     spend_chart = _spend_by_category_chart(cash_spend, cfg)
+    bestsellers = _bestseller_rankings(source, start, end)
     range_nav = _profit_range_nav(app, start, end)
     return templates.TemplateResponse(
         request=request,
@@ -3329,6 +3395,7 @@ def _render_profit_review(
             "review": review,
             "daily_chart": daily_chart,
             "spend_chart": spend_chart,
+            "bestsellers": bestsellers,
             "switcher": _mode_switcher_urls(end),
             "breadcrumb": _period_crumbs(start, end, "profit"),
             **range_nav,
