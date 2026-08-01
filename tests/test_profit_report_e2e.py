@@ -1321,3 +1321,275 @@ def test_period_and_month_views_do_not_render_the_profit_charts(
     for html in (period_html, month_html):
         assert "<!--section:daily-revenue-chart-->" not in html
         assert "<!--section:spend-by-category-chart-->" not in html
+
+
+# --- bestseller rankings (#116): two sales-side lists ---------------------------
+#
+# AC: two rankings on the Profit Report — top-N by total sales volume (THB) and
+# top-N by total items (unit count). Both share one per-item aggregation over
+# the same per-day ``ItemMargin`` rows the recipe-cost lens consumes
+# (``margins_over_range``), so they are sourced from the same sales the period
+# engine already costed. Each list is sorted descending with ties broken by
+# ``item_id``; fewer-than-N renders what exists. Unmapped items appear in both
+# rankings (their revenue counts) with a "CM unknown" marker. A visible note
+# explains the ranking is sales-side, not contribution-margin.
+
+
+def test_bestsellers_section_renders_two_lists(tmp_path: Path) -> None:
+    """AC: the bestsellers section renders both the by-revenue and by-units lists.
+
+    The section carries two list panes — one headed "By sales volume" (THB),
+    one headed "By items sold" (units) — so a partner sees both views at once.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    assert "<!--section:bestsellers-->" in html
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+
+    # Both list panes render, headed with the two metric labels.
+    assert "By sales volume" in section
+    assert "By items sold" in section
+    assert 'class="bestsellers__list bestsellers__list--revenue"' in section
+    assert 'class="bestsellers__list bestsellers__list--units"' in section
+
+
+def test_bestsellers_by_revenue_sorted_descending(tmp_path: Path) -> None:
+    """AC: the by-revenue list is sorted high-to-low by total sales volume.
+
+    Seeded July sales: 7 changs @ 90 = 630 THB, 7 lattes @ 80 = 560 THB.
+    By revenue, chang (630) outranks latte (560), so the list reads
+    chang then latte.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+    # Isolate the revenue pane (it precedes the units pane).
+    rev_list = section.split('bestsellers__list--revenue"', 1)[1].split(
+        'bestsellers__list--units"', 1
+    )[0]
+
+    # Chang (630) precedes latte (560) in the by-revenue list.
+    chang_pos = rev_list.find("Chang Draft 500ml")
+    latte_pos = rev_list.find("Espresso Latte")
+    assert chang_pos != -1 and latte_pos != -1
+    assert chang_pos < latte_pos
+    # Both absolute THB values render in their revenue cells.
+    assert rev_list.count('bestsellers__value--revenue">630.00 THB</span>') == 1
+    assert rev_list.count('bestsellers__value--revenue">560.00 THB</span>') == 1
+
+
+def test_bestsellers_by_units_sorted_descending_with_tie_break(
+    tmp_path: Path,
+) -> None:
+    """AC: the by-units list is sorted high-to-low by unit count; ties by item_id.
+
+    Seeded July sales: 7 changs and 7 lattes — equal units (7 each), so the
+    deterministic tie-break by ``item_id`` ascending decides: ``i-chang``
+    precedes ``i-latte``. In the by-units list the unit count is the main
+    value; revenue is the sub.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+    # The units pane is the second/last list, so splitting on its marker
+    # isolates it; the revenue pane precedes it.
+    units_list = section.split('bestsellers__list--units"', 1)[1]
+
+    chang_pos = units_list.find("Chang Draft 500ml")
+    latte_pos = units_list.find("Espresso Latte")
+    assert chang_pos != -1 and latte_pos != -1
+    assert chang_pos < latte_pos  # tie-break: i-chang < i-latte
+    # The unit count is the main value in the by-units list: each item
+    # renders its count in a ``--units`` value span.
+    assert units_list.count('bestsellers__value--units">7</span>') == 2
+
+
+def test_bestsellers_show_fewer_than_n_when_few_items_sold(
+    tmp_path: Path,
+) -> None:
+    """AC: fewer-than-N items renders what exists, not padded.
+
+    The seed has only two distinct items (latte + chang). The default limit
+    (10) is larger than that, so each list carries exactly two ranked rows —
+    no zero-fill padding.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+    # Isolate each pane: revenue (first) up to the units marker, then units
+    # (last). Count the ``<li class="bestsellers__item`` rows precisely —
+    # ``class="bestsellers__items"`` (the <ol> container) shares the prefix.
+    rev_list = section.split('bestsellers__list--revenue"', 1)[1].split(
+        'bestsellers__list--units"', 1
+    )[0]
+    units_list = section.split('bestsellers__list--units"', 1)[1]
+
+    assert rev_list.count('<li class="bestsellers__item') == 2
+    assert units_list.count('<li class="bestsellers__item') == 2
+
+
+def test_bestsellers_unmapped_item_appears_with_cm_unknown_marker(
+    tmp_path: Path,
+) -> None:
+    """AC: unmapped items appear in both rankings with a "CM unknown" marker.
+
+    An unmapped item's revenue counts toward the ranking (it sold), but its
+    cost is unknown so its margin is not shown — the marker is the visible
+    labelling for that, not an exclusion. The seeded unmapped item sells 3
+    units @ 100 = 300 THB, so it ranks in both lists.
+
+    By revenue: chang 630 > unmapped 300 > latte 560? No — 560 > 300, so the
+    revenue order is chang (630), latte (560), unmapped (300). The marker
+    must appear next to the unmapped item in *both* lists.
+    """
+    unmapped_sales = [
+        _sale_record(
+            receipt_number=f"r-mystery-{i}",
+            item_id="i-mystery",  # no recipe maps this
+            day=date(2026, 7, 5) + timedelta(days=i),
+            price="100",
+            line_id=f"li-mystery-{i}",
+            segment=Segment.CAFE,
+        )
+        for i in range(3)  # 3 units @ 100 = 300 THB
+    ]
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales() + unmapped_sales,
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+    # Isolate each pane precisely.
+    rev_list = section.split('bestsellers__list--revenue"', 1)[1].split(
+        'bestsellers__list--units"', 1
+    )[0]
+    units_list = section.split('bestsellers__list--units"', 1)[1]
+
+    # The unmapped item appears in both lists (its revenue counts).
+    assert "i-mystery" in rev_list or "mystery" in rev_list.lower()
+    assert "i-mystery" in units_list or "mystery" in units_list.lower()
+
+    # The "CM unknown" marker renders next to the unmapped item in both lists.
+    assert rev_list.count("CM unknown") == 1
+    assert units_list.count("CM unknown") == 1
+
+
+def test_bestsellers_sales_side_note_renders(tmp_path: Path) -> None:
+    """AC: a visible note explains the ranking is sales-side, not contribution-margin.
+
+    The note records that the rankings are by revenue/units, not by profit —
+    so a future reader doesn't mistake "top seller by revenue" for "top earner
+    by profit" and "fix" the lists toward contribution-margin.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+
+    note = section.split('class="bestsellers__note"', 1)[1]
+    assert "sales-side" in note.lower() or "sales side" in note.lower()
+    assert "contribution-margin" in note.lower() or "contribution margin" in note.lower()
+
+
+def test_bestsellers_render_gracefully_with_no_sales(tmp_path: Path) -> None:
+    """AC: an empty month renders the lists' empty state, not a broken section.
+
+    August 2026 has no seeded sales. The section still renders (so the page
+    layout is stable), each list shows an honest "No sales this month" empty
+    state, and the heading + note still render.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-08").text
+    assert "<!--section:bestsellers-->" in html
+    section = html.split("<!--section:bestsellers-->")[1].split(
+        "<!--/section:bestsellers-->"
+    )[0]
+
+    # No ranked items, but each list carries the empty-state message.
+    assert section.count('<li class="bestsellers__item') == 0
+    assert section.lower().count("no sales this month") == 2
+
+
+# --- regression: bestsellers are Profit-Report-only -----------------------------
+
+
+def test_period_and_month_views_do_not_render_bestsellers(tmp_path: Path) -> None:
+    """The bestsellers section is Profit-Report-only — Period/Month stay clean.
+
+    Mirrors the #114 pnl-panel and #115 chart regression guards: the
+    bestsellers are an artifact of the two-lens composition, so they must
+    not leak into the shared period_review.html template.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    period_html = client.get(
+        "/review?mode=period&start=2026-07-01&end=2026-07-31"
+    ).text
+    month_html = client.get("/review?mode=month&month=2026-07").text
+
+    for html in (period_html, month_html):
+        assert "<!--section:bestsellers-->" not in html
+        assert "bestsellers" not in html.lower()

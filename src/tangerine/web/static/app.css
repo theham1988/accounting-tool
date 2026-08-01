@@ -2911,6 +2911,127 @@ a.trend-bar:hover .trend-bar__fill {
   margin-top: 0.6rem;
 }
 
+/* Bestseller rankings (#116, parent #112) — two sales-side lists side by side:
+   top-N by revenue (THB) and top-N by units. Both share the same aggregation,
+   rendered as ordered lists (rank is meaningful, so <ol> not <ul>). Mobile-
+   first single column, two columns ≥720px, matching .split's register. */
+.bestsellers {
+  margin: 0 0 var(--tb-space-4);
+}
+
+.bestsellers__head {
+  margin: 0 0 0.6rem;
+}
+
+.bestsellers__head h2 {
+  font-family: var(--tb-font-display);
+  font-size: 1.1rem;
+  margin: 0 0 0.3rem;
+}
+
+.bestsellers__note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--tb-ink-soft);
+  line-height: 1.5;
+  max-width: 60ch;
+}
+
+.bestsellers__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.9rem;
+}
+
+@media (min-width: 720px) {
+  .bestsellers__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.bestsellers__list {
+  background: var(--tb-paper-raised);
+  border: var(--tb-keyline) solid var(--tb-ink);
+  padding: 0.6rem 0.8rem;
+}
+
+.bestsellers__list-h {
+  font-family: var(--tb-font-display);
+  font-size: 0.95rem;
+  margin: 0 0 0.4rem;
+}
+
+.bestsellers__list-unit {
+  color: var(--tb-ink-soft);
+  font-weight: normal;
+}
+
+.bestsellers__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bestsellers__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "rank name value"
+    "rank sub sub";
+  align-items: baseline;
+  gap: 0 0.4rem;
+  padding: 0.3rem 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.bestsellers__item:last-child {
+  border-bottom: none;
+}
+
+.bestsellers__rank {
+  grid-area: rank;
+  color: var(--tb-ink-soft);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.5em;
+}
+
+.bestsellers__name {
+  grid-area: name;
+}
+
+.bestsellers__value {
+  grid-area: value;
+  text-align: right;
+  font-weight: var(--tb-weight-bold);
+}
+
+.bestsellers__sub {
+  grid-area: sub;
+  text-align: right;
+  color: var(--tb-ink-soft);
+  font-size: 0.8rem;
+}
+
+/* "CM unknown" marker — carried inline after the name so it wraps with it.
+   Muted tango so it reads as a caveat, not a warning. */
+.bestsellers__cm {
+  grid-area: name;
+  justify-self: start;
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--tb-tango);
+  text-transform: uppercase;
+}
+
+.bestsellers__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--tb-ink-soft);
+}
+
 /* Chart legend + swatch. Swatch is square (--tb-radius: 0), not the HTML's 3px. */
 .legend {
   display: flex;
