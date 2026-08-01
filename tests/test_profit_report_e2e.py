@@ -985,3 +985,339 @@ def test_profit_tab_lights_reports_bottom_nav(tmp_path: Path) -> None:
 
     assert "reports" in nav.lower()
     assert "is-active" in nav or "--active" in nav
+
+
+# --- daily-revenue chart (#115): one bar per day, deep-link to that day ---------
+#
+# AC: a daily-revenue chart renders one bar per day in the selected month,
+# each bar a deep-link into that day's review (``/review?mode=day&day=...``).
+# The chart uses the existing ``bar_row`` / ``ChartPoint`` vocabulary (ADR-0002
+# unchanged — no new SVG geometry, no client JavaScript). The month's days
+# are sourced from ``review.days`` (one entry per day in range, zero-revenue
+# days included as zeros rather than omitted, so the chart reads as a
+# calendar not a sparse list).
+
+
+def test_daily_revenue_chart_renders_one_bar_per_day_in_the_month(
+    tmp_path: Path,
+) -> None:
+    """AC: the daily-revenue chart has one bar per calendar day in July (31).
+
+    July 2026 has 31 days. The chart section renders one ``trend-bar`` per
+    day, sourced from ``review.days`` — including the 24 days with no sales
+    (zero-revenue days stay in the chart so it reads as a calendar, not a
+    sparse list of trading days).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    assert "<!--section:daily-revenue-chart-->" in html
+    chart = html.split("<!--section:daily-revenue-chart-->")[1].split(
+        "<!--/section:daily-revenue-chart-->"
+    )[0]
+
+    # 31 bars, one per calendar day in July. ``bar_row`` emits one
+    # ``class="trend-bar"`` outer element per point (the per-bar class is
+    # distinct from ``trend-bar__fill`` / ``trend-bar__value`` /
+    # ``trend-bar__label`` which carry the inner spans).
+    assert chart.count('class="trend-bar"') == 31
+
+
+def test_daily_revenue_chart_bar_values_come_from_review_days(
+    tmp_path: Path,
+) -> None:
+    """AC: each bar's value is sourced from ``review.days[i].revenue``.
+
+    Worked example: each trading day (5–11 Jul) carries one latte @ 80 THB +
+    one chang @ 90 THB = 170 THB revenue. The bar's displayed value reads
+    170.00 on those days and 0.00 on the quiet days (rendered, not omitted).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    chart = html.split("<!--section:daily-revenue-chart-->")[1].split(
+        "<!--/section:daily-revenue-chart-->"
+    )[0]
+
+    # Seven trading days carry 170 THB each; the value renders to 2dp.
+    assert chart.count("170.00") == 7
+
+
+def test_daily_revenue_chart_each_bar_deep_links_to_that_days_review(
+    tmp_path: Path,
+) -> None:
+    """AC: each daily-revenue bar is a link to ``/review?mode=day&day=...``.
+
+    Every bar in the daily-revenue chart is a drill-in: a partner reading
+    the month's revenue shape can jump to any day's review in one click.
+    The bar's href carries the day's ISO date, so 2026-07-05 through
+    2026-07-11 are all present (the seeded trading days).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    chart = html.split("<!--section:daily-revenue-chart-->")[1].split(
+        "<!--/section:daily-revenue-chart-->"
+    )[0]
+
+    # Every bar is a link: ``bar_row`` emits ``<a class="trend-bar">`` when
+    # the ChartPoint has an href, ``<span class="trend-bar">`` otherwise.
+    # All 31 daily bars carry a deep-link, so the anchor form must appear 31
+    # times — never the non-clickable span form.
+    assert chart.count('<a class="trend-bar"') == 31
+    assert chart.count('<span class="trend-bar"') == 0
+    # Every calendar day in July is deep-linked (zero-revenue days too —
+    # the partner can still drill into a quiet day's review).
+    for day in (5, 11, 1, 31):  # trading days + the month's bookends
+        assert f"mode=day&amp;day=2026-07-{day:02d}" in chart
+    # The bar's label is the day-of-month (1..31), not the full ISO date —
+    # so the chart reads as a compact calendar, one number per bar.
+    assert '<span class="trend-bar__label">5</span>' in chart
+    assert '<span class="trend-bar__label">11</span>' in chart
+    assert '<span class="trend-bar__label">31</span>' in chart
+
+
+def test_daily_revenue_chart_renders_for_a_month_with_no_sales(
+    tmp_path: Path,
+) -> None:
+    """AC: the chart renders gracefully on an empty month — no broken chart.
+
+    August 2026 has no seeded sales. The chart still renders its 31 bars
+    (all zero-revenue) rather than erroring or rendering an empty section.
+    This is the empty-period case (no sales) the AC calls out.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-08").text
+    assert "<!--section:daily-revenue-chart-->" in html
+    chart = html.split("<!--section:daily-revenue-chart-->")[1].split(
+        "<!--/section:daily-revenue-chart-->"
+    )[0]
+
+    # August has 31 days; every bar is a zero-revenue day.
+    assert chart.count('class="trend-bar"') == 31
+
+
+# --- spend-by-category chart (#115): one bar per non-zero bucket ---------------
+#
+# AC: a spend-by-category chart renders one bar per bucket with non-zero
+# spend in the period, labelled with the bucket's *display name* from the
+# spend-bucket vocabulary (#95) — not the raw ``bucket_id`` slug. Zero-spend
+# buckets are absent (the chart isn't cluttered with empty categories).
+
+
+def test_spend_by_category_chart_renders_one_bar_per_non_zero_bucket(
+    tmp_path: Path,
+) -> None:
+    """AC: one bar per bucket with non-zero spend; zero-spend buckets absent.
+
+    The seeded July cash-spend lands on two buckets — coffee (1,121.50 net)
+    and kitchen (350) — so the chart has two bars. The other four seeded
+    buckets (taps / bakery / staff / rent) carry no spend in July and so
+    must not render a bar (AC #14: zero-spend buckets are visibly absent).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    assert "<!--section:spend-by-category-chart-->" in html
+    chart = html.split("<!--section:spend-by-category-chart-->")[1].split(
+        "<!--/section:spend-by-category-chart-->"
+    )[0]
+
+    # Two bars — coffee + kitchen — no zero-spend bucket.
+    assert chart.count('class="trend-bar"') == 2
+
+
+def test_spend_by_category_chart_bars_carry_display_names(
+    tmp_path: Path,
+) -> None:
+    """AC: bars are labelled with the bucket's display name, not ``bucket_id``.
+
+    The spend-bucket vocabulary (#95) ships display names alongside the
+    slug: ``coffee`` → ``Coffee``, ``kitchen`` → ``Kitchen``. The chart's
+    bars render the partner-facing name, never the slug — a partner reads
+    ``Coffee`` on the chart, not the controlled-vocabulary id.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    chart = html.split("<!--section:spend-by-category-chart-->")[1].split(
+        "<!--/section:spend-by-category-chart-->"
+    )[0]
+
+    # The display names render; the raw slugs do not (display name is what
+    # the partner reads on the chart, the slug is the FK never surfaced).
+    assert "Coffee" in chart
+    assert "Kitchen" in chart
+    # The raw bucket_id slugs must NOT appear as labels — they are an
+    # implementation detail of the controlled vocabulary, not a partner-
+    # facing label. ``bar_row`` wraps each bar's label in a
+    # ``trend-bar__label`` span; check that span's content carries the
+    # display name (capitalised), never the lowercase slug.
+    assert '<span class="trend-bar__label">Coffee</span>' in chart
+    assert '<span class="trend-bar__label">Kitchen</span>' in chart
+    assert '<span class="trend-bar__label">coffee</span>' not in chart
+    assert '<span class="trend-bar__label">kitchen</span>' not in chart
+
+
+def test_spend_by_category_chart_bar_values_match_cash_spend_engine(
+    tmp_path: Path,
+) -> None:
+    """AC: each bucket's bar carries its net-of-VAT spend from the engine.
+
+    Worked example (from ``_july_cash_spend``):
+      coffee  = 1200 / 1.07 = 1121.50 (2dp, VAT-inclusive)
+      kitchen = 350          (no division)
+
+    The chart's bars read those values verbatim, tying the chart to the
+    cash-spend admin page for the same range (parent #112 user story #22).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+    chart = html.split("<!--section:spend-by-category-chart-->")[1].split(
+        "<!--/section:spend-by-category-chart-->"
+    )[0]
+
+    assert "1121.50" in chart  # coffee net-of-VAT
+    assert "350.00" in chart  # kitchen
+
+
+def test_spend_by_category_chart_renders_gracefully_with_no_spend(
+    tmp_path: Path,
+) -> None:
+    """AC: an empty-period case (no cash spend) renders gracefully.
+
+    August 2026 has no cash-spend rows. The chart section still renders
+    (so the page layout is stable) but carries no bars and a clear "no
+    spend this month" message rather than a broken or missing chart.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-08").text
+    assert "<!--section:spend-by-category-chart-->" in html
+    chart = html.split("<!--section:spend-by-category-chart-->")[1].split(
+        "<!--/section:spend-by-category-chart-->"
+    )[0]
+
+    # No bars (zero non-zero buckets), and an honest empty-state message.
+    assert chart.count("trend-bar") == 0
+    assert "no spend" in chart.lower() or "no cash spend" in chart.lower()
+
+
+def test_charts_use_existing_bar_row_vocabulary_no_new_svg_or_js(
+    tmp_path: Path,
+) -> None:
+    """AC: both charts use existing ``bar_row`` / ``ChartPoint``.
+
+    ADR-0002 unchanged: the charts render through the same server-side
+    ``bar_row`` CSS-bar vocabulary the Trends page uses — no new SVG
+    geometry, no client JavaScript. The page ships the single HTMX script
+    the base layout already loads (no page-local JS added).
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    html = client.get("/review?mode=profit&month=2026-07").text
+
+    # The shared ``bar_row`` vocabulary is present on both charts.
+    daily = html.split("<!--section:daily-revenue-chart-->")[1].split(
+        "<!--/section:daily-revenue-chart-->"
+    )[0]
+    spend = html.split("<!--section:spend-by-category-chart-->")[1].split(
+        "<!--/section:spend-by-category-chart-->"
+    )[0]
+    assert "trend-bar" in daily
+    assert "trend-bar" in spend
+    # No new client JavaScript: the page still ships only the base HTMX.
+    assert html.count("<script") == 1
+    assert "htmx.org" in html
+    assert "onclick" not in html
+
+
+# --- regression: charts absent on Period/Month (Profit-only surface) -----------
+#
+# Parent #112 IA decision: the Profit Report is the *only* two-lens surface.
+# The spend-by-category chart is a cash-basis-lens artifact, so it must not
+# leak into Period/Month (regression guard, mirrors the #114 pnl-panel guard).
+
+
+def test_period_and_month_views_do_not_render_the_profit_charts(
+    tmp_path: Path,
+) -> None:
+    """The new charts are Profit-Report-only — Period/Month stay clean.
+
+    The daily-revenue and spend-by-category chart sections are artifacts
+    of the two-lens composition; Period/Month stay recipe-cost-only. This
+    pins that the new chart sections have not leaked into the shared
+    period_review.html template.
+    """
+    app = _build_app(
+        tmp_path,
+        today=date(2026, 7, 15),
+        sales=_july_sales(),
+        cash_spend=_july_cash_spend(),
+    )
+    client = _authed_client(app)
+
+    period_html = client.get(
+        "/review?mode=period&start=2026-07-01&end=2026-07-31"
+    ).text
+    month_html = client.get("/review?mode=month&month=2026-07").text
+
+    for html in (period_html, month_html):
+        assert "<!--section:daily-revenue-chart-->" not in html
+        assert "<!--section:spend-by-category-chart-->" not in html
