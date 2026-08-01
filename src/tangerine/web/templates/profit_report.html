@@ -233,6 +233,64 @@
       <!--/section:needs-attention-->
     </section>
     {% endif %}
+
+    {# Daily-revenue chart (#115) — one bar per day in the month, server-
+       rendered through the existing ``bar_row`` vocabulary (ADR-0002
+       unchanged). Each bar deep-links into that day's review, so the chart
+       is a navigation surface: a partner reading the month's revenue shape
+       jumps to any day's review in one click. The month's days come from
+       ``review.days``, which carries every calendar day in range (quiet days
+       as zeros, so the chart reads as a calendar, not a sparse list).
+
+       No new SVG geometry, no client JavaScript — the bars are the same CSS
+       ``<a class="trend-bar">`` elements the Trends page ships, computed
+       server-side in ``_daily_revenue_chart``. #}
+    <!--section:daily-revenue-chart-->
+    <section class="trend-chart trend-chart--profit trend-chart--daily">
+      <div class="trend-chart__head">
+        <h2 class="trend-chart__title">{{ daily_chart.title }}</h2>
+        <span class="trend-chart__span">{{ daily_chart.day_count }} day{{ "" if daily_chart.day_count == 1 else "s" }}</span>
+      </div>
+      {{ daily_chart.bars | safe }}
+      <p class="trend-chart__note">
+        One bar per day; click any bar to open that day's review.
+        Quiet days carry zero revenue and stay in the chart so it reads as a
+        calendar.
+      </p>
+    </section>
+    <!--/section:daily-revenue-chart-->
+
+    {# Spend-by-category chart (#115) — one bar per bucket with non-zero
+       spend in the period, labelled with the bucket's *display name* from
+       the spend-bucket vocabulary (#95) — never the raw ``bucket_id`` slug.
+       Zero-spend buckets are absent (the chart isn't cluttered with empty
+       categories). The bars come from ``bar_row`` over
+       ``cash_spend.by_bucket`` merged against the vocabulary in
+       ``_spend_by_category_chart``; the merge lives in the web layer so the
+       composition module stays free of store imports.
+
+       Unlike the daily chart, the spend bars are not deep-links — a bucket
+       has no single drill-in target (its spend is spread across many
+       supplier bills on many dates), so ``ChartPoint.href`` is empty and
+       ``bar_row`` renders non-clickable ``<span>`` bars. #}
+    <!--section:spend-by-category-chart-->
+    <section class="trend-chart trend-chart--profit trend-chart--spend">
+      <div class="trend-chart__head">
+        <h2 class="trend-chart__title">{{ spend_chart.title }}</h2>
+        <span class="trend-chart__span">{{ spend_chart.bucket_count }} categor{{ "y" if spend_chart.bucket_count == 1 else "ies" }}</span>
+      </div>
+      {% if spend_chart.has_spend %}
+      {{ spend_chart.bars | safe }}
+      <p class="trend-chart__note">
+        Cash spend net of VAT, by bucket. Buckets with no spend this month
+        are omitted. Labels are the bucket display names from the
+        spend-bucket vocabulary.
+      </p>
+      {% else %}
+      <p class="trend-chart__empty">No cash spend recorded this month.</p>
+      {% endif %}
+    </section>
+    <!--/section:spend-by-category-chart-->
     </div><!-- /#review-body -->
   </div>
 {% endblock %}

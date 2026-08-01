@@ -2961,6 +2961,84 @@ def _profit_range_nav(
     }
 
 
+def _daily_revenue_chart(review: Any) -> dict[str, object]:
+    """The daily-revenue chart for the Profit Report (issue #115).
+
+    One bar per day in the month, sourced from ``review.days`` (which carries
+    every calendar day in the range — quiet days as zeros, so the chart reads
+    as a calendar, not a sparse list of trading days). Each bar is a deep-link
+    into that day's review (``/review?mode=day&day=...``), so an interesting
+    day is one click away — same navigational-bar pattern the Trends page uses.
+
+    Pure composition over the existing ``bar_row`` / ``ChartPoint`` vocabulary:
+    no new SVG geometry, no client JavaScript (ADR-0002 unchanged). The
+    section is always rendered (even on an empty month) so the page layout is
+    stable; ``bar_row`` over 31 zero-revenue days still draws 31 flat bars.
+    """
+    points = [
+        ChartPoint(
+            label=str(day.day.day),
+            value=day.revenue,
+            href=f"/review?mode=day&day={day.day.isoformat()}",
+            display=_money(day.revenue),
+        )
+        for day in review.days
+    ]
+    return {
+        "title": f"Daily revenue — {review.start.strftime('%B %Y')}",
+        "bars": bar_row(points, css_class="trend-bars trend-bars--daily"),
+        "day_count": len(points),
+    }
+
+
+def _spend_by_category_chart(
+    cash_spend: Any, cfg: SqliteConfigStore
+) -> dict[str, object]:
+    """The spend-by-category chart for the Profit Report (issue #115).
+
+    One bar per bucket with non-zero spend in the period, sourced from
+    ``cash_spend.by_bucket`` merged against the spend-bucket vocabulary
+    (issue #95) — so each bar's label is the bucket's *display name*
+    (``Coffee``), never the raw ``bucket_id`` slug (``coffee``). Zero-spend
+    buckets are absent (the chart isn't cluttered with empty categories;
+    parent #112 user story #14).
+
+    The vocabulary merge lives here in the web layer rather than in
+    :mod:`tangerine.profit_report` so the composition module stays free of
+    store imports (the spine's contract — engines passed in, no I/O).
+
+    Bar order is the vocabulary's own order: ``cfg.spend_buckets()`` returns
+    the seeded six in display order, then partner additions in creation
+    order — so the chart's left-to-right order is the partner's controlled
+    order, sourced from the single place that owns it. ``by_bucket`` entries
+    whose slug has been hard-deleted from the vocabulary (rows still
+    aggregating under a retired id) fall through to the end, labelled by id.
+    """
+    buckets = cfg.spend_buckets()
+    by_id = {b.bucket_id: b for b in buckets}
+    spend = cash_spend.by_bucket
+    # Iterate the vocabulary's order; pull the period's spend for each.
+    # Buckets present in ``spend`` but not in the vocabulary (a deleted slug
+    # whose rows still aggregate) are appended at the end so they still render.
+    ordered_ids = [b.bucket_id for b in buckets]
+    trailing = sorted(bid for bid in spend if bid not in by_id)
+    points = [
+        ChartPoint(
+            label=by_id[bucket_id].name if bucket_id in by_id else bucket_id,
+            value=amount,
+            display=_money(amount),
+        )
+        for bucket_id in ordered_ids + trailing
+        if (amount := spend.get(bucket_id)) is not None and amount != 0
+    ]
+    return {
+        "title": "Spend by category",
+        "bars": bar_row(points, css_class="trend-bars trend-bars--spend"),
+        "bucket_count": len(points),
+        "has_spend": bool(points),
+    }
+
+
 def _fixed_costs_summary(review: Any) -> str:
     """Short meta line for the Fixed Costs row-link card."""
     lines = review.fixed_costs.lines
@@ -3238,6 +3316,8 @@ def _render_profit_review(
     report = build_profit_report(
         review=review, cash_spend=cash_spend, today=app.state.today
     )
+    daily_chart = _daily_revenue_chart(review)
+    spend_chart = _spend_by_category_chart(cash_spend, cfg)
     range_nav = _profit_range_nav(app, start, end)
     return templates.TemplateResponse(
         request=request,
@@ -3247,6 +3327,8 @@ def _render_profit_review(
             "mode": "profit",
             "report": report,
             "review": review,
+            "daily_chart": daily_chart,
+            "spend_chart": spend_chart,
             "switcher": _mode_switcher_urls(end),
             "breadcrumb": _period_crumbs(start, end, "profit"),
             **range_nav,
