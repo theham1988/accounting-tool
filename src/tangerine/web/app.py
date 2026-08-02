@@ -41,6 +41,11 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from starlette.background import BackgroundTask
 
 from ..cash_spend import CashSpendEntry, cash_spend_for_period
+from ..cash_spend_csv import (
+    ImportPreview,
+    generate_template_csv as generate_cash_spend_template_csv,
+    parse_import as parse_cash_spend_import,
+)
 from ..config.loader import load_assignees
 from ..cost import CostBook
 from ..cost_mirror import (
@@ -471,6 +476,14 @@ def create_app(
     # sufficient: the app runs under one uvicorn worker behind nginx, and a
     # server restart simply asks the partner to re-prepare.
     app.state.loyverse_export_held_uploads = {}
+    # In-memory hold of each session's most recent cash-spend import preview,
+    # so the apply step does not require a re-upload (issue #121 / #83 d3).
+    # Keyed by ``session_id``; the value is the uploaded CSV text. Apply
+    # *always* re-parses via ``parse_import`` from current Books state — the
+    # held text is a convenience, never a trust path (a row added between
+    # preview and apply changes the against-ledger duplicate warnings, so the
+    # partner must see what's true now, not what was true at preview time).
+    app.state.cash_spend_held_imports = {}
 
     # The auth gate sits between Starlette's routing and our route handlers.
     # Public paths (``/login``, ``/static``) bypass it; everything else
@@ -1562,6 +1575,247 @@ def create_app(
         if not deleted:
             return HTMLResponse("Unknown cash-spend row.", status_code=404)
         return RedirectResponse(url="/admin/cash-spend", status_code=303)
+
+    # --- Cash-spend CSV importer (issue #121, parent #83) --------------------
+    #
+    # The bulk path for cash-basis supplier purchases — the repeatable
+    # version of the one-shot HTML reconciliation. A partner downloads a
+    # template pre-filled with the controlled vocabulary (suppliers + spend
+    # buckets, including retired buckets), fills in entry rows offline in
+    # Excel, uploads it, previews what will land (two-tier: hard errors
+    # block, soft warnings don't), and on confirm applies the whole file
+    # atomically under one ``session_id`` so ``/audit`` shows it as a single
+    # reversible stroke.
+    #
+    # Mechanics are settled by #83 (its resolution comment); this is the
+    # build of those mechanics, not a re-litigation. The pure engine is
+    # :mod:`tangerine.cash_spend_csv`; these routes own HTTP, the same
+    # split as ``/upload``.
+
+    @app.get("/admin/cash-spend/import", response_class=HTMLResponse)
+    def cash_spend_import_page(
+        request: Request,
+        applied: int | None = None,
+    ) -> HTMLResponse:
+        """The importer landing: template download + file upload form.
+
+        ``applied`` carries the in-place confirmation signal (the
+        ``/upload`` ``?applied=N`` pattern): the apply POST redirects with
+        ``?applied=N`` and the template renders the teal "APPLIED — N rows
+        live" banner.
+        """
+        t: Jinja2Templates = app.state.templates
+        return t.TemplateResponse(
+            request=request,
+            name="cash_spend_import.html",
+            context={"request": request, "applied": applied, "preview": None},
+        )
+
+    @app.get("/admin/cash-spend/import/template")
+    def cash_spend_import_template(request: Request) -> Response:
+        """The downloadable CSV template, pre-filled with current vocabulary.
+
+        Mirrors ``GET /upload/template``: every supplier + every spend
+        bucket (including retired ones) above the entry header, so the
+        partner has the slugs to hand while filling entry rows in Excel.
+        """
+        cfg: SqliteConfigStore = app.state.config_store
+        csv_text = generate_cash_spend_template_csv(
+            suppliers=cfg.suppliers(), buckets=cfg.spend_buckets()
+        )
+        stamp = app.state.today.isoformat()
+        return Response(
+            content=csv_text,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="tangerine-cash-spend-{stamp}.csv"'
+                )
+            },
+        )
+
+    @app.post("/admin/cash-spend/import/preview", response_class=HTMLResponse)
+    def cash_spend_import_preview(
+        request: Request,
+        file: UploadFile | None = None,
+    ) -> HTMLResponse:
+        """Parse an uploaded CSV and render the two-tier preview.
+
+        Hard errors block apply (unknown vendor/bucket, bad date/amount,
+        missing field, bad ``vat_inclusive``); soft warnings don't
+        (duplicate within-file or against-ledger, retired bucket). The page
+        carries a Confirm button that POSTs to ``/apply``.
+
+        The uploaded text is held server-side keyed by the partner's session
+        so apply does not require a re-upload (mirrors the cost-mirror's
+        held-upload convenience). The held text is a convenience only —
+        apply always re-parses via ``parse_import`` from current Books
+        state, so a row added between preview and apply changes the
+        against-ledger duplicate warnings and the partner sees what's true
+        now.
+        """
+        t: Jinja2Templates = app.state.templates
+        cfg: SqliteConfigStore = app.state.config_store
+        text, filename, error_msg = _resolve_cash_spend_upload(request, file)
+        if error_msg is not None or text is None:
+            return t.TemplateResponse(
+                request=request,
+                name="cash_spend_import.html",
+                context=_cash_spend_import_context(
+                    request, error=error_msg
+                ),
+            )
+
+        preview = parse_cash_spend_import(
+            text,
+            suppliers=cfg.suppliers(),
+            buckets=cfg.spend_buckets(),
+            existing_rows=cfg.cash_spend_rows(),
+        )
+        return t.TemplateResponse(
+            request=request,
+            name="cash_spend_import.html",
+            context=_cash_spend_import_context(
+                request,
+                preview=preview,
+                filename=filename,
+                csv_text=text,
+            ),
+        )
+
+    @app.post("/admin/cash-spend/import/apply", response_model=None)
+    def cash_spend_import_apply(
+        request: Request,
+        file: UploadFile | None = None,
+    ) -> HTMLResponse | RedirectResponse:
+        """Re-parse from current state and apply the whole file atomically.
+
+        Mirrors the cost-mirror's "re-derive defensively" rule: apply
+        always re-parses via ``parse_import`` from current Books state, so
+        a row added between preview and apply is reflected in the
+        against-ledger duplicate warnings. If a fresh file is posted it
+        wins (and updates the held text); otherwise the held upload from
+        preview is used — apply does not require a re-upload.
+
+        Atomicity (#83 d3): the N ``create_cash_spend`` calls run inside
+        one ``SqliteConfigStore.batch()`` under a single ``session_id``
+        (the partner's browser session). A mid-batch failure rolls back
+        every write and its audit rows together — the audit log never
+        records a partial stroke. ``/audit`` shows the import as one
+        reversible stroke; per-session Revert undoes all N rows in one
+        click.
+
+        Hard errors block apply (the partner must fix and re-upload); soft
+        warnings don't (the partner can apply a file with duplicates or
+        retired buckets).
+        """
+        t: Jinja2Templates = app.state.templates
+        cfg: SqliteConfigStore = app.state.config_store
+        text, filename, error_msg = _resolve_cash_spend_upload(request, file)
+        if error_msg is not None or text is None:
+            return t.TemplateResponse(
+                request=request,
+                name="cash_spend_import.html",
+                context=_cash_spend_import_context(
+                    request, error=error_msg
+                ),
+            )
+
+        preview = parse_cash_spend_import(
+            text,
+            suppliers=cfg.suppliers(),
+            buckets=cfg.spend_buckets(),
+            existing_rows=cfg.cash_spend_rows(),
+        )
+        # Hard errors block apply — never write a file the tool only
+        # half-understood (#83 d2). Re-render the preview so the partner
+        # sees what to fix.
+        if preview.errors:
+            return t.TemplateResponse(
+                request=request,
+                name="cash_spend_import.html",
+                context=_cash_spend_import_context(
+                    request,
+                    preview=preview,
+                    filename=filename,
+                    csv_text=text,
+                ),
+            )
+
+        actor: str = request.state.assignee_id
+        session_id: str | None = request.state.session_id
+        # One atomic stroke wrapping every parsed row (#83 d3). The store's
+        # ``batch()`` opens one lock + one SQLite transaction; a mid-stroke
+        # failure rolls back every ``create_cash_spend`` write and its
+        # audit rows together. The shared ``session_id`` is what groups the
+        # N audit entries into one reversible stroke on ``/audit``.
+        with cfg.batch():
+            for row in preview.new_rows:
+                cfg.create_cash_spend(
+                    row.entry, created_by=actor, session_id=session_id
+                )
+        applied_count = len(preview.new_rows)
+        return RedirectResponse(
+            url=f"/admin/cash-spend/import?applied={applied_count}",
+            status_code=303,
+        )
+
+    #: The two wrong-file error messages, shared by preview and apply so they
+    #: cannot drift apart (mirrors the cost-mirror's shared messages).
+    _CASH_SPEND_NO_FILE_MSG = "Choose a cash-spend CSV to preview first."
+
+    def _resolve_cash_spend_upload(
+        request: Request, file: UploadFile | None
+    ) -> tuple[str | None, str | None, str | None]:
+        """Resolve the CSV text + filename for preview/apply, or an error.
+
+        Mirrors the cost-mirror's ``_resolve_text_and_filename``: a posted
+        file always wins over the held upload; a missing file falls back to
+        the held upload from preview (so apply does not require a
+        re-upload). A decoding failure (a binary file uploaded by mistake)
+        surfaces as a clear error rather than a corrupt preview.
+        """
+        if file is not None and file.filename:
+            raw = file.file.read()
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                return None, None, _CASH_SPEND_NOT_UTF8_MSG
+            session_id = request.state.session_id
+            if session_id is not None:
+                held_imports[session_id] = text
+            return text, file.filename, None
+        session_id = request.state.session_id
+        held = held_imports.get(session_id) if session_id is not None else None
+        if held is None:
+            return None, None, _CASH_SPEND_NO_FILE_MSG
+        return held, None, None
+
+    #: A non-UTF-8 upload (e.g. an XLSX) is a clear error, not a corrupt preview.
+    _CASH_SPEND_NOT_UTF8_MSG = (
+        "That file isn't a UTF-8 CSV. Save the spreadsheet as CSV from Excel "
+        "and upload the .csv file."
+    )
+
+    held_imports: dict[str, str] = app.state.cash_spend_held_imports
+
+    def _cash_spend_import_context(
+        request: Request,
+        *,
+        preview: ImportPreview | None = None,
+        filename: str | None = None,
+        csv_text: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, object]:
+        """Shared template context for the importer landing + preview page."""
+        return {
+            "request": request,
+            "preview": preview,
+            "filename": filename,
+            "csv_text": csv_text,
+            "error": error,
+            "applied": None,
+        }
 
     @app.get("/skus", response_class=HTMLResponse)
     def skus_view(request: Request, filter: str | None = Query(default=None)) -> HTMLResponse:
