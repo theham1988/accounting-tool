@@ -3,54 +3,59 @@
  * Vendored as the single source of truth for the brand palette (ADR-0006:
  * vendor the design tokens; consume them via CSS custom properties). The
  * component stylesheet (app.css) reads these `--tb-*` variables and never
- * hard-codes a hex value, so a future design-system refresh is a file swap
- * here, not a hunt through the components.
+ * hard-codes a hex value, so a design-system refresh is a file swap here,
+ * not a hunt through the components.
  *
- * The "Tangerine / Tangerine Taps" identity: a cream paper ground, hard ink
- * keylines, tango orange as the brand accent, teal for money that is good
- * news, mustard for "look before you trust", a midnight surface for the
- * night (Taps / bar) segment, and terracotta numerals for the numbered
- * upload steps.
+ * Palette: Tangerine Taps v3 "Warm Four" (Direction 1A "Counter", per the
+ * responsive-redesign handoff). Paper grounds with ink text by day; a
+ * midnight surface with moon text for the night (Taps) segment, chrome, and
+ * login; tangerine as THE accent. Semantic good/bad no longer gets its own
+ * hue — "bad/attention" is tangerine, "good/met" is plain ink weight.
  */
 
 :root {
-  /* Grounds and ink */
-  --tb-paper: #f4ead2;          /* cream paper — the default page ground */
-  --tb-paper-sunk: #ecdfc0;     /* a slightly deeper cream for sunk panels */
-  --tb-paper-raised: #fbf4e3;   /* a lifted cream for cards on the ground */
-  --tb-ink: #1c1712;            /* near-black ink — text and hard keylines */
-  --tb-ink-soft: #6d6152;       /* warm grey — secondary/muted text */
+  /* Grounds and ink (day) */
+  --tb-paper: #f6f0e4;          /* page ground */
+  --tb-paper-warm: #f3ebdc;     /* sunk panels, banners, bar tracks */
+  --tb-paper-card: #fffdf7;     /* cards on the day ground */
+  --tb-ink: #1a1612;            /* text + lines on paper; never a full bg except small chips */
+  --tb-ink-muted: #5a5248;      /* secondary text on paper */
 
-  /* Brand accents */
-  --tb-tango: #e2582a;          /* tango orange — the brand accent */
-  --tb-tango-ink: #b23f18;      /* a darker tango for text on paper */
-  --tb-terracotta: #bf5b3c;     /* terracotta — the numbered step numerals */
+  /* Night surface (chrome, TAPS·NIGHT card, login) */
+  --tb-midnight: #061e2d;       /* header, bottom nav, night card, login ground */
+  --tb-midnight-deep: #03141f;  /* sunk panel on midnight (login form panel) */
+  --tb-moon: #efe6cf;           /* text + lines on midnight */
+  --tb-moon-muted: #9fb6c4;     /* secondary text on midnight */
 
-  /* Semantic money colours */
-  --tb-teal: #12796b;           /* teal — net profit, on-target, "good" */
-  --tb-mustard: #d99a24;        /* mustard — unreviewed / attention */
-  --tb-mustard-wash: #f8eccf;   /* mustard's pale banner wash */
-  --tb-red: #b8371f;            /* red — negative CM, below target, "bad" */
+  /* Accents */
+  --tb-tangerine: #ee7f3f;      /* THE accent: active nav, primary buttons, goal fill, keyline */
+  --tb-tangerine-ink: #b85c22;  /* link colour / attention text on paper; hover-deepened tangerine */
+  --tb-mustard: #e0b84f;        /* NIGHT-ONLY accent: TAPS CM numeral, stale-banner emphasis */
 
-  /* Night (Taps / bar) surface — also the full-midnight login ground */
-  --tb-midnight: #12233a;       /* midnight — the TAPS · NIGHT segment ground */
-  --tb-midnight-ink: #f4ead2;   /* cream ink / moonlight on the midnight ground */
-  /* Night fills from the design-system handoff (Login / Taps), not in the
-     foundation token set — added so app.css never hard-codes these hexes. */
-  --tb-midnight-deep: #03141f;  /* sunk night fill (passphrase field) */
-  --tb-moon-muted: #9fb6c4;     /* muted caption text on midnight */
+  /* --- Legacy aliases (v2 names -> Warm Four values) ----------------------
+     Unreworked screens still reference the v2 token names; these mappings
+     recolor them wholesale (accepted mid-effort). Retired hues: teal /
+     terracotta / red — "bad" now wears tangerine, "good" plain ink. */
+  --tb-paper-sunk: var(--tb-paper-warm);
+  --tb-paper-raised: var(--tb-paper-card);
+  --tb-ink-soft: var(--tb-ink-muted);
+  --tb-tango: var(--tb-tangerine);
+  --tb-tango-ink: var(--tb-tangerine-ink);
+  --tb-terracotta: var(--tb-tangerine-ink);
+  --tb-teal: var(--tb-ink);
+  --tb-red: var(--tb-tangerine-ink);
+  --tb-mustard-wash: var(--tb-paper-warm);
+  --tb-midnight-ink: var(--tb-moon);
 
-  /* Health dots (map onto the existing green/yellow/red classification) */
-  --tb-health-green: #12796b;
-  --tb-health-yellow: #d99a24;
-  --tb-health-red: #b8371f;
+  /* Health dots — interim recolor; the real Warm Four treatment is decided
+     with the Stock prototype. */
+  --tb-health-green: var(--tb-ink);
+  --tb-health-yellow: var(--tb-mustard);
+  --tb-health-red: var(--tb-tangerine);
 
-  /* Chart-series palette — eight-colour set for multi-series charts (legend
-     swatches, daily-revenue bars, spend-by-category bars). Light-mode only:
-     Books has no dark mode. --tb-series-1 is the single-series default for
-     daily-revenue and bestseller charts; tango never appears as a data fill
-     (it stays reserved as the brand accent). */
-  --tb-series-1: #2a78d6;        /* blue — single-series chart default */
+  /* Chart-series palette — untouched by this pass; the Reports rework
+     decides its Warm Four fate. Light-mode only; blues never on midnight. */
+  --tb-series-1: #2a78d6;
   --tb-series-2: #008300;
   --tb-series-3: #e87ba4;
   --tb-series-4: #eda100;
