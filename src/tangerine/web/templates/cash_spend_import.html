@@ -1,0 +1,227 @@
+{#
+  Cash-spend CSV importer — issue #121 (parent #83, build of the CSV path).
+
+  The bulk path for cash-basis supplier purchases. Mirrors the /upload
+  progressive shape (download template → choose file → preview & apply) and
+  the cash-spend page's chrome (back arrow → Cash spend, no bottom nav).
+  Stateless two-step POST flow: the first POST (preview) parses and renders
+  the two-tier diff; the apply POST re-parses from current state and writes
+  the whole file atomically under one session_id. A ``?applied=N`` query
+  param signals a just-landed apply (the /upload ``?applied=`` pattern).
+
+  The pure engine is :mod:`tangerine.cash_spend_csv` (generate_template_csv
+  + parse_import); this template owns presentation only.
+#}
+{% extends "_base.html" %}
+{% set chrome = "detail" %}
+{% set back_href = "/admin/cash-spend" %}
+{% block title %}Cash spend import — Tangerine Books{% endblock %}
+{% block content %}
+  <div class="review cash-spend-import">
+    <header class="cash-spend-import__header">
+      <h1 class="cash-spend-import__title">Cash spend import</h1>
+      <p class="cash-spend-import__kicker">Bulk-import supplier purchases from a CSV</p>
+    </header>
+
+    {% if applied is not none %}
+    <!--section:cash-spend-import-applied-->
+    <div class="cash-spend-import__applied" role="status">
+      <span class="cash-spend-import__applied-label">APPLIED — {{ applied }} rows live</span>
+      <a class="cash-spend-import__applied-log" href="/audit">See in log &rarr;</a>
+    </div>
+    <!--/section:cash-spend-import-applied-->
+    {% endif %}
+
+    {% if error %}
+    <!--section:cash-spend-import-error-->
+    <p class="cash-spend-import__error" role="alert">{{ error }}</p>
+    <!--/section:cash-spend-import-error-->
+    {% endif %}
+
+    <section class="cash-spend-import__step">
+      <div class="cash-spend-import__step-head">
+        <span class="cash-spend-import__numeral">1</span>
+        <h2 class="cash-spend-import__step-label">Download the template</h2>
+      </div>
+      <p class="cash-spend-import__copy">
+        Pre-filled with every supplier and every spend bucket (including
+        retired ones, for historical imports). The <code># vendor</code> /
+        <code># bucket</code> rows are read-only reference — the parser
+        skips them. Fill entry rows below the header; blank
+        <code>vat_inclusive</code> defaults to <strong>FALSE</strong>.
+      </p>
+      <a href="/admin/cash-spend/import/template"
+         class="cash-spend-import__btn cash-spend-import__btn--secondary">
+        DOWNLOAD CSV
+      </a>
+    </section>
+
+    <section class="cash-spend-import__step">
+      <div class="cash-spend-import__step-head">
+        <span class="cash-spend-import__numeral">2</span>
+        <h2 class="cash-spend-import__step-label">Upload it back</h2>
+      </div>
+      <p class="cash-spend-import__copy">
+        Nothing is applied yet — you'll preview every row first. One hard
+        error blocks the whole file, so a typo can't slip through. Soft
+        warnings (duplicates, retired buckets) don't block — your call.
+      </p>
+      <form method="post" action="/admin/cash-spend/import/preview"
+            enctype="multipart/form-data" class="cash-spend-import__form">
+        <label class="cash-spend-import__dropzone">
+          <span class="cash-spend-import__chosen"
+                {% if not filename %}hidden{% endif %}>
+            <strong class="cash-spend-import__filename">{{ filename or "" }}</strong>
+          </span>
+          <span class="cash-spend-import__prompt"
+                {% if filename %}hidden{% endif %}>
+            TAP TO CHOOSE THE FILLED CSV
+          </span>
+          <input type="file" name="file" accept=".csv,text/csv" required
+                 class="cash-spend-import__file-input"
+                 aria-label="Choose the filled cash-spend CSV">
+        </label>
+        <button type="submit"
+                class="cash-spend-import__btn cash-spend-import__btn--primary">
+          PREVIEW CHANGES
+        </button>
+      </form>
+    </section>
+
+    <section class="cash-spend-import__step
+                    {% if not preview %}cash-spend-import__step--gated{% endif %}">
+      <div class="cash-spend-import__step-head">
+        <span class="cash-spend-import__numeral">3</span>
+        <h2 class="cash-spend-import__step-label">Preview, then apply</h2>
+      </div>
+
+      {% if preview %}
+        {% if preview.errors %}
+        <!--section:cash-spend-import-errors-->
+        <section class="cash-spend-import__errors">
+          <h3 class="cash-spend-import__section-label
+                     cash-spend-import__section-label--errors">
+            Fix these rows · {{ preview.errors | length }}
+          </h3>
+          <p class="cash-spend-import__copy">
+            Errors block the whole import — nothing is applied until every
+            row parses, so a typo cannot silently duplicate a bill.
+          </p>
+          <ul class="cash-spend-import__diff-list">
+            {% for error in preview.errors %}
+            <li class="cash-spend-import__diff cash-spend-import__error-row">
+              <span class="cash-spend-import__diff-name">
+                Row <span class="cash-spend-import__error-rownum">{{ error.row_number }}</span>
+              </span>
+              <span class="cash-spend-import__error-message">{{ error.message }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        <!--/section:cash-spend-import-errors-->
+        {% endif %}
+
+        {% if preview.warnings %}
+        <!--section:cash-spend-import-warnings-->
+        <section class="cash-spend-import__warnings">
+          <h3 class="cash-spend-import__section-label
+                     cash-spend-import__section-label--warnings">
+            Warnings · {{ preview.warnings | length }}
+          </h3>
+          <p class="cash-spend-import__copy">
+            Warnings don't block apply — review them, then apply anyway if
+            they're expected (a repeated bill, a historical retired-bucket
+            import).
+          </p>
+          <ul class="cash-spend-import__diff-list">
+            {% for warning in preview.warnings %}
+            <li class="cash-spend-import__diff cash-spend-import__warning-row">
+              <span class="cash-spend-import__diff-name">
+                Row <span class="cash-spend-import__warning-rownum">{{ warning.row_number }}</span>
+              </span>
+              <span class="cash-spend-import__warning-message">{{ warning.message }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        <!--/section:cash-spend-import-warnings-->
+        {% endif %}
+
+        {% if preview.invoices %}
+        <!--section:cash-spend-import-invoices-->
+        <section class="cash-spend-import__invoices">
+          <h3 class="cash-spend-import__section-label">
+            INVOICES · {{ preview.invoices | length }}
+          </h3>
+          <p class="cash-spend-import__copy">
+            Sibling rows sharing date + supplier total to the invoice amount
+            — sanity-check each total against the paper receipt before apply.
+          </p>
+          <ul class="cash-spend-import__diff-list">
+            {% for invoice in preview.invoices %}
+            <li class="cash-spend-import__diff cash-spend-import__invoice">
+              <span class="cash-spend-import__invoice-date">{{ invoice.date.isoformat() }}</span>
+              <span class="cash-spend-import__invoice-supplier">{{ invoice.supplier_id }}</span>
+              <span class="cash-spend-import__invoice-count">
+                {{ invoice.sibling_count }} row{{ "s" if invoice.sibling_count != 1 else "" }}
+              </span>
+              <strong class="cash-spend-import__invoice-total">{{ invoice.invoice_total }} THB</strong>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        <!--/section:cash-spend-import-invoices-->
+        {% endif %}
+
+        {% if preview.new_rows %}
+        <!--section:cash-spend-import-rows-->
+        <section class="cash-spend-import__rows">
+          <h3 class="cash-spend-import__section-label">
+            ROWS · {{ preview.new_rows | length }}
+          </h3>
+          <ul class="cash-spend-import__diff-list">
+            {% for row in preview.new_rows %}
+            <li class="cash-spend-import__diff cash-spend-import__new-row">
+              <span class="cash-spend-import__diff-name">
+                Row {{ row.row_number }}
+              </span>
+              <span class="cash-spend-import__row-detail">
+                {{ row.entry.date.isoformat() }} ·
+                {{ row.entry.supplier_id }} ·
+                {{ row.entry.bucket_id }} ·
+                {{ row.entry.amount }} THB{% if row.entry.vat_inclusive %} (VAT){% endif %}
+              </span>
+              {% if row.entry.description %}
+              <span class="cash-spend-import__row-desc">{{ row.entry.description }}</span>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        <!--/section:cash-spend-import-rows-->
+        {% endif %}
+
+        {% if not preview.errors and not preview.has_rows %}
+        <p class="cash-spend-import__empty-note">
+          <em>The file has no entry rows — nothing to apply.</em>
+        </p>
+        {% endif %}
+
+        {% if preview.has_rows and not preview.errors %}
+        <form method="post" action="/admin/cash-spend/import/apply"
+              class="cash-spend-import__confirm">
+          <button type="submit"
+                  class="cash-spend-import__btn cash-spend-import__btn--primary">
+            APPLY {{ preview.new_rows | length }} ROWS
+          </button>
+        </form>
+        {% endif %}
+      {% else %}
+        <p class="cash-spend-import__placeholder">
+          Step 3 appears here once a file is chosen — nothing touches the
+          books before you approve the preview.
+        </p>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}
