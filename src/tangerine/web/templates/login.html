@@ -5,7 +5,9 @@
   <div class="login">
     <header class="login__brand">
       <p class="login__lockup">
-        <span class="login__wordmark">Tangerine Books</span>
+        {# Warm Four (#125): split wordmark — "Tangerine" wears the accent,
+           " Books" stays moon. The text content is still "Tangerine Books". #}
+        <span class="login__wordmark"><span class="login__wordmark-accent">Tangerine</span> Books</span>
       </p>
       <p class="login__kicker">THE BOOKS · PARTNERS ONLY</p>
     </header>
@@ -37,7 +39,7 @@
 
         <label class="login__field">
           <span class="login__field-label">Passphrase</span>
-          <input type="password" name="passphrase" autocomplete="current-password" required>
+          <input type="password" name="passphrase" autocomplete="current-password" required{% if error %} class="login__input--error"{% endif %}>
         </label>
 
         <button type="submit" class="login__submit">SIGN IN</button>
