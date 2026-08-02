@@ -348,50 +348,194 @@ button:active {
   font-weight: var(--tb-weight-bold);
 }
 
-.segment-cm__cm {
-  text-align: right;
+/* The RED chip — tangerine pill beside the kicker (Warm Four: attention is
+   tangerine, not a separate red hue). */
+.segment-cm__flag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+  font-size: 10px;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  border-radius: var(--tb-radius-pill);
 }
 
-.segment-cm__row--red .segment-cm__cm {
-  color: var(--flag-red);
+/* Rankings (Warm Four #125) — Top & bottom card: Hobo heading + segmented
+   MARGIN/VOLUME toggle; ranked rows split by dashed rules; the active pair
+   shows and the inactive pair stays in the DOM hidden. */
+.today__rank-card {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.today__rank-card .rankings {
+  margin: 0;
+}
+
+.rankings__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.rankings h2 {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+}
+
+.rank-toggle {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-pill);
+  padding: 3px;
+}
+
+.rank-toggle__link {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: var(--tb-radius-pill);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.rank-toggle__link--active {
+  background: var(--tb-ink);
+  color: var(--tb-paper);
   font-weight: var(--tb-weight-bold);
 }
 
-.segment-cm__flag {
-  display: inline-block;
-  margin-left: 0.4rem;
-  padding: 0.05rem 0.35rem;
-  background: var(--flag-red);
-  color: var(--tb-white);
-  font-size: 0.7rem;
-  letter-spacing: 0.05em;
-}
-
-/* Rankings. */
 .rankings__grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: var(--tb-space-4);
+  gap: var(--tb-space-4) 20px;
+  font-size: var(--tb-size-small);
+}
+
+/* The toggle swaps the visible pair; all four lists stay in the DOM. */
+.rankings__grid--rank-margin .ranking--by-volume,
+.rankings__grid--rank-volume .ranking--by-margin {
+  display: none;
 }
 
 .ranking h3 {
-  font-size: 0.95rem;
-  margin: 0 0 0.35rem;
+  margin: 0 0 8px;
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
   color: var(--muted);
 }
 
 .ranking__list {
   margin: 0;
-  padding-left: 1.25rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: rank;
 }
 
 .ranking__list li {
-  margin-bottom: 0.2rem;
+  counter-increment: rank;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.ranking__list li::before {
+  content: counter(rank) " ·";
+  color: inherit;
+}
+
+.ranking__list li:last-child {
+  border-bottom: 0;
+}
+
+.ranking__list .item-performance-link {
+  flex: 1 1 auto;
+  color: var(--tb-ink);
 }
 
 .ranking__metric {
-  color: var(--muted);
+  margin-left: auto;
+  font-weight: var(--tb-weight-bold);
+  color: var(--tb-ink);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The BOTTOM lists (2nd and 4th) read muted, values plain weight. */
+.rankings__grid .ranking:nth-child(even),
+.rankings__grid .ranking:nth-child(even) .item-performance-link {
+  color: var(--muted);
+}
+
+.rankings__grid .ranking:nth-child(even) .ranking__metric {
+  font-weight: var(--tb-weight-regular);
+  color: var(--muted);
+}
+
+/* Goal detail — the dashed-rule footer of the Top & bottom card. */
+.goal--legacy {
+  margin: 0;
+  padding-top: 12px;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.goal--legacy h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.goal--legacy .goal__stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+}
+
+.goal--legacy .goal__stats > div,
+.goal--legacy dt,
+.goal--legacy dd {
+  display: inline;
+}
+
+.goal--legacy dt {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.goal--legacy dd {
+  margin: 0 12px 0 0;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  text-align: left;
+  color: var(--tb-ink);
 }
 
 .below-target ul,
@@ -414,34 +558,43 @@ button:active {
   white-space: nowrap;
 }
 
-/* Sync control. */
+/* Sync footer (Warm Four #125) — SYNC NOW pill + last-synced + brand seal
+   on one dashed-rule row (the pill styles live with the other tangerine
+   pills above). */
+.today__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding-top: 16px;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.today__footer .sync-control,
 .sync-control {
-  margin-bottom: var(--tb-space-5);
-  padding: var(--tb-space-3);
-  background: var(--surface-alt);
-  border: var(--tb-keyline-thin) solid var(--rule);
-}
-
-.sync-control__button {
-  display: inline-block;
-  padding: var(--tb-space-2) var(--tb-space-4);
-  font-size: 1rem;
-  font-weight: var(--tb-weight-bold);
-  color: var(--tb-paper);
-  background: var(--tb-ink);
+  margin: 0;
+  padding: 0;
+  background: transparent;
   border: 0;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
-.sync-control__button:disabled {
-  opacity: 0.6;
-  cursor: progress;
+.today__footer .last-sync {
+  margin: 0;
+}
+
+.today__seal {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
 }
 
 .sync-control__indicator {
-  margin-left: 0.5rem;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--tb-size-kicker);
 }
 
 .sync-result {
@@ -487,23 +640,66 @@ button:active {
   background: var(--surface-alt);
 }
 
-/* Day navigation, freshness, and error states. */
+/* Day navigator (Warm Four #125) — round 30/34px arrow buttons around a
+   paper-card date-chip pill. The chip carries the visible date; the hidden
+   HTMX date input overlays it so tapping the chip opens the picker. */
 .day-nav {
-  margin-bottom: var(--tb-space-4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.day-nav__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-pill);
+  color: var(--tb-ink);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.day-nav__arrow--dimmed,
+.day-nav__arrow[aria-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
 }
 
 .day-nav__label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
+  position: relative;
+  display: block;
 }
 
-.day-nav__label span {
-  color: var(--muted);
-  font-size: 0.9rem;
+.day-nav__label-text {
+  display: inline-block;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-pill);
+  padding: 7px 12px;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: 0.1em;
+  color: var(--tb-ink);
+  white-space: nowrap;
 }
 
-.day-nav__input,
+.day-nav__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .range-nav__input {
   font: inherit;
   padding: var(--tb-space-2);
@@ -511,36 +707,93 @@ button:active {
   background: var(--tb-paper-raised);
 }
 
-.stale-banner,
-.config-changes-banner {
+/* Stale-sync banner — the one midnight surface on the paper ground: moon
+   text, the day count in mustard, a SYNC NOW pill inside. */
+.stale-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 0.75rem;
+  gap: 8px 12px;
   margin: 0 0 var(--tb-space-4);
-  padding: var(--tb-space-3);
-  background: var(--tb-mustard-wash);
-  border: var(--tb-keyline) solid var(--tb-mustard);
+  padding: 12px 14px;
+  background: var(--tb-midnight);
+  color: var(--tb-moon);
+  border: 0;
+  border-radius: var(--tb-radius-2);
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
 }
 
 .stale-banner__text {
   flex: 1 1 auto;
 }
 
-.stale-banner__sync,
-.empty-store__sync {
-  display: inline-block;
-  padding: var(--tb-space-2) var(--tb-space-4);
-  font: inherit;
-  font-weight: var(--tb-weight-bold);
-  color: var(--tb-paper);
-  background: var(--tb-ink);
+.stale-banner__days {
+  color: var(--tb-mustard);
+}
+
+/* Config-changes banner — paper-warm pill panel with a tangerine dot. The
+   quiet (older-changes) variant `.config-changes` wears the same look per
+   the handoff; only the alert semantics differ. */
+.config-changes,
+.config-changes-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 var(--tb-space-4);
+  padding: 12px 18px;
+  background: var(--tb-paper-warm);
   border: 0;
+  border-radius: var(--tb-radius-2);
+  font-size: var(--tb-size-small);
+  line-height: 1.5;
+}
+
+.config-changes__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tb-tangerine);
+  flex: none;
+}
+
+.config-changes__link {
+  color: var(--tb-tangerine-ink);
+  font-weight: var(--tb-weight-bold);
+}
+
+/* The tangerine primary pill — SYNC NOW everywhere it appears. */
+.stale-banner__sync,
+.empty-store__sync,
+.sync-control__button {
+  display: inline-block;
+  padding: 9px 22px;
+  font: inherit;
+  font-size: var(--tb-size-small);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--tb-midnight);
+  background: var(--tb-tangerine);
+  border: 0;
+  border-radius: var(--tb-radius-pill);
   cursor: pointer;
 }
 
+.stale-banner__sync {
+  font-size: 10px;
+  padding: 6px 16px;
+}
+
+.stale-banner__sync:hover,
+.empty-store__sync:hover,
+.sync-control__button:hover {
+  background: var(--tb-tangerine-ink);
+}
+
 .stale-banner__sync:disabled,
-.empty-store__sync:disabled {
+.empty-store__sync:disabled,
+.sync-control__button:disabled {
   opacity: 0.6;
   cursor: progress;
 }
@@ -548,48 +801,77 @@ button:active {
 .last-sync {
   margin: 0 0 var(--tb-space-5);
   color: var(--muted);
-  font-size: var(--tb-size-small);
+  font-size: var(--tb-size-kicker);
 }
 
+/* Empty store — centered paper-card panel: seal, Hobo heading, explainer,
+   SYNC NOW pill. */
 .empty-store {
-  padding: var(--tb-space-5);
-  background: var(--surface-alt);
-  border: var(--tb-keyline) dashed var(--rule);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin: 24px auto 0;
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 22px;
+  background: var(--tb-paper-card);
+  border: 0;
+  border-radius: var(--tb-radius-3);
   text-align: center;
+}
+
+.empty-store__seal {
+  width: 44px;
+  height: 44px;
 }
 
 .empty-store h2 {
   border: 0;
-  margin-top: 0;
+  padding: 0;
+  margin: 0;
+  font-size: var(--tb-size-h2);
+  line-height: 1.2;
 }
 
 .empty-store__message {
   color: var(--muted);
-  margin: 0 0 var(--tb-space-4);
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.7;
 }
 
-.empty-store__sync {
-  font-size: 1.05rem;
-  padding: 0.6rem 1.25rem;
-}
-
-.empty-note--day {
+/* No-day-data — paper-warm panel, italic ink lead, muted body. */
+.review .empty-note--day {
+  background: var(--tb-paper-warm);
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
   color: var(--muted);
+  font-size: var(--tb-size-kicker);
+  line-height: 1.7;
 }
 
-/* Login — full-midnight brand screen (Wave 3 slice #44). */
+.review .empty-note--day em {
+  color: var(--tb-ink);
+}
+
+/* Login — full-viewport midnight (Warm Four #125). Centered column, split
+   wordmark, midnight-deep form panel, pill partner toggles, tangerine
+   SIGN IN. 420px column on desktop; full width minus 48px on mobile. */
 .login {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: var(--tb-space-5);
+  gap: 20px;
   box-sizing: border-box;
   min-height: 100vh;
-  max-width: 100%;
+  width: 100%;
+  max-width: calc(420px + 48px);
   margin: 0 auto;
-  padding: var(--tb-space-6) var(--tb-space-4);
+  padding: var(--tb-space-6) 24px;
   background: var(--tb-midnight);
-  color: var(--tb-midnight-ink);
+  color: var(--tb-moon);
 }
 
 .login__brand {
@@ -598,35 +880,40 @@ button:active {
 }
 
 .login__lockup {
-  margin: 0 0 var(--tb-space-2);
+  margin: 0;
 }
 
 .login__wordmark {
   font-family: var(--tb-font-display);
-  font-size: var(--tb-size-h1);
-  font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.02em;
-  line-height: var(--tb-leading-tight);
-  color: var(--tb-midnight-ink);
+  font-size: 34px;
+  font-weight: var(--tb-weight-regular);
+  line-height: 1.08;
+  color: var(--tb-moon);
+}
+
+.login__wordmark-accent {
+  color: var(--tb-tangerine);
 }
 
 .login__kicker {
-  margin: 0;
-  font-family: var(--tb-font-accent);
-  font-size: var(--tb-size-kicker);
+  margin: 8px 0 0;
+  font-size: 10px;
   font-weight: var(--tb-weight-regular);
-  letter-spacing: 0.22em;
+  letter-spacing: var(--tb-tracking-wordmark);
   text-transform: uppercase;
   color: var(--tb-moon-muted);
 }
 
 .login__error {
-  background: var(--tb-red);
-  color: var(--tb-midnight-ink);
-  padding: var(--tb-space-2) var(--tb-space-3);
   margin: 0;
-  border: var(--tb-keyline) solid var(--tb-midnight-ink);
-  text-align: center;
+  padding: 10px 14px;
+  border: var(--tb-keyline-thin) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-2);
+  background: transparent;
+  color: var(--tb-moon);
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  text-align: left;
 }
 
 .login__form {
@@ -636,10 +923,12 @@ button:active {
 .login__panel {
   display: flex;
   flex-direction: column;
-  gap: var(--tb-space-4);
-  padding: var(--tb-space-5) var(--tb-space-4);
-  border: var(--tb-keyline) solid var(--tb-midnight-ink);
-  background: var(--tb-midnight);
+  gap: 16px;
+  padding: 22px;
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  background: var(--tb-midnight-deep);
+  text-align: left;
 }
 
 .login__who {
@@ -651,26 +940,25 @@ button:active {
 
 .login__who-label {
   padding: 0;
-  margin: 0 0 var(--tb-space-2);
+  margin: 0 0 8px;
   float: none;
   width: 100%;
-  font-family: var(--tb-font-accent);
-  font-size: var(--tb-size-kicker);
+  font-size: 10px;
   font-weight: var(--tb-weight-regular);
-  letter-spacing: 0.22em;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
   color: var(--tb-moon-muted);
 }
 
 .login__toggle-group {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  display: flex;
   gap: var(--tb-space-2);
 }
 
 .login__toggle {
   position: relative;
   cursor: pointer;
+  flex: 1 1 0;
 }
 
 .login__toggle input {
@@ -690,38 +978,39 @@ button:active {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 52px; /* design handoff: 52px partner toggles */
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline) solid var(--tb-midnight-ink);
-  background: var(--tb-midnight);
-  color: var(--tb-midnight-ink);
-  font-size: var(--tb-size-small);
-  font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.15em;
+  padding: 10px 0;
+  border: var(--tb-keyline-thin) solid var(--tb-moon-muted);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
+  color: var(--tb-moon-muted);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: var(--tb-tracking-kicker);
   text-align: center;
   text-transform: uppercase;
 }
 
 .login__toggle input:checked + span {
-  background: var(--tb-midnight-ink);
+  background: var(--tb-tangerine);
+  border-color: var(--tb-tangerine);
   color: var(--tb-midnight);
+  font-weight: var(--tb-weight-bold);
 }
 
 .login__toggle input:focus-visible + span {
-  outline: var(--tb-keyline) solid var(--tb-tango);
+  outline: var(--tb-keyline) solid var(--tb-tangerine);
   outline-offset: 2px;
 }
 
 .login__field {
   display: flex;
   flex-direction: column;
-  gap: var(--tb-space-2);
+  gap: 8px;
 }
 
 .login__field-label {
-  font-family: var(--tb-font-accent);
-  font-size: var(--tb-size-kicker);
-  letter-spacing: 0.22em;
+  font-size: 10px;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
   color: var(--tb-moon-muted);
 }
@@ -730,10 +1019,12 @@ button:active {
   font: inherit;
   font-weight: var(--tb-weight-bold);
   font-size: var(--tb-size-body);
-  padding: var(--tb-space-3) var(--tb-space-3);
-  border: var(--tb-keyline) solid var(--tb-midnight-ink);
-  background: var(--tb-midnight-deep);
-  color: var(--tb-midnight-ink);
+  height: 44px;
+  padding: 0 14px;
+  border: var(--tb-keyline-thin) solid var(--tb-moon-muted);
+  border-radius: var(--tb-radius-1);
+  background: var(--tb-midnight);
+  color: var(--tb-moon);
 }
 
 .login__field input::placeholder {
@@ -742,7 +1033,12 @@ button:active {
 
 .login__field input:focus {
   outline: none;
-  border-color: var(--tb-tango);
+  border-color: var(--tb-tangerine);
+}
+
+/* Failed attempt: the passphrase input wears the tangerine keyline. */
+.login__field input.login__input--error {
+  border-color: var(--tb-tangerine);
 }
 
 .login__submit {
@@ -752,18 +1048,22 @@ button:active {
   font: inherit;
   font-weight: var(--tb-weight-bold);
   font-size: var(--tb-size-small);
-  letter-spacing: 0.15em;
-  min-height: 52px; /* design handoff / AC: 52px SIGN IN */
-  padding: var(--tb-space-2) var(--tb-space-4);
-  border: var(--tb-keyline) solid var(--tb-tango);
-  background: var(--tb-tango);
+  letter-spacing: var(--tb-tracking-kicker);
+  padding: 12px var(--tb-space-4);
+  border: 0;
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-tangerine);
   color: var(--tb-midnight);
   cursor: pointer;
   text-transform: uppercase;
 }
 
+.login__submit:hover {
+  background: var(--tb-tangerine-ink);
+}
+
 .login__submit:focus-visible {
-  outline: var(--tb-keyline) solid var(--tb-midnight-ink);
+  outline: var(--tb-keyline) solid var(--tb-moon);
   outline-offset: 2px;
 }
 
@@ -774,7 +1074,7 @@ button:active {
 
 .login__footer p {
   margin: 0;
-  font-size: var(--tb-size-kicker);
+  font-size: 10px;
   color: var(--tb-moon-muted);
 }
 
@@ -2320,11 +2620,17 @@ a.trend-bar:hover .trend-bar__fill {
   margin-top: 0.5rem;
 }
 
+/* Gross-margin hero card (Warm Four #125) — flat paper-card, radius 20,
+   Hobo hero numeral, dashed-rule stat row, tangerine goal bar. */
 .headline--card {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: var(--tb-space-4);
+  background: var(--tb-paper-card);
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
   margin-bottom: var(--tb-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .headline__hero-label {
@@ -2332,27 +2638,29 @@ a.trend-bar:hover .trend-bar__fill {
   font-size: var(--tb-size-kicker);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  color: var(--tb-terracotta, var(--tb-tango));
-  font-weight: var(--tb-weight-bold);
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
 }
 
 .headline__hero {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  margin: 0.25rem 0 var(--tb-space-3);
+  margin: 0;
 }
 
 .headline__hero-value {
   font-family: var(--tb-font-display);
-  font-size: 2.75rem;
-  line-height: 1.08;
+  font-size: var(--tb-size-hero);
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
 .headline__hero-unit {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
 }
 
 .headline--card .headline__row {
@@ -2372,6 +2680,15 @@ a.trend-bar:hover .trend-bar__fill {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  flex: 1 1 0;
+}
+
+/* Dashed rules between the three stats (desktop, per the mock). */
+@media (min-width: 768px) {
+  .headline--card .headline__stat + .headline__stat {
+    border-left: var(--tb-keyline-thin) dashed var(--tb-ink);
+    padding-left: 16px;
+  }
 }
 
 .headline--card .headline__stat--end {
@@ -2397,20 +2714,30 @@ a.trend-bar:hover .trend-bar__fill {
    gross-sales revenue carries unknown COGS (unmapped / unknown-price rows).
    Names the implicit zero-COGS assumption rather than hiding it in the math. */
 .headline__uncosted-note {
-  margin: 0.65rem 0 0;
-  padding: 0.5rem 0.65rem;
-  border-left: 3px solid var(--tb-tango);
-  background: color-mix(in srgb, var(--tb-tango) 8%, var(--tb-paper));
-  font-size: 0.85rem;
-  line-height: 1.4;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.headline__uncosted-note strong {
+  color: var(--tb-tangerine-ink);
 }
 
 .headline__uncosted-note a {
+  color: var(--tb-tangerine-ink);
+  font-weight: var(--tb-weight-bold);
   text-decoration: underline;
 }
 
 .headline__goal {
-  margin-top: var(--tb-space-3);
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .headline__goal-meta {
@@ -2425,47 +2752,80 @@ a.trend-bar:hover .trend-bar__fill {
 
 .headline__goal-bar {
   height: 14px;
-  border: var(--tb-keyline) solid var(--tb-ink);
-  background: var(--tb-paper);
+  border: 0;
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-paper-warm);
+  overflow: hidden;
 }
 
 .headline__goal-fill {
   display: block;
   height: 100%;
-  background: var(--tb-tango);
+  background: var(--tb-tangerine);
+  border-radius: var(--tb-radius-pill);
 }
 
+/* Met keeps the same tangerine fill — the status line says MET (Warm Four:
+   "good" is plain ink weight, not its own hue). */
 .headline__goal-fill--met {
-  background: var(--tb-teal);
+  background: var(--tb-tangerine);
 }
 
 .headline__goal-status {
-  margin: 0.35rem 0 0;
-  font-size: 0.85rem;
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
 }
 
-.headline__goal-status--met strong {
-  color: var(--tb-teal);
+.headline__goal-status strong {
+  color: var(--tb-ink);
+}
+
+/* Segment cards (Warm Four #125) — CAFE·DAY on paper-card, TAPS·NIGHT on
+   midnight with moon text and a mustard CM numeral. Kicker row carries the
+   RED chip and the single-stroke sun/moon marker; the canonical name is
+   kept for assistive tech / assertions but visually retired. */
+.segment-cm > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .segment-cm__cards {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .segment-cm__row {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: 0.75rem;
+  background: var(--tb-paper-card);
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 0;
 }
 
 .segment-cm__row--night {
   background: var(--tb-midnight);
-  color: var(--tb-moon, var(--tb-paper));
+  color: var(--tb-moon);
+}
+
+.segment-cm__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .segment-cm__kicker {
@@ -2473,51 +2833,63 @@ a.trend-bar:hover .trend-bar__fill {
   font-size: var(--tb-size-kicker);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  font-weight: var(--tb-weight-bold);
-  color: var(--tb-terracotta, var(--tb-tango));
-}
-
-.segment-cm__row--night .segment-cm__kicker {
-  color: var(--tb-mustard, var(--tb-tango));
-}
-
-.segment-cm__name {
-  margin: 0.2rem 0 0.5rem;
-  font-size: 0.85rem;
+  font-weight: var(--tb-weight-regular);
   color: var(--muted);
 }
 
-.segment-cm__row--night .segment-cm__name {
-  color: var(--tb-moon-muted, var(--muted));
+.segment-cm__row--night .segment-cm__kicker {
+  color: var(--tb-moon-muted);
+}
+
+.segment-cm__icon {
+  margin-left: auto;
+  display: flex;
+  color: var(--muted);
+}
+
+.segment-cm__row--night .segment-cm__icon {
+  color: var(--tb-mustard);
+}
+
+.segment-cm__name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .segment-cm__cm {
   font-family: var(--tb-font-display);
-  font-size: 1.5rem;
-  margin: 0.25rem 0 0.5rem;
+  font-size: 26px;
+  line-height: 1.1;
+  margin: 0;
 }
 
 .segment-cm__row--night .segment-cm__cm {
-  color: var(--tb-tango);
+  color: var(--tb-mustard);
 }
 
-.segment-cm__figures {
+.segment-cm__cards .segment-cm__figures {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  flex-direction: row;
+  gap: 16px;
   margin: 0;
 }
 
 .segment-cm__figure {
   display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.85rem;
+  gap: 6px;
+  font-size: var(--tb-size-small);
   color: var(--muted);
 }
 
 .segment-cm__row--night .segment-cm__figure {
-  color: var(--tb-moon-muted, var(--muted));
+  color: var(--tb-moon-muted);
 }
 
 .segment-cm__figure dt {
@@ -2527,21 +2899,37 @@ a.trend-bar:hover .trend-bar__fill {
 .segment-cm__figure dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+  font-weight: var(--tb-weight-bold);
   color: var(--tb-ink);
 }
 
 .segment-cm__row--night .segment-cm__figure dd {
-  color: var(--tb-moon, var(--tb-paper));
+  color: var(--tb-moon);
 }
 
 .segment-cm__one-liner {
-  margin: 0.5rem 0 0;
-  font-size: 0.8rem;
+  margin: 0;
+  padding-top: 8px;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
   color: var(--muted);
 }
 
 .segment-cm__row--night .segment-cm__one-liner {
-  color: var(--tb-moon-muted, var(--muted));
+  border-top-color: var(--tb-moon);
+  color: var(--tb-moon-muted);
+}
+
+.segment-cm__flagged {
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.segment-cm__row--night .segment-cm__flagged {
+  color: var(--tb-moon-muted);
 }
 
 .segment-cm__note {
@@ -2580,19 +2968,33 @@ a.trend-bar:hover .trend-bar__fill {
   text-align: right;
 }
 
+/* Needs a fix (Warm Four #125) — the card wrapper `.today__fix-card` wears
+   the one 3px tangerine keyline; the sections inside are flat. */
+.today__fix-card {
+  background: var(--tb-paper-card);
+  border: var(--tb-keyline) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-3);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .needs-attention--card {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: var(--tb-space-3) var(--tb-space-4);
-  margin-bottom: var(--tb-space-4);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
 }
 
 .needs-attention--card h2 {
-  margin: 0 0 0.25rem;
-  font-size: var(--tb-size-kicker);
-  letter-spacing: var(--tb-tracking-kicker);
-  text-transform: uppercase;
-  color: var(--tb-tango);
+  margin: 0 0 4px;
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--tb-ink);
   border: 0;
   padding: 0;
 }
@@ -2601,6 +3003,8 @@ a.trend-bar:hover .trend-bar__fill {
   list-style: none;
   margin: 0;
   padding: 0;
+  font-size: var(--tb-size-small);
+  line-height: 1.65;
 }
 
 .needs-attention--card .needs-attention__list li {
@@ -2609,24 +3013,72 @@ a.trend-bar:hover .trend-bar__fill {
 
 .needs-attention__row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem 0.65rem;
-  padding: 0.75rem 0;
-  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
   text-decoration: none;
   color: inherit;
 }
 
-.needs-attention__detail {
-  flex: 1 1 100%;
-  font-size: 0.85rem;
-  color: var(--muted);
+.needs-attention__row:last-child {
+  border-bottom: 0;
+}
+
+.needs-attention__what {
+  flex: 1 1 auto;
+}
+
+.needs-attention__name {
+  font-weight: var(--tb-weight-bold);
 }
 
 .needs-attention__amount {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.needs-attention__link {
+  color: var(--tb-tangerine-ink);
+}
+
+/* Below-target list — the dashed-rule sub-section of the fix card. */
+.today__fix-card .below-target {
+  margin: 0;
+  padding-top: 12px;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.today__fix-card .below-target h2 {
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.today__fix-card .below-target__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--tb-size-small);
+}
+
+.today__fix-card .below-target__list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.below-target__actual {
+  color: var(--tb-tangerine-ink);
+  font-weight: var(--tb-weight-bold);
+  white-space: nowrap;
 }
 
 .trend-picker--chips {
@@ -3156,6 +3608,105 @@ svg .chart__bar:hover {
   filter: brightness(1.08);
 }
 
+/* --- Warm Four #125: Today screen layout ----------------------------------
+   Mobile-first single column with 18px section gaps; the desktop grids
+   (7fr/5fr and 5fr/7fr) land in the 768px block below. */
+.review.today {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 100%;
+  padding: 18px 18px 24px;
+}
+
+.today section {
+  margin-bottom: 0;
+}
+
+.today #review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.today .breadcrumb__list,
+.today .mode-switcher,
+.today .config-changes-banner,
+.today .stale-banner {
+  margin-bottom: 0;
+}
+
+.today__titlebar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.today__titlebar .day-nav {
+  margin-left: auto;
+}
+
+.today h1 {
+  margin: 0;
+  font-size: var(--tb-size-h1);
+  line-height: 1.08;
+}
+
+.today__subtitle {
+  margin: 0;
+  font-size: var(--tb-size-small);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* "For YYYY-MM-DD" is the date chip's job now; the paragraph stays in the
+   DOM (the #review-body swap contract reads it) but is visually retired. */
+.today .day {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.today__row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+.today__row > section {
+  margin: 0;
+}
+
+/* Row A right column: the segment section stretches so its two cards split
+   the hero card's height on desktop. */
+.today .segment-cm {
+  display: flex;
+  flex-direction: column;
+}
+
+.today .segment-cm__cards {
+  flex: 1 1 auto;
+}
+
+.today .headline--card {
+  margin-bottom: 0;
+}
+
+.today .needs-attention__note {
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
 /* Respect reduced-motion / no animations (user story 45). */
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -3188,9 +3739,10 @@ svg .chart__bar:hover {
     padding-bottom: 0;
   }
 
-  /* Desktop content column: 1124px for the per-screen grids. */
+  /* Desktop content column: 1124px content + 28px gutters each side. */
   .tb-main {
-    max-width: var(--tb-content-max-wide);
+    max-width: calc(var(--tb-content-max-wide) + 2 * var(--tb-gutter-desktop));
+    padding: 0 var(--tb-gutter-desktop);
   }
 
   .review {
@@ -3206,25 +3758,105 @@ svg .chart__bar:hover {
     grid-template-columns: 1fr 1fr;
   }
 
+  /* Today (Warm Four #125): full-width dashboard grids on the 1124 column. */
+  .review.today {
+    max-width: none;
+    padding: 28px 0 34px;
+  }
+
+  .today h1 {
+    font-size: 28px;
+  }
+
+  .today__row--a {
+    grid-template-columns: 7fr 5fr;
+  }
+
+  .today__row--b {
+    grid-template-columns: 5fr 7fr;
+  }
+
+  /* No fix card this morning: the rankings card takes the full row. */
+  .today__row--b > .today__rank-card:only-child {
+    grid-column: 1 / -1;
+  }
+
+  .headline--card {
+    padding: 28px;
+    gap: 16px;
+  }
+
+  .segment-cm__row {
+    padding: 20px 24px;
+  }
+
+  .segment-cm__cm {
+    font-size: 34px;
+  }
+
+  .day-nav__arrow {
+    width: 34px;
+    height: 34px;
+  }
+
+  .day-nav__label-text {
+    font-size: 13px;
+    letter-spacing: var(--tb-tracking-kicker);
+    padding: 8px 20px;
+  }
+
+  .headline--card .headline__stat dd {
+    font-size: 15px;
+  }
+
+  /* Login: 420px column, 44px wordmark, roomier panel. */
   .login {
-    max-width: 420px;
-    padding: var(--tb-space-6);
+    max-width: calc(420px + 48px);
+    padding: var(--tb-space-6) 24px;
+    gap: 24px;
   }
 
   .login__wordmark {
-    font-size: var(--tb-size-hero);
+    font-size: 44px;
+  }
+
+  .login__kicker {
+    font-size: var(--tb-size-small);
+    margin-top: 10px;
+  }
+
+  .login__panel {
+    padding: 28px;
+    gap: 18px;
+  }
+
+  .login__who-label,
+  .login__field-label {
+    font-size: var(--tb-size-kicker);
+  }
+
+  .login__toggle span {
+    font-size: var(--tb-size-small);
+  }
+
+  .login__submit {
+    font-size: 13px;
+  }
+
+  .login__footer p {
+    font-size: var(--tb-size-kicker);
   }
 
   /* Wide tables get more room than the reading column. */
   .tb-main--wide {
-    max-width: var(--tb-content-max-wide);
+    max-width: calc(var(--tb-content-max-wide) + 2 * var(--tb-gutter-desktop));
   }
 
   /* Report surfaces (Period / Month / Profit-Report) get a third width so the
      P&L table, daily-revenue chart, and spend-by-category chart can breathe
      side-by-side. Parallels .tb-main--wide; .tb-main (mobile) stays default. */
   .tb-main--report {
-    max-width: var(--tb-content-max-report);
+    max-width: calc(var(--tb-content-max-report) + 2 * var(--tb-gutter-desktop));
   }
 
   .review.coverage,

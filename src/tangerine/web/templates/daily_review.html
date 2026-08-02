@@ -38,25 +38,73 @@
   {% endif %}
 
   <div class="review today">
-    <header class="today__title">
-      <h1>Today</h1>
-      <p class="today__subtitle">Daily 9am review</p>
+    {# Warm Four (#125): the title row carries the day navigator, per the mock —
+       "Today" + kicker left, round prev/next arrows around the date chip right.
+       The day-nav section (its anchors, dimming contract, and the hidden HTMX
+       date input) moves here unchanged in behaviour. #}
+    <header class="today__titlebar">
+      <div class="today__title">
+        <h1>Today</h1>
+        <p class="today__subtitle">Daily 9am review</p>
+      </div>
+
+      <!--section:day-nav-->
+      <section class="day-nav" aria-label="Review date">
+        <a
+          class="day-nav__arrow day-nav__arrow--prev{% if prev_dimmed %} day-nav__arrow--dimmed{% endif %}"
+          {% if not prev_dimmed %}href="/review?mode=day&amp;day={{ prev_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
+          title="Previous day"
+        >&larr;</a>
+
+        <label class="day-nav__label">
+          <span class="day-nav__label-text">{{ review.day.strftime("%a") | upper }} · {{ review.day.isoformat() }}</span>
+          <input
+            class="day-nav__input"
+            type="date"
+            name="day"
+            value="{{ review.day.isoformat() }}"
+            hx-get="/review"
+            hx-target="#review-body"
+            hx-select="#review-body"
+            {# Re-anchor the Day/Period/Month links to the newly picked date;
+               without this the switcher (outside #review-body) keeps pointing
+               at the previous day's week and month. #}
+            hx-select-oob="#mode-switcher"
+            hx-swap="outerHTML"
+            hx-trigger="change"
+            aria-label="Pick a review date"
+          >
+        </label>
+
+        <a
+          class="day-nav__arrow day-nav__arrow--next{% if next_dimmed %} day-nav__arrow--dimmed{% endif %}"
+          {% if not next_dimmed %}href="/review?mode=day&amp;day={{ next_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
+          title="Next day"
+        >&rarr;</a>
+      </section>
+      <!--/section:day-nav-->
     </header>
 
     {% if unreviewed_count %}
     <!--section:config-changes-->
     {% if unreviewed_recent %}
     <section class="config-changes-banner" role="alert">
-      <a class="config-changes__link" href="/audit">
-        {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
-      </a>
-      — review the diff before trusting today's numbers.
+      <span class="config-changes__dot" aria-hidden="true"></span>
+      <span class="config-changes__text">
+        <a class="config-changes__link" href="/audit">
+          {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
+        </a>
+        — review the diff before trusting today's numbers.
+      </span>
     </section>
     {% else %}
     <p class="config-changes">
-      <a class="config-changes__link" href="/audit">
-        {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
-      </a>
+      <span class="config-changes__dot" aria-hidden="true"></span>
+      <span class="config-changes__text">
+        <a class="config-changes__link" href="/audit">
+          {{ unreviewed_count }} change{{ "" if unreviewed_count == 1 else "s" }} since last review
+        </a>
+      </span>
     </p>
     {% endif %}
     <!--/section:config-changes-->
@@ -66,7 +114,7 @@
     <!--section:stale-banner-->
     <section class="stale-banner" role="alert">
       <span class="stale-banner__text">
-        Last sync was {{ stale_days }} day{{ "" if stale_days == 1 else "s" }} ago —
+        Last sync was <strong class="stale-banner__days">{{ stale_days }} day{{ "" if stale_days == 1 else "s" }} ago</strong> —
         the data below may be out of date.
       </span>
       <button
@@ -85,57 +133,17 @@
 
     {% include "_mode_switcher.html" %}
 
-    {# Day navigator: prev/next arrows that dim at the bounds of the synced
-       range plus a date input behind the label for an arbitrary jump. The
-       arrows are ordinary links (deep-linkable, back-button friendly); the
-       date input HTMX-swaps #review-body and re-anchors the mode switcher. #}
-    <!--section:day-nav-->
-    <section class="day-nav" aria-label="Review date">
-      <a
-        class="day-nav__arrow day-nav__arrow--prev{% if prev_dimmed %} day-nav__arrow--dimmed{% endif %}"
-        {% if not prev_dimmed %}href="/review?mode=day&amp;day={{ prev_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
-        title="Previous day"
-      >&larr;</a>
-
-      <label class="day-nav__label">
-        <span class="day-nav__label-text">{{ review.day.isoformat() }}</span>
-        <input
-          class="day-nav__input"
-          type="date"
-          name="day"
-          value="{{ review.day.isoformat() }}"
-          hx-get="/review"
-          hx-target="#review-body"
-          hx-select="#review-body"
-          {# Re-anchor the Day/Period/Month links to the newly picked date;
-             without this the switcher (outside #review-body) keeps pointing
-             at the previous day's week and month. #}
-          hx-select-oob="#mode-switcher"
-          hx-swap="outerHTML"
-          hx-trigger="change"
-          aria-label="Pick a review date"
-        >
-      </label>
-
-      <a
-        class="day-nav__arrow day-nav__arrow--next{% if next_dimmed %} day-nav__arrow--dimmed{% endif %}"
-        {% if not next_dimmed %}href="/review?mode=day&amp;day={{ next_day.isoformat() }}"{% else %}aria-disabled="true"{% endif %}
-        title="Next day"
-      >&rarr;</a>
-    </section>
-    <!--/section:day-nav-->
-
     <div id="review-body">
     <p class="day">For {{ review.day.isoformat() }}</p>
 
     {% if store_empty %}
       <!--section:empty-store-->
       <section class="empty-store">
-        <h2>No sales have been synced yet</h2>
+        <img class="empty-store__seal" src="/static/g-spiral.svg" alt="" width="44" height="44">
+        <h2>No sales synced yet</h2>
         <p class="empty-store__message">
-          This looks like a fresh install — there is no data to review yet.
-          Run your first sync to pull the last 30 days of sales from Loyverse,
-          then this page fills in.
+          Fresh install — nothing to review. Run your first sync to pull the
+          last 30 days of sales from Loyverse, then this page fills in.
         </p>
         <button
           class="empty-store__sync"
@@ -168,6 +176,9 @@
        That revenue is in the gross-sales headline so it ties to Loyverse,
        but the gross-margin number implicitly zero-costs it — surfacing the
        amount here names the assumption instead of hiding it in the math. #}
+    {# Warm Four Row A (#125): desktop grid 7fr (hero) / 5fr (segment cards);
+       a single stacked column below the breakpoint. #}
+    <div class="today__row today__row--a">
     <!--section:headline-->
     <section class="headline headline--card">
       <p class="headline__hero-label">Gross margin</p>
@@ -206,9 +217,9 @@
         </div>
         <p class="headline__goal-status{% if review.goal.met %} headline__goal-status--met{% endif %}">
           {% if review.goal.met %}
-          MET — 7-day average {{ review.goal.rolling_average | money }} THB/day against {{ review.goal.target | money }} THB/day.
+          MET — 7-day average <strong>{{ review.goal.rolling_average | money }}</strong> against <strong>{{ review.goal.target | money }} THB/day</strong>.
           {% else %}
-          Short of goal — 7-day average {{ review.goal.rolling_average | money }} THB/day against {{ review.goal.target | money }} THB/day ({{ review.goal.days_in_window }} day{{ "" if review.goal.days_in_window == 1 else "s" }}).
+          Short of goal — 7-day average <strong>{{ review.goal.rolling_average | money }}</strong> against <strong>{{ review.goal.target | money }} THB/day</strong> ({{ review.goal.days_in_window }} day{{ "" if review.goal.days_in_window == 1 else "s" }}).
           {% endif %}
         </p>
       </div>
@@ -216,31 +227,39 @@
     <!--/section:headline-->
 
     {% include "_segment_cm.html" %}
+    </div><!-- /today__row--a -->
 
+    {# Warm Four Row B (#125): desktop grid 5fr (Needs a fix, tangerine
+       keyline) / 7fr (Top & bottom + goal footer). The below-target list
+       lives inside the Needs-a-fix card per the mock; when neither fix list
+       has rows the left card doesn't render and the rankings card spans. #}
+    <div class="today__row today__row--b">
+    {% if needs_attention or review.below_target_items %}
+    <div class="today__fix-card">
     {% if needs_attention %}
     <section class="needs-attention needs-attention--card" id="needs-attention">
       <h2>Needs a fix</h2>
       <!--section:needs-attention-->
-      <p class="needs-attention__note">
-        These items sold but their cost could not be computed. Their revenue
-        is in the headline (so it ties to Loyverse Gross sales) but their
-        COGS is unknown — the gross margin implicitly zero-costs them.
-        To fix this, map the item to a SKU in item coverage (or add the
-        missing ingredient cost in the SKU&rsquo;s editor) — the links below
-        take you there.
-      </p>
       <ul class="needs-attention__list">
         {% for im in needs_attention %}
-        <li>
-          <span class="needs-attention__name">{{ im.name }}</span>
-          —
-          {% if im.unmapped %}<span class="needs-attention__reason">unmapped</span> (no recipe mapping){% endif %}
-          {% if im.unknown_price %}<span class="needs-attention__reason">unknown price</span> (an ingredient has no cost entry){% endif %}
-          — {{ im.revenue | money }} THB
-          — <a class="needs-attention__link" href="/items?item={{ im.item_id }}">Fix in item coverage &rarr;</a>
+        <li class="needs-attention__row">
+          <span class="needs-attention__what">
+            <span class="needs-attention__name">{{ im.name }}</span>
+            ·
+            {% if im.unmapped %}<span class="needs-attention__reason">unmapped</span>{% endif %}
+            {% if im.unknown_price %}<span class="needs-attention__reason">unknown price</span>{% endif %}
+          </span>
+          <span class="needs-attention__amount">{{ im.revenue | money }} THB</span>
+          <a class="needs-attention__link" href="/items?item={{ im.item_id }}">Fix &rarr;</a>
         </li>
         {% endfor %}
       </ul>
+      <p class="needs-attention__note">
+        These items sold but their cost could not be computed — the gross
+        margin implicitly zero-costs them. To fix this, map the item to a SKU
+        in item coverage (or add the missing ingredient cost in the
+        SKU&rsquo;s editor).
+      </p>
       <!--/section:needs-attention-->
     </section>
     {% endif %}
@@ -251,17 +270,20 @@
       <!--section:below-target-->
       <ul class="below-target__list">
         {% for im in review.below_target_items %}
-        <li>{{ item_link(im) }} — actual {{ im.gross_margin_pct }}%</li>
+        <li>{{ item_link(im) }} <span class="below-target__actual">actual {{ im.gross_margin_pct }}%</span></li>
         {% endfor %}
       </ul>
       <!--/section:below-target-->
     </section>
+    {% endif %}
+    </div><!-- /today__fix-card -->
     {% endif %}
 
     {# TOP & BOTTOM with a MARGIN/VOLUME toggle (query param). All four
        ranking sections stay in the DOM (their anchors are sliced across the
        wider test suite); the active pair is marked and the inactive pair is
        hidden via the data-rank hook on the grid. #}
+    <div class="today__rank-card">
     <section class="rankings rankings--today">
       <div class="rankings__head">
         <h2>Top &amp; bottom items</h2>
@@ -342,6 +364,8 @@
       </dl>
       <!--/section:goal-->
     </section>
+    </div><!-- /today__rank-card -->
+    </div><!-- /today__row--b -->
     </div><!-- /#review-body -->
 
     {# The last-sync + SYNC NOW footer. The button POSTs to /sync and the
@@ -349,6 +373,11 @@
        hx-indicator. Kept as its own section so the empty-store state's
        prominent Sync-now button (above) and this footer button share the
        same target without duplicate wiring. #}
+    {# Warm Four footer row (#125): dashed top rule; SYNC NOW pill, the
+       last-synced line, and the brand G-spiral seal right-aligned (the one
+       seal per screen). Section order (sync-control before last-sync) is a
+       test contract and unchanged. #}
+    <footer class="today__footer">
     <!--section:sync-control-->
     <section class="sync-control sync-control--footer">
       <button
@@ -374,5 +403,8 @@
       {% endif %}
     </p>
     <!--/section:last-sync-->
+
+    <img class="today__seal" src="/static/g-spiral.svg" alt="" width="26" height="26">
+    </footer>
   </div>
 {% endblock %}

@@ -52,10 +52,24 @@ Covering costs with {{ sm.contribution_margin | money }} THB left after {{ sm.va
        ``--night`` modifier is the brand hook for the Taps card's midnight
        ground. Big CM sits above the rev/costs micro-row (#47). #}
     <li class="segment-cm__row{% if sm.is_red %} segment-cm__row--red{% endif %}{% if sm.segment.value == 'bar' %} segment-cm__row--night{% endif %}">
-      <p class="segment-cm__kicker">{{ segment_brand(sm) }}</p>
+      {# Warm Four (#125): kicker row — brand kicker, the RED chip beside it,
+         and the single-stroke sun/moon marker right-aligned (inline SVG,
+         stroke currentColor; the brand bans icon fonts/emoji). #}
+      <div class="segment-cm__head">
+        <p class="segment-cm__kicker">{{ segment_brand(sm) }}</p>
+        {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
+        <span class="segment-cm__icon" aria-hidden="true">
+          {%- if sm.segment.value == 'bar' -%}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14.5A8 8 0 0 1 9.5 5a8 8 0 1 0 9.5 9.5z"></path></svg>
+          {%- else -%}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"></path></svg>
+          {%- endif -%}
+        </span>
+      </div>
+      {# The canonical segment name stays in the DOM (assertions walk the row
+         by name) but is visually retired — the brand kicker is the label. #}
       <p class="segment-cm__name">
         {{ sm.segment.value | capitalize }}
-        {% if sm.is_red %}<span class="segment-cm__flag" title="Segment CM below zero — failing to cover its variable costs">RED</span>{% endif %}
       </p>
       <p class="segment-cm__cm">{% if sm.contribution_margin > 0 %}+{% endif %}{{ sm.contribution_margin | money }}</p>
       <dl class="segment-cm__figures">
