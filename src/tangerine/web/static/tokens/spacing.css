@@ -1,9 +1,10 @@
 /* Tangerine Books — spacing, border and layout tokens (source of truth).
  *
- * The brand is square-cornered with hard 3px ink keylines and no shadows.
- * These tokens encode that: a zero radius, a fixed keyline width, and a
- * modular spacing scale. app.css consumes them so the "hard, printed"
- * feel is set in one place (ADR-0006: vendor the tokens).
+ * Warm Four (v3) retires the square corner: cards are radius-20, buttons and
+ * nav cells are pills, inputs 6px. Keylines survive only as the 3px "Needs a
+ * fix" / focus ring; internal rules are 1.5px dashed. No shadows, no
+ * gradients, no transparency — anywhere. app.css consumes these so the feel
+ * is set in one place (ADR-0006: vendor the tokens).
  */
 
 :root {
@@ -15,20 +16,29 @@
   --tb-space-5: 1.5rem;
   --tb-space-6: 2rem;
 
-  /* Borders — hard ink keylines, square corners, no shadow */
-  --tb-keyline: 3px;            /* the signature hard keyline width */
-  --tb-keyline-thin: 1px;       /* quieter internal rules */
-  --tb-radius: 0;               /* square corners everywhere */
+  /* Page gutters (mock: 18px mobile / 28px desktop) */
+  --tb-gutter: 18px;
+  --tb-gutter-desktop: 28px;
+
+  /* Radii (square corners are retired) */
+  --tb-radius-1: 6px;      /* inputs */
+  --tb-radius-2: 12px;     /* banners, small panels */
+  --tb-radius-3: 20px;     /* default card */
+  --tb-radius-4: 28px;     /* page/device frame only */
+  --tb-radius-pill: 999px; /* buttons, nav cells, tags, toggles, date chip */
+  /* Legacy alias — v2 components read --tb-radius for inputs/controls. */
+  --tb-radius: var(--tb-radius-1);
+
+  /* Borders — 3px keyline reserved for the attention card + focus rings;
+     internal dividers are 1.5px dashed currentColor. */
+  --tb-keyline: 3px;
+  --tb-keyline-thin: 1.5px;
   --tb-shadow: none;            /* the brand uses no shadows */
 
   /* Layout */
-  --tb-content-max: 480px;      /* mobile-first column; a phone is the target */
-  --tb-content-max-wide: 960px; /* wide tables (coverage, audit) get more room */
-  /* Report content column — Period / Month / Profit-Report get a third width
-     so the P&L table, daily-revenue chart, and spend-by-category chart can
-     breathe side-by-side rather than stacking. 1040px = HTML's 1060px minus
-     Books' shell side padding. */
-  --tb-content-max-report: 1040px;
-  --tb-header-height: 3.25rem;  /* sticky app header */
-  --tb-bottomnav-height: 3.5rem;/* sticky four-cell bottom nav */
+  --tb-content-max: 480px;       /* mobile-first column */
+  --tb-content-max-wide: 1124px; /* desktop grids + wide tables (1180 frame − 2×28) */
+  --tb-content-max-report: 1124px;
+  --tb-header-height: 56px;      /* sticky app header (64px desktop, set in app.css) */
+  --tb-bottomnav-height: 3.5rem; /* fixed four-cell bottom nav (mobile only) */
 }

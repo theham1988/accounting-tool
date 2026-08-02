@@ -85,20 +85,35 @@ h3 {
   letter-spacing: 0.01em;
 }
 
-/* Square corners, hard keylines, no shadows on the interactive controls the
-   brand touches (the printed, hard-edged feel). */
-button,
+/* Warm Four control shapes: inputs are radius-6, buttons are pills. No
+   shadows, no gradients — the flat "counter" feel. */
 input,
 select,
 textarea {
-  border-radius: var(--tb-radius);
+  border-radius: var(--tb-radius-1);
   font-family: inherit;
+}
+
+button {
+  border-radius: var(--tb-radius-pill);
+  font-family: inherit;
+}
+
+/* Honest interaction states: 3px tangerine focus ring, 1px press shift. */
+:focus-visible {
+  outline: var(--tb-keyline) solid var(--tb-tangerine);
+  outline-offset: 2px;
+}
+
+button:active {
+  transform: translateY(1px);
 }
 
 /* --- 3. Shared chrome ----------------------------------------------------- */
 
-/* App header — sticky, brand wordmark + signed-in partner (+ OUT on Today);
-   a back-arrow variant on detail screens. */
+/* App header — a flat midnight field (the old orange keyline is dropped),
+   56px mobile / 64px desktop. Wordmark + (desktop) nav pills + signed-in
+   partner (+ OUT on Today); a back-arrow variant on detail screens. */
 .tb-header {
   position: fixed;
   top: 0;
@@ -108,61 +123,100 @@ textarea {
   height: var(--tb-header-height);
   display: flex;
   align-items: center;
-  gap: var(--tb-space-3);
-  padding: 0 var(--tb-space-4);
-  background: var(--tb-ink);
-  color: var(--tb-paper);
-  border-bottom: var(--tb-keyline) solid var(--tb-tango);
+  gap: var(--tb-space-4);
+  padding: 0 var(--tb-gutter);
+  background: var(--tb-midnight);
+  color: var(--tb-moon);
 }
 
 .tb-header__brand {
   display: flex;
   align-items: baseline;
-  gap: var(--tb-space-2);
+  gap: 7px;
   text-decoration: none;
-  color: var(--tb-paper);
+  color: var(--tb-moon);
 }
 
 .tb-header__wordmark {
   font-family: var(--tb-font-display);
-  font-size: 1.25rem;
-  font-weight: var(--tb-weight-bold);
+  font-size: 22px;
+  font-weight: var(--tb-weight-regular);
   letter-spacing: 0.02em;
+  color: var(--tb-tangerine);
+}
+
+.tb-header__wordmark-suffix {
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-wordmark);
+  text-transform: uppercase;
+  color: var(--tb-moon);
+}
+
+/* Desktop-only horizontal nav — pills; hidden below the breakpoint where the
+   bottom nav takes over. */
+.tb-header__nav {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.tb-header__navlink {
+  padding: 7px 18px;
+  border-radius: var(--tb-radius-pill);
+  font-size: var(--tb-size-small);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--tb-moon-muted);
+  background: transparent;
+}
+
+.tb-header__navlink:hover {
+  color: var(--tb-moon);
+}
+
+.tb-header__navlink--active {
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+  font-weight: var(--tb-weight-bold);
 }
 
 .tb-header__partner {
   margin-left: auto;
   font-size: var(--tb-size-small);
-  color: var(--tb-paper);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--tb-moon);
   white-space: nowrap;
 }
 
 .tb-header__logout {
   font: inherit;
-  font-size: var(--tb-size-small);
-  color: var(--tb-paper);
+  font-size: var(--tb-size-kicker);
+  color: var(--tb-moon-muted);
   background: none;
-  border: var(--tb-keyline-thin) solid var(--tb-paper);
-  border-radius: var(--tb-radius);
-  padding: var(--tb-space-1) var(--tb-space-2);
+  border: var(--tb-keyline-thin) solid var(--tb-moon-muted);
+  border-radius: var(--tb-radius-pill);
+  padding: 5px 14px;
   cursor: pointer;
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
 }
 
 .tb-header__logout:hover {
-  background: var(--tb-tango);
-  border-color: var(--tb-tango);
+  color: var(--tb-tangerine);
+  border-color: var(--tb-tangerine);
 }
 
 .tb-header__back {
   display: inline-flex;
   align-items: center;
   gap: var(--tb-space-1);
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   line-height: 1;
   text-decoration: none;
-  color: var(--tb-paper);
+  color: var(--tb-moon);
   background: none;
   border: 0;
   cursor: pointer;
@@ -174,7 +228,8 @@ textarea {
   text-transform: uppercase;
 }
 
-/* Bottom nav — four equal cells, the active one marked. */
+/* Bottom nav — mobile only (hidden at the desktop breakpoint, where the
+   header nav replaces it). Four equal pill cells on a flat midnight bar. */
 .tb-bottomnav {
   position: fixed;
   bottom: 0;
@@ -182,10 +237,9 @@ textarea {
   right: 0;
   z-index: 20;
   display: flex;
-  height: var(--tb-bottomnav-height);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  background: var(--tb-ink);
-  border-top: var(--tb-keyline) solid var(--tb-tango);
+  gap: 4px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--tb-midnight);
 }
 
 .tb-bottomnav__cell {
@@ -193,21 +247,18 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 9px 0;
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
-  color: var(--tb-paper);
-  font-size: var(--tb-size-kicker);
+  color: var(--tb-moon-muted);
+  font-size: 10px;
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  border-right: var(--tb-keyline-thin) solid rgba(244, 234, 210, 0.25);
-}
-
-.tb-bottomnav__cell:last-child {
-  border-right: 0;
 }
 
 .tb-bottomnav__cell--active {
-  color: var(--tb-ink);
-  background: var(--tb-tango);
+  color: var(--tb-midnight);
+  background: var(--tb-tangerine);
   font-weight: var(--tb-weight-bold);
 }
 
@@ -2943,7 +2994,7 @@ a.trend-bar:hover .trend-bar__fill {
   gap: 0.9rem;
 }
 
-@media (min-width: 720px) {
+@media (min-width: 768px) {
   .bestsellers__grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -3062,7 +3113,7 @@ a.trend-bar:hover .trend-bar__fill {
   gap: 0.9rem;
 }
 
-@media (min-width: 720px) {
+@media (min-width: 768px) {
   .split {
     grid-template-columns: 1fr 1fr;
   }
@@ -3113,10 +3164,33 @@ svg .chart__bar:hover {
   }
 }
 
-/* --- 5. Progressive enhancement for wider viewports ----------------------- */
-@media (min-width: 700px) {
+/* --- 5. Desktop — the one breakpoint (768px) ------------------------------ */
+@media (min-width: 768px) {
+  :root {
+    --tb-header-height: 64px;
+    --tb-size-hero: 64px;
+  }
+
+  .tb-header {
+    padding: 0 var(--tb-gutter-desktop);
+  }
+
+  /* Header nav replaces the bottom nav on desktop. */
+  .tb-header__nav {
+    display: flex;
+  }
+
+  .tb-bottomnav {
+    display: none;
+  }
+
+  body.tb-body {
+    padding-bottom: 0;
+  }
+
+  /* Desktop content column: 1124px for the per-screen grids. */
   .tb-main {
-    max-width: var(--tb-content-max);
+    max-width: var(--tb-content-max-wide);
   }
 
   .review {

@@ -32,9 +32,26 @@
   </a>
   {% endif %}
 
-  <a class="tb-header__brand" href="/">
-    <span class="tb-header__wordmark">Tangerine Books</span>
+  <a class="tb-header__brand" href="/" aria-label="Tangerine Books">
+    <span class="tb-header__wordmark">Tangerine</span><span class="tb-header__wordmark-suffix">Books</span>
   </a>
+
+  {% if _chrome == "main" %}
+  {# Desktop-only horizontal nav (hidden below the 768px breakpoint, where
+     the bottom nav carries the same four destinations). #}
+  {% set _active = nav_active | default("") %}
+  {% set _urls = nav_urls | default({"today": "/", "reports": "/review?mode=trends", "stock": "/skus", "log": "/audit"}) %}
+  <nav class="tb-header__nav" aria-label="Primary">
+    <a class="tb-header__navlink{% if _active == 'today' %} tb-header__navlink--active{% endif %}"
+       href="{{ _urls.today }}"{% if _active == 'today' %} aria-current="page"{% endif %}>Today</a>
+    <a class="tb-header__navlink{% if _active == 'reports' %} tb-header__navlink--active{% endif %}"
+       href="{{ _urls.reports }}"{% if _active == 'reports' %} aria-current="page"{% endif %}>Reports</a>
+    <a class="tb-header__navlink{% if _active == 'stock' %} tb-header__navlink--active{% endif %}"
+       href="{{ _urls.stock }}"{% if _active == 'stock' %} aria-current="page"{% endif %}>Stock</a>
+    <a class="tb-header__navlink{% if _active == 'log' %} tb-header__navlink--active{% endif %}"
+       href="{{ _urls.log }}"{% if _active == 'log' %} aria-current="page"{% endif %}>Log</a>
+  </nav>
+  {% endif %}
 
   {% if _partner.name and _chrome != "detail" %}
   <span class="tb-header__partner">{{ _partner.name }}</span>

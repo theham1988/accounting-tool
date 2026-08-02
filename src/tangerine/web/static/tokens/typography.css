@@ -1,39 +1,38 @@
 /* Tangerine Books — typography tokens (design-system source of truth).
  *
- * Space Mono is the body typeface for the whole UI; Hobo BT is the display
- * face for the app wordmark and hero numerals; TAN Nimbus is the accent
- * display face for kickers/labels. All three are self-hosted (see
- * fonts.css) — there is no font-CDN dependency (ADR-0006 decision 3).
- *
- * The families fall back through Space Mono to a system monospace so the
- * tool is fully legible even before the commercial display faces are
- * dropped in, and instantly on café wifi.
+ * Warm Four (v3): Space Mono is the "receipt layer" — everything except
+ * display type. Hobo BT is the display face for screen titles, card
+ * headings, hero numerals, and the wordmark. TAN Nimbus is retired from
+ * layouts (the font file stays only for a possible logo lockup); the accent
+ * variable now resolves to the mono so old kickers land on the receipt
+ * layer. All faces are self-hosted (fonts.css) — no font CDN (ADR-0006).
  */
 
 :root {
   /* Font families */
   --tb-font-body: "Space Mono", ui-monospace, "SFMono-Regular", "Menlo",
     "Consolas", monospace;
-  --tb-font-display: "Hobo BT", "Space Mono", ui-monospace, monospace;
-  --tb-font-accent: "TAN Nimbus", "Hobo BT", "Space Mono", ui-monospace,
-    monospace;
+  --tb-font-display: "Hobo BT", "Kavoon", "Space Mono", cursive;
+  /* Legacy alias — TAN Nimbus retired; accent text joins the receipt layer. */
+  --tb-font-accent: var(--tb-font-body);
 
   /* Weights */
   --tb-weight-regular: 400;
   --tb-weight-bold: 700;
 
-  /* Type scale (mobile-first, rem) */
-  --tb-size-hero: 2.5rem;   /* the gross-margin hero figure */
-  --tb-size-h1: 1.6rem;     /* screen title */
-  --tb-size-h2: 1.15rem;    /* section heading */
-  --tb-size-body: 1rem;     /* body copy */
-  --tb-size-small: 0.85rem; /* meta / sub-labels */
-  --tb-size-kicker: 0.75rem;/* uppercase kickers and chips */
+  /* Type scale (mobile-first, px-anchored per the handoff) */
+  --tb-size-hero: 48px;        /* gross-margin hero numeral (64px desktop, set in app.css) */
+  --tb-size-h1: 24px;          /* screen title (Hobo, 24–28px) */
+  --tb-size-h2: 20px;          /* card heading (Hobo) */
+  --tb-size-body: 13px;        /* mono body copy (12–13px) */
+  --tb-size-small: 12px;       /* meta / sub-labels */
+  --tb-size-kicker: 11px;      /* uppercase kickers, labels, chips */
 
   /* Line heights */
   --tb-leading-tight: 1.1;
-  --tb-leading-body: 1.45;
+  --tb-leading-body: 1.55;
 
-  /* Letter spacing for the uppercase brand kickers/labels */
-  --tb-tracking-kicker: 0.14em;
+  /* Letter spacing for the uppercase labels / kickers */
+  --tb-tracking-kicker: 0.15em;
+  --tb-tracking-wordmark: 0.22em;
 }
