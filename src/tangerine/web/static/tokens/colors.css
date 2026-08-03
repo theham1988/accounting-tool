@@ -33,17 +33,16 @@
   --tb-mustard: #e0b84f;        /* NIGHT-ONLY accent: TAPS CM numeral, stale-banner emphasis */
 
   /* --- Legacy aliases (v2 names -> Warm Four values) ----------------------
-     Unreworked screens still reference the v2 token names; these mappings
-     recolor them wholesale (accepted mid-effort). Retired hues: teal /
-     terracotta / red — "bad" now wears tangerine, "good" plain ink. */
+     Kept because app.css still reads these names widely (paper/ink/tango
+     rename residue from the v2 palette). Safe to delete only once every
+     call site is rewritten — out of scope for the #132 hue retirement.
+     Retired and deleted (#132): --tb-teal, --tb-terracotta, --tb-red
+     (call sites now use --tb-ink / --tb-tangerine-ink directly). */
   --tb-paper-sunk: var(--tb-paper-warm);
   --tb-paper-raised: var(--tb-paper-card);
   --tb-ink-soft: var(--tb-ink-muted);
   --tb-tango: var(--tb-tangerine);
   --tb-tango-ink: var(--tb-tangerine-ink);
-  --tb-terracotta: var(--tb-tangerine-ink);
-  --tb-teal: var(--tb-ink);
-  --tb-red: var(--tb-tangerine-ink);
   --tb-mustard-wash: var(--tb-paper-warm);
   --tb-midnight-ink: var(--tb-moon);
 

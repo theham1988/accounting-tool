@@ -7,11 +7,12 @@
  *
  * - Space Mono (OFL, freely redistributable) is bundled here as woff2 and is
  *   the body typeface for the whole UI.
- * - Hobo BT and TAN Nimbus are the commercial display faces from the design
- *   handoff. They are declared here against local names and self-hosted
- *   files; drop `hobo-bt.woff2` / `tan-nimbus.woff2` into /static/fonts/ to
- *   light them up. Until then the families fall back to Space Mono (see
- *   typography.css), so nothing renders unstyled.
+ * - Hobo BT is the commercial display face from the design handoff
+ *   (`hobo-bt.woff2`). Until the file is present, the family falls back to
+ *   Space Mono (see typography.css).
+ * - TAN Nimbus is NOT used in any layout (#132). The @font-face and
+ *   `tan-nimbus.woff2` remain only so a future logo lockup can opt in
+ *   without re-vendoring the face.
  *
  * `font-display: swap` keeps text visible during any load.
  */
@@ -42,7 +43,7 @@
     url("/static/fonts/hobo-bt.woff2") format("woff2");
 }
 
-/* --- TAN Nimbus (accent display) — commercial handoff face, self-hosted --- */
+/* --- TAN Nimbus — unused in layouts; kept for a possible logo lockup ----- */
 @font-face {
   font-family: "TAN Nimbus";
   font-style: normal;
