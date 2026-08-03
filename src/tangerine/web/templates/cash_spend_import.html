@@ -1,16 +1,10 @@
 {#
-  Cash-spend CSV importer — issue #121 (parent #83, build of the CSV path).
+  Cash-spend CSV importer (Warm Four #131 — FULL treatment).
 
-  The bulk path for cash-basis supplier purchases. Mirrors the /upload
-  progressive shape (download template → choose file → preview & apply) and
-  the cash-spend page's chrome (back arrow → Cash spend, no bottom nav).
-  Stateless two-step POST flow: the first POST (preview) parses and renders
-  the two-tier diff; the apply POST re-parses from current state and writes
-  the whole file atomically under one session_id. A ``?applied=N`` query
-  param signals a just-landed apply (the /upload ``?applied=`` pattern).
-
-  The pure engine is :mod:`tangerine.cash_spend_csv` (generate_template_csv
-  + parse_import); this template owns presentation only.
+  Detail chrome (back arrow → Cash spend, no bottom nav); 860px three-step
+  card column matching the landed bulk-upload dialect. Dot-ramp warning
+  banner, invoice sanity-check list, tangerine apply pill. Routes, form
+  actions, and <!--section:*--> anchors are unchanged.
 #}
 {% extends "_base.html" %}
 {% set chrome = "detail" %}
@@ -96,6 +90,18 @@
       </div>
 
       {% if preview %}
+        {% if preview.warnings and not preview.errors %}
+        <div class="cash-spend-import__banner">
+          <span class="cash-spend-import__banner-label">
+            <span class="health-dot health-dot--yellow"></span>
+            {{ preview.warnings | length }} warning{{ "" if preview.warnings | length == 1 else "s" }} · nothing blocks
+          </span>
+          {% if filename %}
+          <span class="cash-spend-import__banner-meta">{{ filename }} · {{ preview.new_rows | length }} rows</span>
+          {% endif %}
+        </div>
+        {% endif %}
+
         {% if preview.errors %}
         <!--section:cash-spend-import-errors-->
         <section class="cash-spend-import__errors">
@@ -157,9 +163,9 @@
             Sibling rows sharing date + supplier total to the invoice amount
             — sanity-check each total against the paper receipt before apply.
           </p>
-          <ul class="cash-spend-import__diff-list">
+          <ul class="cash-spend-import__invoice-list">
             {% for invoice in preview.invoices %}
-            <li class="cash-spend-import__diff cash-spend-import__invoice">
+            <li class="cash-spend-import__invoice">
               <span class="cash-spend-import__invoice-date">{{ invoice.date.isoformat() }}</span>
               <span class="cash-spend-import__invoice-supplier">{{ invoice.supplier_id }}</span>
               <span class="cash-spend-import__invoice-count">

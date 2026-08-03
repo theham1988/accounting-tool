@@ -798,10 +798,72 @@ def create_app(
         keep their existing paths so pre-Wave-2 deep links (e.g. the daily
         review's needs-attention link into ``/items?item=...``) still
         resolve.
+
+        Warm Four #131: the landing carries live counts + a latest-change
+        card for the Counter-grid presentation — view-layer only; paths
+        and the ``<!--section:admin-links-->`` anchor are unchanged.
         """
+        cfg: SqliteConfigStore = app.state.config_store
+        store: SqliteLoyverseStore = app.state.store
+        today = app.state.today
+        month_start = today.replace(day=1)
+        month_end = today.replace(
+            day=calendar.monthrange(today.year, today.month)[1]
+        )
+
+        active_fixed_costs = sum(
+            1
+            for e in cfg.fixed_costs()
+            if e.kind == "recurring" and e.ended_at is None
+        )
+        cash_spend_this_month = sum(
+            1
+            for r in cfg.cash_spend_rows()
+            if month_start <= r.date <= month_end
+        )
+        sku_rows = build_sku_coverage(
+            skus=cfg.skus(),
+            recipes=cfg.recipes(),
+            mappings=cfg.mappings(),
+            cost=cfg.cost_book(),
+        )
+        item_rows = build_item_coverage(
+            menu=store.current_menu(),
+            skus=cfg.skus(),
+            recipes=cfg.recipes(),
+            mappings=cfg.mappings(),
+            cost=cfg.cost_book(),
+        )
+        entries = cfg.audit_entries()
+        latest = entries[0] if entries else None
+        unreviewed = cfg.unreviewed_changes(request.state.assignee_id)
+        assignees: list[Assignee] = app.state.assignees
+        latest_who = None
+        if latest is not None:
+            latest_who = next(
+                (a.name for a in assignees if a.assignee_id == latest.changed_by),
+                latest.changed_by,
+            )
+
         t: Jinja2Templates = app.state.templates
         return t.TemplateResponse(
-            request=request, name="admin.html", context={"request": request}
+            request=request,
+            name="admin.html",
+            context={
+                "request": request,
+                "active_fixed_costs": active_fixed_costs,
+                "cash_spend_this_month": cash_spend_this_month,
+                "suppliers_count": len(cfg.suppliers()),
+                "live_buckets": sum(
+                    1 for b in cfg.spend_buckets() if b.retired_at is None
+                ),
+                "skus_needing_work": _count_sku_needs_work(sku_rows),
+                "items_unhealthy": _count_uncostable_items(item_rows),
+                "unreviewed_count": len(unreviewed),
+                "latest_entry": latest,
+                "latest_who": latest_who,
+                "month_label": today.strftime("%b"),
+            },
         )
 
     def _fixed_costs_page_context(
@@ -1292,7 +1354,22 @@ def create_app(
         params before passing them in); ``suppliers`` and ``buckets`` feed
         the pickers, with retired buckets excluded from the create form's
         bucket picker by the template filtering on ``retired_at``.
+
+        Warm Four #131: also surfaces this-month totals for the Counter
+        hero (view-layer only; filter/query contracts unchanged).
         """
+        cfg: SqliteConfigStore = app.state.config_store
+        today = app.state.today
+        month_start = today.replace(day=1)
+        month_end = today.replace(
+            day=calendar.monthrange(today.year, today.month)[1]
+        )
+        month_rows = [
+            r
+            for r in cfg.cash_spend_rows()
+            if month_start <= r.date <= month_end
+        ]
+        month_total = sum((r.amount for r in month_rows), Decimal("0"))
         return {
             "request": request,
             "rows": rows if rows is not None else [],
@@ -1301,6 +1378,9 @@ def create_app(
             "filters": filters or {},
             "form_error": form_error,
             "form_values": form_values or {},
+            "month_total": month_total,
+            "month_row_count": len(month_rows),
+            "month_label": today.strftime("%b"),
         }
 
     def _parse_row_date(value: str) -> date | None:
@@ -2390,21 +2470,52 @@ def create_app(
         decision 2): who changed what, when, from what to what. Each entry's
         field-level diff is derived from the whole-row snapshots at render
         time. Entries the signed-in partner has not yet reviewed are
-        highlighted with a mustard keyline and a NEW chip — that is the
-        "diff of what changed" the 9am review's link promises — and a
-        "Mark as reviewed" control (an explicit POST, so merely loading or
-        prefetching this page never moves the mark) clears the nag for them
-        and only them.
+        highlighted with a dot-ramp NEW marker (Warm Four #131; the mustard
+        keyline is retired) — that is the "diff of what changed" the 9am
+        review's link promises — and a "Mark as reviewed" control (an
+        explicit POST, so merely loading or prefetching this page never
+        moves the mark) clears the nag for them and only them.
 
         ``?reverted=<entry_id>`` is set by the revert route on its redirect;
         the entry it names renders its REVERT control replaced in place by
-        the teal "REVERTED — change undone" confirmation, so the partner
-        sees the undo landed without a separate toast.
+        the quiet-ink "REVERTED — change undone" confirmation, so the
+        partner sees the undo landed without a separate toast.
+
+        ``?who=all|mine|noi|reverted`` filters the titlebar chips (view-
+        layer only; POST revert/review contracts unchanged).
         """
         cfg: SqliteConfigStore = app.state.config_store
+        all_entries = list(cfg.audit_entries())
+        who = (request.query_params.get("who") or "all").strip().lower()
+        if who not in {"all", "mine", "noi", "reverted"}:
+            who = "all"
+        me = request.state.assignee_id
+        if who == "mine":
+            filtered = [e for e in all_entries if e.changed_by == me]
+        elif who == "noi":
+            filtered = [e for e in all_entries if e.changed_by == "noi"]
+        elif who == "reverted":
+            # Undo strokes: a newer entry for the same table+pk whose
+            # new_value restores an older entry's old_value (and vice
+            # versa). Small log; O(n²) is fine for a two-partner tool.
+            revert_ids: set[int] = set()
+            by_key: dict[tuple[str, str], list[AuditEntry]] = {}
+            for e in all_entries:
+                by_key.setdefault((e.table_name, e.pk), []).append(e)
+            for group in by_key.values():
+                for i, e in enumerate(group):
+                    for older in group[i + 1 :]:
+                        if (
+                            e.new_value == older.old_value
+                            and e.old_value == older.new_value
+                        ):
+                            revert_ids.add(e.entry_id)
+                            break
+            filtered = [e for e in all_entries if e.entry_id in revert_ids]
+        else:
+            filtered = all_entries
         entries = [
-            {"entry": e, "changes": _audit_field_changes(e)}
-            for e in cfg.audit_entries()
+            {"entry": e, "changes": _audit_field_changes(e)} for e in filtered
         ]
         unreviewed_ids = {
             e.entry_id for e in cfg.unreviewed_changes(request.state.assignee_id)
@@ -2425,6 +2536,8 @@ def create_app(
                 "entries": entries,
                 "unreviewed_ids": unreviewed_ids,
                 "reverted_id": reverted_id,
+                "who": who,
+                "unreviewed_count": len(unreviewed_ids),
             },
         )
 

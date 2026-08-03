@@ -1,38 +1,177 @@
+{#
+  Admin landing (Warm Four #131 — Variant A "Counter grid").
+
+  7/5 hero ("read in the Review, edit in Admin") beside a latest-change
+  card; the ten surfaces as a grouped Money / Catalog / System dashed-rule
+  list card with live counts and dot-ramp health. Main chrome, nothing
+  active. Paths inside <!--section:admin-links--> are unchanged.
+#}
 {% extends "_base.html" %}
+{% set nav_active = "" %}
+{% set wide = true %}
 {% block title %}Admin — Tangerine Books{% endblock %}
 {% block content %}
   <div class="review admin">
-    <h1>Admin</h1>
-    <p class="admin__note">
-      Everything you <em>edit</em> lives here; everything you <em>read</em>
-      lives in the <a href="/">Review</a>.
-    </p>
+    <div class="admin__titlebar">
+      <div>
+        <p class="admin__kicker">Admin</p>
+        <h1 class="admin__title">Edit lives here</h1>
+      </div>
+    </div>
 
-    <!--section:admin-links-->
-    <nav class="admin-links" aria-label="Admin surfaces">
-      <ul class="admin-links__list">
-        <li><a class="admin-links__link" href="/admin/fixed-costs">Fixed costs</a>
-          — rent, utilities, shared staff, insurance (entity-level)</li>
-        <li><a class="admin-links__link" href="/admin/suppliers">Suppliers</a>
-          — the controlled vendor list cash-spend rows pick from</li>
-        <li><a class="admin-links__link" href="/admin/spend-buckets">Spend buckets</a>
-          — cash-spend cost-family vocabulary (taps, kitchen, coffee, bakery, staff, rent)</li>
-        <li><a class="admin-links__link" href="/admin/loyverse-export">Loyverse cost import</a>
-          — prepare the round-trip CSV that mirrors Books' recipe costs into Loyverse</li>
-        <li><a class="admin-links__link" href="/admin/cash-spend">Cash spend</a>
-          — cash-basis supplier purchases, grouped by bucket</li>
-        <li><a class="admin-links__link" href="/admin/cash-spend/import">Cash spend import</a>
-          — bulk-import supplier purchases from a CSV (template, preview, atomic apply)</li>
-        <li><a class="admin-links__link" href="/skus">SKUs</a>
-          — recipes, costs, and pricing health per SKU</li>
-        <li><a class="admin-links__link" href="/items">Item coverage</a>
-          — every Loyverse item and its mapping health</li>
-        <li><a class="admin-links__link" href="/upload">Bulk upload</a>
-          — CSV template download, preview, and apply</li>
-        <li><a class="admin-links__link" href="/audit">Audit log</a>
-          — every config edit, with per-entry and per-session revert</li>
-      </ul>
-    </nav>
-    <!--/section:admin-links-->
+    <div class="admin__grid">
+      <article class="admin-hero">
+        <p class="admin-hero__kicker">The rule</p>
+        <h2 class="admin-hero__heading">Read in the Review, edit in Admin</h2>
+        <p class="admin__note">
+          Everything you <em>edit</em> lives on this screen's surfaces;
+          everything you <em>read</em> lives in the <a href="/">Review</a>
+          and Reports. Every save below lands in the change log and can be
+          reverted.
+        </p>
+      </article>
+
+      <article class="admin-latest">
+        <p class="admin-latest__kicker">Latest change</p>
+        {% if latest_entry %}
+        <p class="admin-latest__note">
+          <strong class="admin-latest__who">{{ latest_who }}</strong>
+          edited
+          <strong>{{ latest_entry.table_name }}</strong>
+          · {{ latest_entry.pk }}
+          {% if unreviewed_count %}
+          <span class="admin-latest__tag">{{ unreviewed_count }} new</span>
+          {% endif %}
+        </p>
+        {% else %}
+        <p class="admin-latest__note">No changes recorded yet.</p>
+        {% endif %}
+        <p class="admin-latest__cta">
+          <a class="admin-latest__link" href="/audit">Open the log</a>
+        </p>
+      </article>
+
+      <!--section:admin-links-->
+      <nav class="admin-links" aria-label="Admin surfaces">
+        <ul class="admin-links__list">
+          <li class="admin-links__group">
+            <span class="admin-links__group-label">Money</span>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/fixed-costs">Fixed costs</a>
+              <span class="admin-links__fig">{{ active_fixed_costs }} active</span>
+            </div>
+            <p class="admin-links__meta">
+              Rent, utilities, shared staff, insurance (entity-level)
+            </p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/cash-spend">Cash spend</a>
+              <span class="admin-links__fig">{{ cash_spend_this_month }} rows · {{ month_label }}</span>
+            </div>
+            <p class="admin-links__meta">
+              Cash-basis supplier purchases, grouped by bucket
+            </p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/cash-spend/import">Cash spend import</a>
+              <span class="admin-links__fig">CSV</span>
+            </div>
+            <p class="admin-links__meta">
+              Bulk-import supplier purchases — template, preview, atomic apply
+            </p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/suppliers">Suppliers</a>
+              <span class="admin-links__fig">{{ suppliers_count }} vendors</span>
+            </div>
+            <p class="admin-links__meta">
+              The controlled vendor list cash-spend rows pick from
+            </p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/spend-buckets">Spend buckets</a>
+              <span class="admin-links__fig">{{ live_buckets }} live</span>
+            </div>
+            <p class="admin-links__meta">
+              Cost-family vocabulary: taps, kitchen, coffee, bakery, staff, rent
+            </p>
+          </li>
+
+          <li class="admin-links__group">
+            <span class="admin-links__group-label">Catalog</span>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/skus">SKUs</a>
+              <span class="admin-links__fig">
+                {% if skus_needing_work %}
+                <span class="health-dot health-dot--red"></span> {{ skus_needing_work }} need work
+                {% else %}
+                <span class="health-dot health-dot--green"></span> all healthy
+                {% endif %}
+              </span>
+            </div>
+            <p class="admin-links__meta">Recipes, costs, and pricing health per SKU</p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/items">Item coverage</a>
+              <span class="admin-links__fig">
+                {% if items_unhealthy %}
+                <span class="health-dot health-dot--yellow"></span> {{ items_unhealthy }} need work
+                {% else %}
+                <span class="health-dot health-dot--green"></span> all mapped
+                {% endif %}
+              </span>
+            </div>
+            <p class="admin-links__meta">Every Loyverse item and its mapping health</p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/upload">Bulk upload</a>
+              <span class="admin-links__fig">CSV</span>
+            </div>
+            <p class="admin-links__meta">
+              Recipe/cost template download, preview, and apply
+            </p>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/admin/loyverse-export">Loyverse cost import</a>
+              <span class="admin-links__fig">CSV</span>
+            </div>
+            <p class="admin-links__meta">
+              Round-trip CSV mirroring Books' recipe costs into Loyverse
+            </p>
+          </li>
+
+          <li class="admin-links__group">
+            <span class="admin-links__group-label">System</span>
+          </li>
+          <li class="admin-links__row">
+            <div class="admin-links__top">
+              <a class="admin-links__link" href="/audit">Audit log</a>
+              <span class="admin-links__fig">
+                {% if unreviewed_count %}
+                <span class="health-dot health-dot--red"></span> {{ unreviewed_count }} new
+                {% else %}
+                <span class="health-dot health-dot--green"></span> caught up
+                {% endif %}
+              </span>
+            </div>
+            <p class="admin-links__meta">
+              Every config edit, with per-entry and per-session revert
+            </p>
+          </li>
+        </ul>
+      </nav>
+      <!--/section:admin-links-->
+    </div>
   </div>
 {% endblock %}

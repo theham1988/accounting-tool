@@ -2125,12 +2125,12 @@ def test_audit_routes_require_auth(tmp_path: Path) -> None:
 # =============================================================================
 #
 # The audit log's redesigned home: a "CHANGE LOG" title with its subtitle, an
-# unreviewed banner with a MARK READ action, entry cards where unreviewed rows
-# carry a mustard keyline + NEW chip and a dashed field diff (old struck, new
-# bold), and a REVERT that — once clicked — is replaced in place by the teal
-# "REVERTED — change undone" confirmation. The underlying routes (per-entry
-# and per-session revert, per-partner review mark) are unchanged; these tests
-# pin the new surface's structure.
+# unreviewed review card with a MARK READ action, entry rows where unreviewed
+# rows carry a dot-ramp NEW marker + NEW chip and a dashed field diff (old
+# struck, new bold), and a REVERT that — once clicked — is replaced in place
+# by the quiet-ink "REVERTED — change undone" confirmation. The underlying
+# routes (per-entry and per-session revert, per-partner review mark) are
+# unchanged; these tests pin the new surface's structure.
 
 
 def _section(html: str, anchor: str) -> str:
@@ -2153,13 +2153,13 @@ def test_change_log_renders_title_and_subtitle(tmp_path: Path) -> None:
     assert "Every config edit — who, when, from what to what." in head
 
 
-def test_unreviewed_entries_carry_mustard_keyline_and_new_chip(
+def test_unreviewed_entries_carry_dot_ramp_marker_and_new_chip(
     tmp_path: Path,
 ) -> None:
-    """An unreviewed entry is impossible to miss: a mustard left keyline on
-    the card and a NEW chip by the author. The card also shows the
-    table·pk(kind) line and the dashed field diff with the old value struck
-    and the new value bold.
+    """An unreviewed entry is impossible to miss: a filled-tangerine dot-ramp
+    marker and a NEW chip by the author (the mustard keyline is retired).
+    The card also shows the table·pk(kind) line and the dashed field diff
+    with the old value struck and the new value bold.
     """
     app = _recipe_app(tmp_path)
     noi = _authed_client(app, assignee_id="noi")
@@ -2172,17 +2172,19 @@ def test_unreviewed_entries_carry_mustard_keyline_and_new_chip(
     daniel = _authed_client(app, assignee_id="daniel")
     html = daniel.get("/audit").text
 
-    # The unreviewed banner is shown with the count and a MARK READ action.
+    # The unreviewed review card is shown with the count and a MARK READ action.
     banner = _section(html, "unreviewed")
     assert "1 change" in banner
     assert 'action="/audit/reviewed"' in banner
     assert ">MARK READ</button>" in banner
 
-    # The entry card carries the mustard keyline modifier and a NEW chip.
+    # The entry row carries the unreviewed modifier, a NEW chip, and the
+    # filled-tangerine health-dot (dot-ramp red).
     entries = _section(html, "entries")
     assert "audit-row--unreviewed" in entries
     assert "audit-row__new" in entries
     assert ">NEW</span>" in entries
+    assert "health-dot--red" in entries
     # The table·pk(kind) line and a dashed field diff are present.
     assert "costs" in entries
     assert "beans" in entries
@@ -2197,7 +2199,7 @@ def test_reverting_an_entry_replaces_its_button_with_in_place_confirmation(
     tmp_path: Path,
 ) -> None:
     """After a revert, the reverted entry's REVERT button is gone and in its
-    place sits the teal "REVERTED — change undone" confirmation — the
+    place sits the quiet-ink "REVERTED — change undone" confirmation — the
     partner sees the undo landed without a separate toast. The redirect
     carries ``?reverted=<id>`` so the mark is stateless and shareable.
     """
