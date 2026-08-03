@@ -2,17 +2,24 @@
 {% set nav_active = "reports" %}
 {% block title %}{{ perf.name }} — item performance — Tangerine Books{% endblock %}
 {% block content %}
-  <div class="review">
-    <h1>{{ perf.name }}</h1>
-
+  {# Warm Four #129 (Variant A "Counter cards"): joins the Reports Counter
+     grid — the period-performance hero card (span 7) beside the day-by-day
+     card (span 5). Engines, routes, and section anchors unchanged. #}
+  <div class="review reports reports--item">
     {% include "_breadcrumb.html" %}
 
-    {% include "_mode_switcher.html" %}
+    <div class="reports__titlebar">
+      <div class="reports__title">
+        <h1>{{ perf.name }}</h1>
+        <p class="reports__kicker">Item performance</p>
+      </div>
+      {% include "_mode_switcher.html" %}
+    </div>
 
     <div id="review-body">
     <p class="day">For {{ perf.start.isoformat() }} to {{ perf.end.isoformat() }}</p>
 
-    <section class="headline">
+    <section class="headline item-perf-card">
       <h2>Period performance</h2>
       <!--section:item-performance-->
       <dl>

@@ -3,58 +3,64 @@
 {% set wide = true %}
 {% block title %}Menu items — Tangerine Books{% endblock %}
 {% block content %}
+  {% import "_stock_macros.html" as stock_ui %}
+  {# Warm Four #129 (Variant A "Counter cards") — see sku_coverage.html.
+     When ?item= narrows the list, the hero/side cards give way to the
+     single-item filter line, unchanged. #}
   <div class="review stock stock--items">
-    <p class="stock__kicker">Stock</p>
-    <h1>Menu items</h1>
+    <div class="stock__titlebar">
+      <div class="stock__title">
+        <p class="stock__kicker">Stock</p>
+        <h1>Menu items</h1>
+      </div>
+      {{ stock_ui.stock_tabs(stock_tab, tab_urls) }}
+    </div>
 
-    {% include "_stock_chrome.html" %}
+    <div class="stock__grid">
+      {% if filtered_item_id is defined and filtered_item_id %}
+      {{ stock_ui.stock_item_filter(filtered_item_id) }}
+      {% else %}
+      {{ stock_ui.stock_hero(stock_tab, uncostable_count, none, total_count) }}
+      {{ stock_ui.stock_side(filter, filter_urls) }}
+      {% endif %}
 
-    {% if not rows and not filtered_item_id and filter != "all" %}
-    <!--section:stock-empty-->
-    <section class="stock-empty">
-      <p>Nothing matches this filter — if you were hunting for broken ones, that&rsquo;s good news.</p>
-      <a class="stock-empty__reset" href="{{ filter_urls['all'] }}">Show all</a>
-    </section>
-    <!--/section:stock-empty-->
-    {% elif not rows %}
-    <p class="empty-note"><em>No menu items to show.</em></p>
-    {% else %}
-    <!--section:stock-list-->
-    <ul class="stock-list">
-      {% for row in rows %}
-      <li class="stock-row item-row {% if row.mapped_sku_id %}stock-row--{{ row.sku_health.value }} item-row--{{ row.sku_health.value }}{% else %}stock-row--unmapped item-row--unmapped{% endif %}">
-        <span class="health-dot {% if row.sku_health %}health-dot--{{ row.sku_health.value }}{% else %}health-dot--red{% endif %}"></span>
-        <div class="stock-row__main">
-          <a class="stock-row__name" href="/items?item={{ row.item_id }}">{{ row.name }}</a>
-          <span class="stock-row__sub item-row__id">
-            {% if row.mapped_sku_id %}{{ row.mapped_sku_id }} · {{ row.sell_price | money }} THB sell{% else %}{{ row.item_id }} · unmapped{% endif %}
+      {% if not rows and not filtered_item_id and filter != "all" %}
+      {{ stock_ui.stock_empty_filter(filter_urls) }}
+      {% elif not rows %}
+      <p class="empty-note"><em>No menu items to show.</em></p>
+      {% else %}
+      <!--section:stock-list-->
+      <ul class="stock-list">
+        {% for row in rows %}
+        <li class="stock-row item-row {% if row.mapped_sku_id %}stock-row--{{ row.sku_health.value }} item-row--{{ row.sku_health.value }}{% else %}stock-row--unmapped item-row--unmapped{% endif %}">
+          <span class="health-dot {% if row.sku_health %}health-dot--{{ row.sku_health.value }}{% else %}health-dot--red{% endif %}"></span>
+          <div class="stock-row__main">
+            <a class="stock-row__name" href="/items?item={{ row.item_id }}">{{ row.name }}</a>
+            <span class="stock-row__sub item-row__id">
+              {% if row.mapped_sku_id %}{{ row.mapped_sku_id }} · {{ row.sell_price | money }} THB sell{% else %}{{ row.item_id }} · unmapped{% endif %}
+            </span>
+            {% if not row.mapped_sku_id %}
+            <span class="stock-row__badge item-row__unmapped-label">Unmapped</span>
+            {% elif row.sku_health and row.sku_health.value == 'red' and row.cost_per_unit is none %}
+            <span class="stock-row__badge">No cost</span>
+            {% endif %}
+          </div>
+          <span class="stock-row__figure">
+            {% if row.gross_margin is not none %}{{ row.gross_margin | money }} THB margin{% else %}{{ row.sell_price | money }} THB{% endif %}
           </span>
           {% if not row.mapped_sku_id %}
-          <span class="stock-row__badge item-row__unmapped-label">Unmapped</span>
-          {% elif row.sku_health and row.sku_health.value == 'red' and row.cost_per_unit is none %}
-          <span class="stock-row__badge">No cost</span>
+          <p class="stock-row__actions">
+            <a href="/skus/new?item_id={{ row.item_id }}">Create new SKU&hellip;</a>
+            — <a href="/items/{{ row.item_id }}/sold-as-is">Sold as-is&hellip;</a>
+          </p>
           {% endif %}
-        </div>
-        <span class="stock-row__figure">
-          {% if row.gross_margin is not none %}{{ row.gross_margin | money }} THB margin{% else %}{{ row.sell_price | money }} THB{% endif %}
-        </span>
-        {% if not row.mapped_sku_id %}
-        <p class="stock-row__actions">
-          <a href="/skus/new?item_id={{ row.item_id }}">Create new SKU&hellip;</a>
-          — <a href="/items/{{ row.item_id }}/sold-as-is">Sold as-is&hellip;</a>
-        </p>
-        {% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-    <!--/section:stock-list-->
-    {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      <!--/section:stock-list-->
+      {% endif %}
+    </div>
 
-    <!--section:stock-footer-->
-    <footer class="stock-footer">
-      <a class="stock-footer__bulk" href="/upload">Bulk edit by spreadsheet &rarr;</a>
-      <span class="stock-footer__count">Showing {{ rows | length }} of {{ total_count }}</span>
-    </footer>
-    <!--/section:stock-footer-->
+    {{ stock_ui.stock_footer(rows | length, total_count) }}
   </div>
 {% endblock %}

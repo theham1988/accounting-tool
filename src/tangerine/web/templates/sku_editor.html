@@ -1,13 +1,14 @@
 {#
-  SKU editor — Wave 3 redesign (issue #48).
+  SKU editor — Wave 3 redesign (issue #48), Warm Four #129 (Variant A
+  "Counter cards").
 
-  A detail screen (back arrow, no bottom nav): the brand header carries the
-  SKU's name, a unit/segment micro-line, and its health dot; the body is the
-  RECIPE card plus, for a produced SKU, the read-only derived breakdown
-  (issue #37), or for a purchasable SKU, a NEW COST card with a current-cost
-  footer. A `?saved=recipe|cost` query param signals a just-landed save and
-  renders the in-place "SAVED — logged to the audit log" confirmation —
-  server-side, no client JS (ADR-0002).
+  A detail screen (back arrow, no bottom nav): the header carries the SKU's
+  name with its health dot (dot-ramp treatment), a unit/segment micro-line;
+  the body is a desktop 7/5 grid — the RECIPE paper card beside the cost
+  column (derived breakdown for a produced SKU, or Current cost + NEW COST
+  for a purchasable one). A `?saved=recipe|cost` query param signals a
+  just-landed save and renders the in-place "SAVED — logged to the audit
+  log" confirmation — server-side, no client JS (ADR-0002).
 
   The structural seams the UI e2e tests pin against are preserved verbatim
   (id="recipe-rows" <ol>, class="yield-field" <label>, recipe-row__{add,
@@ -51,62 +52,6 @@
     <!--/section:cost-saved-->
     {% endif %}
 
-    {% if is_produced %}
-    <section class="cost-derived">
-      <h2>Derived cost</h2>
-      <p class="cost-form__hint">
-        This SKU is made, not bought — its cost is derived from its recipe
-        (down to receipt prices) and cannot be entered directly. One source
-        of truth per role.
-      </p>
-      {% if breakdown.per_unit is not none %}
-      <p class="cost-derived__head">
-        <strong class="cost-derived__net">{{ breakdown.per_unit | money }}</strong>
-        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net per unit
-        {% if breakdown.yield_qty != 1 %}
-        <span class="cost-derived__yield">(batch ÷ yield {{ breakdown.yield_qty }})</span>
-        {% endif %}
-      </p>
-      {% else %}
-      <p class="cost-derived__unpriced">
-        <em>Cannot be costed yet — unpriced:
-        {% for leaf in breakdown.unpriced_leaves %}<span class="cost-derived__unpriced-leaf">{{ leaf }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.</em>
-        Price {{ "it" if breakdown.unpriced_leaves | length == 1 else "them" }} to cost this SKU.
-      </p>
-      {% endif %}
-      {% if breakdown.lines %}
-      <table class="cost-breakdown">
-        <thead>
-          <tr><th>Ingredient</th><th>Quantity</th><th>Unit cost</th><th>Line cost</th></tr>
-        </thead>
-        <tbody>
-        {% for line in breakdown.lines %}
-          <tr class="cost-breakdown__row{% if line.line_cost is none %} cost-breakdown__row--unpriced{% endif %}">
-            <td><a href="/skus/{{ line.sku_id }}">{{ line.name }}</a><span class="sku-row__id">{{ line.sku_id }}</span></td>
-            <td>{{ line.quantity }}</td>
-            <td>{{ (line.unit_cost | money) if line.unit_cost is not none else "unpriced" }}</td>
-            <td>{{ (line.line_cost | money) if line.line_cost is not none else "unpriced" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% endif %}
-    </section>
-    {% else %}
-    <section class="cost-current">
-      <h2>Current cost</h2>
-      {% if current_cost %}
-      <p>
-        <strong class="cost-current__net">{{ current_cost.price | money }}</strong>
-        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net,
-        updated {{ current_cost.updated_at.isoformat() }}
-      </p>
-      {% else %}
-      <p class="empty-note"><em>No cost recorded yet.</em></p>
-      {% endif %}
-    </section>
-    {% endif %}
-
     {% from "_ingredient_picker.html" import ingredient_picker %}
 
     {% macro recipe_row(ing_sku_id, quantity) -%}
@@ -134,6 +79,7 @@
     </li>
     {%- endmacro %}
 
+    <div class="sku-editor__grid">
     <!--section:recipe-editor-->
     <section class="recipe-editor">
       <h2>Recipe</h2>
@@ -194,6 +140,63 @@
     </section>
     <!--/section:recipe-editor-->
 
+    <div class="sku-editor__cost">
+    {% if is_produced %}
+    <section class="cost-derived">
+      <h2>Derived cost</h2>
+      <p class="cost-form__hint">
+        This SKU is made, not bought — its cost is derived from its recipe
+        (down to receipt prices) and cannot be entered directly. One source
+        of truth per role.
+      </p>
+      {% if breakdown.per_unit is not none %}
+      <p class="cost-derived__head">
+        <strong class="cost-derived__net">{{ breakdown.per_unit | money }}</strong>
+        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net per unit
+        {% if breakdown.yield_qty != 1 %}
+        <span class="cost-derived__yield">(batch ÷ yield {{ breakdown.yield_qty }})</span>
+        {% endif %}
+      </p>
+      {% else %}
+      <p class="cost-derived__unpriced">
+        <em>Cannot be costed yet — unpriced:
+        {% for leaf in breakdown.unpriced_leaves %}<span class="cost-derived__unpriced-leaf">{{ leaf }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.</em>
+        Price {{ "it" if breakdown.unpriced_leaves | length == 1 else "them" }} to cost this SKU.
+      </p>
+      {% endif %}
+      {% if breakdown.lines %}
+      <table class="cost-breakdown">
+        <thead>
+          <tr><th>Ingredient</th><th>Quantity</th><th>Unit cost</th><th>Line cost</th></tr>
+        </thead>
+        <tbody>
+        {% for line in breakdown.lines %}
+          <tr class="cost-breakdown__row{% if line.line_cost is none %} cost-breakdown__row--unpriced{% endif %}">
+            <td><a href="/skus/{{ line.sku_id }}">{{ line.name }}</a><span class="sku-row__id">{{ line.sku_id }}</span></td>
+            <td>{{ line.quantity }}</td>
+            <td>{{ (line.unit_cost | money) if line.unit_cost is not none else "unpriced" }}</td>
+            <td>{{ (line.line_cost | money) if line.line_cost is not none else "unpriced" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+    {% else %}
+    <section class="cost-current">
+      <h2>Current cost</h2>
+      {% if current_cost %}
+      <p>
+        <strong class="cost-current__net">{{ current_cost.price | money }}</strong>
+        THB{% if sku.unit %}/{{ sku.unit }}{% endif %} net,
+        updated {{ current_cost.updated_at.isoformat() }}
+      </p>
+      {% else %}
+      <p class="empty-note"><em>No cost recorded yet.</em></p>
+      {% endif %}
+    </section>
+    {% endif %}
+
     {% if not is_produced %}
     <!--section:cost-form-->
     <section class="cost-form">
@@ -234,5 +237,7 @@
     </section>
     <!--/section:cost-form-->
     {% endif %}
+    </div><!-- /.sku-editor__cost -->
+    </div><!-- /.sku-editor__grid -->
   </div>
 {% endblock %}
