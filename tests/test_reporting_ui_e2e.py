@@ -824,27 +824,28 @@ def test_deleting_a_fixed_cost_removes_it_from_every_month(
 # --- AC: fixed-costs admin redesign (issue #50) --------------------------------
 
 
-def test_fixed_costs_page_is_a_reports_sub_page_with_admin_tag_and_intro(
+def test_fixed_costs_page_is_an_admin_sub_page_with_admin_tag_and_intro(
     tmp_path: Path, today: date
 ) -> None:
-    """Issue #50 AC: the page is a Reports sub-page, bottom nav present.
+    """Warm Four #131: fixed costs is an Admin sub-page, bottom nav present.
 
-    The header sub-row links back into Reports, names the page "FIXED COSTS",
-    and carries a right-aligned ADMIN tag; the bottom nav renders with REPORTS
-    active; and the intro sentence states these are whole-venue costs never
-    split across cafe/taps.
+    The header sub-row links back into Admin (unified with the other Admin
+    surfaces — the Reports back-arrow is retired), names the page
+    "FIXED COSTS", and carries an ADMIN tag; the bottom nav renders with
+    nothing active; and the intro sentence states these are whole-venue
+    costs never split across cafe/taps.
     """
     app = _build_app(tmp_path, today=today, sales=[])
     client = _authed_client(app)
 
     html = client.get("/admin/fixed-costs").text
 
-    # Header sub-row: back-to-Reports link, the title, and the ADMIN tag.
+    # Header sub-row: back-to-Admin link, the title, and the ADMIN tag.
     header = html.split("<!--section:fixed-cost-header-->")[1].split(
         "<!--/section:fixed-cost-header-->"
     )[0]
-    assert "/review?mode=month" in header  # back-to-Reports target (nav_urls.reports)
-    assert "Reports" in header
+    assert 'href="/admin"' in header
+    assert "Admin" in header
     assert "FIXED COSTS" in header
     assert "ADMIN" in header
 
@@ -852,13 +853,12 @@ def test_fixed_costs_page_is_a_reports_sub_page_with_admin_tag_and_intro(
     assert "whole-venue" in html.lower()
     assert "never split" in html.lower()
 
-    # Bottom nav present with REPORTS marked active.
+    # Bottom nav present with nothing marked active (Admin is not a primary).
     nav = html.split("<!--section:bottom-nav-->")[1].split(
         "<!--/section:bottom-nav-->"
     )[0]
-    assert "tb-bottomnav__cell--active" in nav
-    assert "Reports" in nav
-    assert 'aria-current="page"' in nav
+    assert "tb-bottomnav__cell--active" not in nav
+    assert 'aria-current="page"' not in nav
 
 
 def test_add_a_cost_card_has_every_field_and_saves(

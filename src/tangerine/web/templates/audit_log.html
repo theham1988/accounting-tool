@@ -1,113 +1,144 @@
 {#
-  Change log (Wave 3 Slice 9 / issue #51).
+  Change log (Wave 3 Slice 9 / issue #51; Warm Four #131 Counter grid).
 
-  The audit log's redesigned home: a stack of entry cards on the paper
-  ground, each one a save action with its field-level diff. Unreviewed
-  entries carry a mustard left keyline and a NEW chip so the diff the 9am
-  review promised is impossible to miss; the partner's MARK READ clears the
-  highlight for them and only them. REVERT inverts on hover; a revert lands
-  back here with ``?reverted=<id>`` so the reverted card shows the teal
-  "REVERTED — change undone" confirmation in place of its button.
+  Presentation-only restyle onto the landed Reports/Stock Counter dialect:
+  titlebar with All/Mine/Noi's/Reverted chips; when there are unreviewed
+  entries, a 7/5 desktop grid — unreviewed-count hero (Hobo numeral) beside
+  a MARK READ review card; entries as one full-width paper card with dashed
+  rules. Unreviewed rows use the dot ramp (filled tangerine + NEW chip; the
+  mustard keyline is retired). REVERT / Revert this session stay as ghost
+  pills; the reverted confirmation is quiet ink (teal retired).
 
-  The existing per-entry and per-session revert routes are unchanged; the
-  forms keep their action URLs so the e2e suite's revert helpers still
-  resolve them. Session panic-undo sits as a quieter secondary beside the
-  primary REVERT (the design focuses per-entry; the affordance stays).
+  Routes, form action URLs, and <!--section:*--> anchors are unchanged so
+  the e2e suite's revert helpers still resolve them.
 #}
 {% extends "_base.html" %}
 {% set nav_active = "log" %}
+{% set wide = true %}
 {% block title %}Change log — Tangerine Books{% endblock %}
 {% block content %}
   <div class="review audit">
-    <!--section:audit-header-->
-    <header class="audit-head">
-      <h1 class="audit-head__title">CHANGE LOG</h1>
-      <p class="audit-head__subtitle">
-        Every config edit — who, when, from what to what.
-      </p>
-    </header>
-    <!--/section:audit-header-->
+    <div class="audit__titlebar">
+      <!--section:audit-header-->
+      <header class="audit-head">
+        <p class="audit__kicker">Log</p>
+        <h1 class="audit-head__title">CHANGE LOG</h1>
+        <p class="audit-head__subtitle">
+          Every config edit — who, when, from what to what.
+        </p>
+      </header>
+      <!--/section:audit-header-->
+      <div class="audit__chips" role="navigation" aria-label="Filter by author">
+        <a class="audit__chip{% if who == 'all' %} audit__chip--active{% endif %}"
+           href="/audit">All</a>
+        <a class="audit__chip{% if who == 'mine' %} audit__chip--active{% endif %}"
+           href="/audit?who=mine">Mine</a>
+        <a class="audit__chip{% if who == 'noi' %} audit__chip--active{% endif %}"
+           href="/audit?who=noi">Noi's</a>
+        <a class="audit__chip{% if who == 'reverted' %} audit__chip--active{% endif %}"
+           href="/audit?who=reverted">Reverted</a>
+      </div>
+    </div>
 
-    {% if unreviewed_ids %}
-    <!--section:unreviewed-->
-    <section class="audit-unreviewed" role="alert">
-      <span class="audit-unreviewed__note">
-        <strong>{{ unreviewed_ids | length }} change{{ "" if unreviewed_ids | length == 1 else "s" }}</strong>
-        since your last review — marked below.
-      </span>
-      <form method="post" action="/audit/reviewed">
-        <button type="submit" class="audit-unreviewed__mark">MARK READ</button>
-      </form>
-    </section>
-    <!--/section:unreviewed-->
-    {% endif %}
+    <div class="audit__grid">
+      {% if unreviewed_ids %}
+      <article class="audit-hero">
+        <p class="audit-hero__kicker">Since your last review</p>
+        <p class="audit-hero__numeral">
+          {{ unreviewed_count }}
+          <span class="audit-hero__of">
+            unreviewed change{{ "" if unreviewed_count == 1 else "s" }}
+          </span>
+        </p>
+        <p class="audit-hero__note">
+          Read the marked entries below, then clear the flag. MARK READ
+          clears the NEW markers for you and only you.
+        </p>
+      </article>
+      <!--section:unreviewed-->
+      <section class="audit-unreviewed" role="alert">
+        <p class="audit-unreviewed__kicker">Review</p>
+        <span class="audit-unreviewed__note">
+          <strong>{{ unreviewed_ids | length }} change{{ "" if unreviewed_ids | length == 1 else "s" }}</strong>
+          since your last review — marked below. Every entry can be
+          reverted; a session revert undoes a whole sitting.
+        </span>
+        <form method="post" action="/audit/reviewed">
+          <button type="submit" class="audit-unreviewed__mark">MARK READ</button>
+        </form>
+      </section>
+      <!--/section:unreviewed-->
+      {% endif %}
 
-    {% if not entries %}
-    <p class="empty-note"><em>No changes recorded yet.</em></p>
-    {% else %}
-    <!--section:entries-->
-    <section class="audit-entries">
-      {% for row in entries %}
-        {% set e = row.entry %}
-        {% set is_unreviewed = e.entry_id in unreviewed_ids %}
-        {% set is_reverted = reverted_id == e.entry_id %}
-        <article class="audit-row{% if is_unreviewed %} audit-row--unreviewed{% endif %}">
-          <header class="audit-row__head">
-            <span class="audit-row__who-line">
-              <span class="audit-row__who">{{ e.changed_by }}</span>
-              {% if is_unreviewed %}<span class="audit-row__new">NEW</span>{% endif %}
-            </span>
-            <time class="audit-row__when" datetime="{{ e.changed_at }}">{{ e.changed_at }}</time>
-          </header>
+      {% if not entries %}
+      <p class="empty-note"><em>No changes recorded yet.</em></p>
+      {% else %}
+      <!--section:entries-->
+      <section class="audit-entries">
+        {% for row in entries %}
+          {% set e = row.entry %}
+          {% set is_unreviewed = e.entry_id in unreviewed_ids %}
+          {% set is_reverted = reverted_id == e.entry_id %}
+          <article class="audit-row{% if is_unreviewed %} audit-row--unreviewed{% endif %}">
+            <header class="audit-row__head">
+              <span class="audit-row__who-line">
+                <span class="health-dot health-dot--{% if is_unreviewed %}red{% else %}green{% endif %}"
+                      title="{% if is_unreviewed %}unreviewed{% else %}reviewed{% endif %}"></span>
+                <span class="audit-row__who">{{ e.changed_by }}</span>
+                {% if is_unreviewed %}<span class="audit-row__new">NEW</span>{% endif %}
+              </span>
+              <time class="audit-row__when" datetime="{{ e.changed_at }}">{{ e.changed_at }}</time>
+            </header>
 
-          <p class="audit-row__what">
-            <span class="audit-row__table">{{ e.table_name }} ·</span>
-            <strong>{{ e.pk }}</strong>
-            {% if e.old_value is none %}<span class="audit-row__kind">(created)</span>{% endif %}
-            {% if e.new_value is none %}<span class="audit-row__kind">(removed)</span>{% endif %}
-          </p>
+            <p class="audit-row__what">
+              <span class="audit-row__table">{{ e.table_name }} ·</span>
+              <strong>{{ e.pk }}</strong>
+              {% if e.old_value is none %}<span class="audit-row__kind">(created)</span>{% endif %}
+              {% if e.new_value is none %}<span class="audit-row__kind">(removed)</span>{% endif %}
+            </p>
 
-          {% if row.changes %}
-          <ul class="audit-changes">
-            {% for change in row.changes %}
-            <li class="audit-changes__row">
-              <span class="audit-changes__field">{{ change.field }}:</span>
-              <span class="audit-changes__old">{{ change.old if change.old is not none else "—" }}</span>
-              &rarr;
-              <strong class="audit-changes__new">{{ change.new if change.new is not none else "—" }}</strong>
-            </li>
-            {% endfor %}
-          </ul>
-          {% endif %}
-
-          {% if e.reason %}
-          <p class="audit-row__reason">Reason: {{ e.reason }}</p>
-          {% endif %}
-
-          <footer class="audit-row__actions">
-            {% if e.session_id %}
-            <form method="post" action="/audit/session/{{ e.session_id }}/revert"
-                  class="audit-row__session-form">
-              <input type="text" name="reason" class="audit-row__reason-input"
-                     placeholder="Why? (optional)" aria-label="Session revert reason">
-              <button type="submit" class="audit-row__revert-session">Revert this session</button>
-            </form>
+            {% if row.changes %}
+            <ul class="audit-changes">
+              {% for change in row.changes %}
+              <li class="audit-changes__row">
+                <span class="audit-changes__field">{{ change.field }}:</span>
+                <span class="audit-changes__old">{{ change.old if change.old is not none else "—" }}</span>
+                &rarr;
+                <strong class="audit-changes__new">{{ change.new if change.new is not none else "—" }}</strong>
+              </li>
+              {% endfor %}
+            </ul>
             {% endif %}
-            {% if is_reverted %}
-            <span class="audit-row__reverted">REVERTED — change undone</span>
-            {% else %}
-            <form method="post" action="/audit/{{ e.entry_id }}/revert"
-                  class="audit-row__revert-form">
-              <input type="text" name="reason" class="audit-row__reason-input"
-                     placeholder="Why? (optional)" aria-label="Revert reason">
-              <button type="submit" class="audit-row__revert">REVERT</button>
-            </form>
+
+            {% if e.reason %}
+            <p class="audit-row__reason">Reason: {{ e.reason }}</p>
             {% endif %}
-          </footer>
-        </article>
-      {% endfor %}
-    </section>
-    <!--/section:entries-->
-    {% endif %}
+
+            <footer class="audit-row__actions">
+              {% if e.session_id %}
+              <form method="post" action="/audit/session/{{ e.session_id }}/revert"
+                    class="audit-row__session-form">
+                <input type="text" name="reason" class="audit-row__reason-input"
+                       placeholder="Why? (optional)" aria-label="Session revert reason">
+                <button type="submit" class="audit-row__revert-session">Revert this session</button>
+              </form>
+              {% endif %}
+              {% if is_reverted %}
+              <span class="audit-row__reverted">REVERTED — change undone</span>
+              {% else %}
+              <form method="post" action="/audit/{{ e.entry_id }}/revert"
+                    class="audit-row__revert-form">
+                <input type="text" name="reason" class="audit-row__reason-input"
+                       placeholder="Why? (optional)" aria-label="Revert reason">
+                <button type="submit" class="audit-row__revert">REVERT</button>
+              </form>
+              {% endif %}
+            </footer>
+          </article>
+        {% endfor %}
+      </section>
+      <!--/section:entries-->
+      {% endif %}
+    </div>
   </div>
 {% endblock %}
