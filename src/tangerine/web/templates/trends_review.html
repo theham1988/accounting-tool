@@ -9,8 +9,19 @@
      bar list. No client JavaScript (ADR-0002 / ADR-0004). #}
 
   <div class="review reports reports--trends">
-    {% include "_reports_tabs.html" %}
+    {# Warm Four (#127, Variant A "Counter"): title row — screen name +
+       kicker left, the Reports tabs (pill tray) right. #}
+    <div class="reports__titlebar">
+      <div class="reports__title">
+        <h1>Trends</h1>
+        <p class="reports__kicker">{{ span_label }}</p>
+      </div>
+      {% include "_reports_tabs.html" %}
+    </div>
 
+    {# Metric chips left, span chips right — outlined pills, ink-filled when
+       active (#127). Both navs and their section anchors are unchanged. #}
+    <div class="reports__chips">
     <!--section:metric-switcher-->
     <nav class="trend-picker trend-picker--chips" aria-label="Trend metric">
       {% for link in metric_links %}
@@ -28,6 +39,7 @@
       {% endfor %}
     </nav>
     <!--/section:span-switcher-->
+    </div><!-- /reports__chips -->
 
     <div id="review-body">
 
@@ -53,7 +65,9 @@
       <!--section:weekday-breakdown-->
       <ul class="weekday-bars">
         {% for row in weekday_chart.rows %}
-        <li class="weekday-bars__row">
+        {# The strongest day (the 100% track) wears the tangerine fill —
+           the chart's single accent (#127). #}
+        <li class="weekday-bars__row{% if row.pct == 100 %} weekday-bars__row--best{% endif %}">
           <span class="weekday-bars__day">{{ row.label }}</span>
           <span class="weekday-bars__track" aria-hidden="true">
             <span class="weekday-bars__fill" style="width: {{ row.pct }}%;"></span>

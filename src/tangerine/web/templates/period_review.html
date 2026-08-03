@@ -21,7 +21,16 @@
 
   <div class="review reports">
     {% include "_breadcrumb.html" %}
-    {% include "_reports_tabs.html" %}
+
+    {# Warm Four (#127, Variant A "Counter"): title row — screen name +
+       kicker left, the Reports tabs (pill tray) right. #}
+    <div class="reports__titlebar">
+      <div class="reports__title">
+        <h1>{% if mode == 'month' %}Month{% else %}Period{% endif %}</h1>
+        <p class="reports__kicker">{% if mode == 'month' %}Calendar month · recipe-cost lens{% else %}Custom range · recipe-cost lens{% endif %}</p>
+      </div>
+      {% include "_reports_tabs.html" %}
+    </div>
 
     <!--section:range-nav-->
     <section class="range-nav range-nav--arrows" aria-label="Report range">
@@ -139,14 +148,19 @@
     <!--/section:headline-->
 
     {% include "_segment_cm.html" %}
-    <p class="segment-cm__note">
-      Fixed costs are never split across segments — they come off the whole venue.
-    </p>
 
+    {# Warm Four (#127): the fixed-costs pieces share one paper card — the
+       row-link is its header row, the segment note and lines sit inside.
+       Grid span 5 beside the day-by-day table on desktop. #}
+    <div class="reports__fixed-card">
     <a class="row-link-card" href="/admin/fixed-costs">
       <span class="row-link-card__label">Fixed costs</span>
       <span class="row-link-card__meta">{{ fixed_costs_summary }} &rarr;</span>
     </a>
+
+    <p class="segment-cm__note">
+      Fixed costs are never split across segments — they come off the whole venue.
+    </p>
 
     <section class="fixed-costs-block">
       <h2 class="visually-hidden">{% if review.fixed_costs.estimated %}Estimated fixed costs (apportioned){% else %}Fixed costs{% endif %}</h2>
@@ -184,6 +198,7 @@
       {% endif %}
       <!--/section:fixed-costs-->
     </section>
+    </div><!-- /reports__fixed-card -->
 
     <section class="period-days">
       <h2>Day by day</h2>

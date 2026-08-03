@@ -90,6 +90,17 @@ def sparkline_svg(
             'stroke-dasharray="4 4" />'
         )
     parts.append(f'<polyline fill="none" points="{" ".join(coords)}" />')
+    # Point markers (Warm Four #127): ink dots on the line, with the latest
+    # point emphasised in tangerine — the chart's single accent. Colours and
+    # sizing live in the stylesheet; this only emits the geometry.
+    for i, coord in enumerate(coords):
+        x, y = coord.split(",")
+        css = "trend-sparkline__dot"
+        radius = "3.5"
+        if i == len(coords) - 1:
+            css += " trend-sparkline__dot--end"
+            radius = "5"
+        parts.append(f'<circle class="{css}" cx="{x}" cy="{y}" r="{radius}" />')
     parts.append("</svg>")
     return "".join(parts)
 
