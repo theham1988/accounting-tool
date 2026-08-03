@@ -1980,42 +1980,64 @@ button:active {
   font-weight: var(--tb-weight-bold);
 }
 
-/* Mode switcher (report tabs) + range picker. */
+/* Mode switcher (report tabs) + range picker.
+
+   Warm Four (#127, extending Today per #125/#126): pills in a paper-warm
+   tray — the segmented-toggle dialect from Today's Top & bottom card. The
+   active pill is ink on paper; the Admin link rides the tray's right edge
+   as an outlined pill. */
 .mode-switcher {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
   margin-bottom: var(--tb-space-4);
+  padding: 4px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-pill);
 }
 
 .mode-switcher__link {
-  padding: 0.4rem 0.9rem;
-  border: var(--tb-keyline-thin) solid var(--rule);
+  padding: 8px 16px;
+  border: 0;
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
-  color: inherit;
+  color: var(--muted);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
 }
 
 .mode-switcher__link:hover {
-  background: var(--surface-alt);
+  color: var(--tb-ink);
+  background: transparent;
 }
 
 .mode-switcher__link--active {
-  background: var(--tb-tango);
-  color: var(--tb-ink);
-  font-weight: var(--tb-weight-bold);
-  border-color: var(--tb-tango);
+  background: var(--tb-ink);
+  color: var(--tb-paper);
+  border-color: var(--tb-ink);
   pointer-events: none;
 }
 
 .mode-switcher__admin {
   margin-left: auto;
-  padding: 0.4rem 0.9rem;
-  border: var(--tb-keyline-thin) dashed var(--rule);
+  padding: 6px 14px;
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
   color: var(--muted);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
 }
 
 .mode-switcher__admin:hover {
-  background: var(--surface-alt);
+  color: var(--tb-ink);
+  border-color: var(--tb-ink);
+  background: transparent;
 }
 
 .range-nav {
@@ -2423,31 +2445,38 @@ button:active {
   font-weight: var(--tb-weight-bold);
 }
 
-/* Trends. */
+/* Trends (Warm Four #127) — metric/span chips are outlined pills, ink-filled
+   when active. */
 .trend-picker {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 6px;
   margin-bottom: var(--tb-space-3);
 }
 
 .trend-picker__link {
-  padding: 0.25rem 0.7rem;
-  border: var(--tb-keyline-thin) solid var(--rule);
+  padding: 6px 15px;
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
 }
 
 .trend-picker__link:hover {
-  background: var(--surface-alt);
+  color: var(--tb-ink);
+  border-color: var(--tb-ink);
+  background: transparent;
 }
 
 .trend-picker__link--active {
-  background: var(--tb-tango);
-  color: var(--tb-ink);
+  background: var(--tb-ink);
+  color: var(--tb-paper);
   font-weight: var(--tb-weight-bold);
-  border-color: var(--tb-tango);
+  border-color: var(--tb-ink);
   pointer-events: none;
 }
 
@@ -2458,7 +2487,7 @@ button:active {
   margin-bottom: 0.5rem;
   stroke: var(--tb-ink);
   stroke-width: 2;
-  background: var(--surface-alt);
+  background: transparent;
 }
 
 .trend-bars {
@@ -2479,13 +2508,16 @@ button:active {
 }
 
 a.trend-bar:hover .trend-bar__fill {
-  background: var(--tb-tango);
+  background: var(--tb-tangerine);
 }
 
+/* Monochrome bars (#127): ink fills with softly rounded tops; tangerine is
+   reserved for hover — the only accent. */
 .trend-bar__fill {
   display: block;
   height: calc(var(--bar-height, 0%) * 0.6 + 3px);
-  background: var(--muted);
+  background: var(--tb-ink);
+  border-radius: 4px 4px 0 0;
 }
 
 .trend-bar__value {
@@ -2529,40 +2561,22 @@ a.trend-bar:hover .trend-bar__fill {
   border: 0;
 }
 
+/* The Reports tabs reuse the pill-tray base above; the variant only stops
+   the tray stretching (it shares the title row with the screen name) and
+   keeps the four pills on one line where they fit (#127). */
 .mode-switcher--reports {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 0;
-  margin: 0 0 var(--tb-space-4);
-  border: var(--tb-keyline) solid var(--tb-ink);
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  margin: 0;
 }
 
 .mode-switcher--reports .mode-switcher__link {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  margin: 0;
-  padding: 0.5rem;
-  border: 0;
-  border-right: var(--tb-keyline-thin) solid var(--tb-ink);
-  font-size: var(--tb-size-kicker);
-  font-weight: var(--tb-weight-bold);
-  letter-spacing: var(--tb-tracking-kicker);
-  text-transform: uppercase;
-  background: var(--tb-paper-raised);
+  padding: 8px 20px;
 }
 
-.mode-switcher--reports .mode-switcher__link:last-child {
-  border-right: 0;
-}
-
-.mode-switcher--reports .mode-switcher__link--active {
-  background: var(--tb-ink);
-  color: var(--tb-paper);
-  border-color: var(--tb-ink);
-}
-
+/* Range navigator (Warm Four #127) — round outlined arrow buttons around a
+   paper-card date-chip pill, matching Today's day navigator dialect. */
 .range-nav--arrows {
   display: flex;
   align-items: center;
@@ -2575,15 +2589,17 @@ a.trend-bar:hover .trend-bar__fill {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
-  border: var(--tb-keyline) solid var(--tb-ink);
-  background: var(--tb-paper-raised);
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
   color: var(--tb-ink);
   text-decoration: none;
-  font-weight: var(--tb-weight-bold);
-  font-size: 1.1rem;
+  font-weight: var(--tb-weight-regular);
+  font-size: 15px;
+  line-height: 1;
 }
 
 .range-nav__arrow--dimmed,
@@ -2606,9 +2622,18 @@ a.trend-bar:hover .trend-bar__fill {
   color: var(--muted);
 }
 
-.range-nav__label {
+/* The visible range reads as a paper-card chip pill (#127). Scoped to the
+   arrows variant — the plain range-nav form's label is a flex column. */
+.range-nav--arrows .range-nav__label {
+  display: inline-block;
+  padding: 7px 18px;
+  margin-top: 4px;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-pill);
+  font-size: 13px;
   font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2616,8 +2641,37 @@ a.trend-bar:hover .trend-bar__fill {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.range-nav--arrows .range-nav__input {
+  font-size: var(--tb-size-kicker);
+  padding: 5px 8px;
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-1);
+  background: var(--tb-paper-card);
+  color: var(--tb-ink);
+}
+
+.range-nav--arrows .range-nav__apply {
+  font: inherit;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
+  color: var(--tb-ink);
+  cursor: pointer;
+}
+
+.range-nav--arrows .range-nav__apply:hover {
+  background: var(--tb-ink);
+  color: var(--tb-paper);
 }
 
 /* Gross-margin hero card (Warm Four #125) — flat paper-card, radius 20,
@@ -3081,28 +3135,10 @@ a.trend-bar:hover .trend-bar__fill {
   white-space: nowrap;
 }
 
+/* All chips share one outlined-pill register now (#127); the old stretched
+   --primary treatment is retired with the multi-hue palette. */
 .trend-picker--chips {
-  gap: 0.5rem;
-}
-
-.trend-picker--chips .trend-picker__link--primary {
-  flex: 1 1 0;
-  text-align: center;
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-transform: uppercase;
-  letter-spacing: var(--tb-tracking-kicker);
-  font-size: var(--tb-size-kicker);
-  font-weight: var(--tb-weight-bold);
-  color: var(--tb-ink);
-}
-
-.trend-picker--chips .trend-picker__link--active {
-  background: var(--tb-ink);
-  color: var(--tb-paper);
-  border-color: var(--tb-ink);
+  gap: 6px;
 }
 
 .trend-chart__head {
@@ -3113,19 +3149,17 @@ a.trend-bar:hover .trend-bar__fill {
   margin-bottom: 0.75rem;
 }
 
+/* Chart card headings join the Hobo card-heading register (#127). */
 .trend-chart__title {
   margin: 0;
-  font-size: var(--tb-size-kicker);
-  letter-spacing: var(--tb-tracking-kicker);
-  text-transform: uppercase;
-  color: var(--tb-terracotta, var(--tb-tango));
-  font-weight: var(--tb-weight-bold);
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h2);
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--tb-ink);
+  font-weight: var(--tb-weight-regular);
   border: 0;
   padding: 0;
-}
-
-.trend-chart--weekday .trend-chart__title {
-  color: var(--tb-ink);
 }
 
 .trend-chart__span {
@@ -3135,15 +3169,28 @@ a.trend-bar:hover .trend-bar__fill {
   color: var(--muted);
 }
 
+/* Monochrome line chart (#127): ink polyline with ink point dots; the goal
+   line and the latest point wear tangerine — the only accent. */
 .trend-sparkline {
-  stroke: var(--tb-tango);
-  stroke-width: 3;
+  stroke: var(--tb-ink);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
   background: transparent;
 }
 
 .trend-sparkline__goal {
-  stroke: var(--muted);
-  stroke-width: 1.5;
+  stroke: var(--tb-tangerine);
+  stroke-width: 2;
+}
+
+.trend-sparkline__dot {
+  fill: var(--tb-ink);
+  stroke: none;
+}
+
+.trend-sparkline__dot--end {
+  fill: var(--tb-tangerine);
 }
 
 .weekday-bars {
@@ -3167,17 +3214,25 @@ a.trend-bar:hover .trend-bar__fill {
   text-transform: uppercase;
 }
 
+/* Warm tracks, ink fills; the strongest day's fill is tangerine (#127). */
 .weekday-bars__track {
   display: block;
-  height: 14px;
-  border: var(--tb-keyline-thin) solid var(--tb-ink);
-  background: var(--tb-paper);
+  height: 12px;
+  border: 0;
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-paper-warm);
+  overflow: hidden;
 }
 
 .weekday-bars__fill {
   display: block;
   height: 100%;
-  background: var(--tb-tango);
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-ink);
+}
+
+.weekday-bars__row--best .weekday-bars__fill {
+  background: var(--tb-tangerine);
 }
 
 .weekday-bars__value {
@@ -3186,10 +3241,12 @@ a.trend-bar:hover .trend-bar__fill {
   font-variant-numeric: tabular-nums;
 }
 
+/* Chart cards join the paper-card register (#127). */
 .reports .trend-chart {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: var(--tb-space-4);
+  background: var(--tb-paper-card);
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
   margin-bottom: var(--tb-space-4);
 }
 
@@ -3205,8 +3262,8 @@ a.trend-bar:hover .trend-bar__fill {
    chrome header above it. Sits inside the report content column. */
 .report-header {
   margin: 0 0 var(--tb-space-3);
-  padding-bottom: var(--tb-space-3);
-  border-bottom: var(--tb-keyline) solid var(--tb-tango);
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .report-header__h1 {
@@ -3240,26 +3297,39 @@ a.trend-bar:hover .trend-bar__fill {
   letter-spacing: 0.02em;
 }
 
-/* Editorial / honesty callout — tango wash + 3px tango keyline. Distinct from
-   .stale-banner (mustard alert) and .headline__uncosted-note (inline footnote). */
+/* Editorial / honesty callout — Warm Four (#127): the paper-warm dot-banner
+   dialect (tangerine dot + uppercase kicker), same register as the
+   config-changes banner. Distinct from .stale-banner (midnight alert) and
+   .headline__uncosted-note (inline footnote). */
 .report-banner {
-  background: color-mix(in srgb, var(--tb-tango) 9%, var(--tb-paper-raised));
-  border: var(--tb-keyline) solid var(--tb-tango);
-  padding: var(--tb-space-3) var(--tb-space-4);
+  background: var(--tb-paper-warm);
+  border: 0;
+  border-radius: var(--tb-radius-2);
+  padding: 12px 18px;
   margin: 0 0 var(--tb-space-4);
-  font-size: 0.92rem;
+  font-size: var(--tb-size-small);
   line-height: 1.5;
+}
+
+.report-banner::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tb-tangerine);
+  margin-right: 9px;
 }
 
 .report-banner__kicker {
   display: inline;
-  font-family: var(--tb-font-accent);
+  font-family: var(--tb-font-body);
   font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  color: var(--tb-tango-ink);
-  font-size: 0.8rem;
-  margin-right: 0.4rem;
+  color: var(--tb-tangerine-ink);
+  font-size: 10px;
+  margin-right: 8px;
 }
 
 .report-banner b {
@@ -3302,43 +3372,62 @@ a.trend-bar:hover .trend-bar__fill {
 /* Responsive tile grid — reserved for the Profit-Report screen (#84); ships
    now so #84 composes against a stable token. No Period/Month surface renders
    tiles in this spec. */
+/* Warm Four (#127): 2×2 on mobile, one row of four on desktop; paper cards
+   with Hobo values; negative values read tangerine-ink. */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
   margin: 0 0 var(--tb-space-4);
 }
 
 .tile {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: 0.9rem 1rem;
+  background: var(--tb-paper-card);
+  border: 0;
+  border-radius: var(--tb-radius-3);
+  padding: 16px 18px;
 }
 
 .tile__label {
-  font-size: var(--tb-size-small);
-  color: var(--tb-ink-soft);
-  letter-spacing: 0.02em;
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .tile__value {
   font-family: var(--tb-font-display);
-  font-size: 1.9rem;
-  font-weight: var(--tb-weight-bold);
-  margin-top: 0.15rem;
+  font-size: 26px;
+  font-weight: var(--tb-weight-regular);
+  margin: 4px 0 2px;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
-.tile__sub {
-  font-size: 0.8rem;
-  color: var(--tb-ink-soft);
-  margin-top: 0.25rem;
+.tile__unit {
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
-.tile--good .tile__value { color: var(--tb-teal); }
-.tile--bad .tile__value { color: var(--tb-red); }
-.tile--pend .tile__value { color: var(--tb-ink-soft); }
+.tile__sub {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.tile--good .tile__value { color: var(--tb-ink); }
+.tile--bad .tile__value { color: var(--tb-tangerine-ink); }
+.tile--pend .tile__value { color: var(--muted); }
+
+@media (min-width: 768px) {
+  .tiles {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
 
 /* P&L table. Joins .segment-cm / .period-days__table in the 1px ink internal-
    rules register. Row variants make the two-lens pattern possible (#85). */
@@ -3346,40 +3435,61 @@ a.trend-bar:hover .trend-bar__fill {
   width: 100%;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
+  font-size: var(--tb-size-small);
 }
 
-.pnl td {
-  padding: 0.45rem 0.5rem;
+/* Warm Four (#127): receipt-table register — muted uppercase column heads,
+   1.5px dashed internal rules, bold right-aligned numerals. */
+.pnl thead th {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
+  text-align: left;
+  padding: 0 8px 8px 0;
+}
+
+.pnl td,
+.pnl tbody th {
+  padding: 9px 8px 9px 0;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  text-align: left;
+}
+
+.pnl tbody th {
+  font-weight: var(--tb-weight-bold);
 }
 
 .pnl td.num {
   text-align: right;
+  padding-right: 0;
+  font-weight: var(--tb-weight-bold);
 }
 
 .pnl__row--major td {
   font-weight: var(--tb-weight-bold);
-  border-top: var(--tb-keyline-thin) solid var(--tb-ink);
 }
 
 .pnl__row--sub td {
-  color: var(--tb-ink-soft);
+  color: var(--muted);
   padding-left: 1.6rem;
-  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
   font-size: 0.9rem;
 }
 
 .pnl__row--total td {
   font-weight: var(--tb-weight-bold);
-  background: color-mix(in srgb, var(--tb-paper-sunk) 50%, transparent);
+  background: var(--tb-paper-warm);
 }
 
 .pnl__row--ghost td {
-  color: var(--tb-ink-soft);
+  color: var(--muted);
   font-size: 0.85rem;
+  font-weight: var(--tb-weight-regular);
 }
 
 .pnl__row--neg td.num {
-  color: var(--tb-red);
+  color: var(--tb-tangerine-ink);
 }
 
 .pnl__note {
@@ -3397,14 +3507,22 @@ a.trend-bar:hover .trend-bar__fill {
    on the Profit Report. The wrapper owns the heading and the spacing between
    the tiles above and the table below; the table itself reuses the shared
    .pnl styles already defined. */
+/* Warm Four (#127): the two-lens panel is a paper card — grid span 7
+   beside spend-by-category on desktop. */
 .pnl-block {
   margin: 0 0 var(--tb-space-4);
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
 }
 
 .pnl-block__h {
   font-family: var(--tb-font-display);
-  font-size: 1.1rem;
-  margin: 0 0 0.5rem;
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+  margin: 0 0 10px;
+  border: 0;
+  padding: 0;
 }
 
 /* The honesty callout sits inside the P&L block, just under the table. Reuses
@@ -3418,32 +3536,40 @@ a.trend-bar:hover .trend-bar__fill {
    top-N by revenue (THB) and top-N by units. Both share the same aggregation,
    rendered as ordered lists (rank is meaningful, so <ol> not <ul>). Mobile-
    first single column, two columns ≥720px, matching .split's register. */
+/* Warm Four (#127): one paper card, the two ranked lists 2-up inside on
+   desktop, dashed rules between rows, "CM unknown" as an outlined chip. */
 .bestsellers {
   margin: 0 0 var(--tb-space-4);
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
 }
 
 .bestsellers__head {
-  margin: 0 0 0.6rem;
+  margin: 0 0 14px;
 }
 
 .bestsellers__head h2 {
   font-family: var(--tb-font-display);
-  font-size: 1.1rem;
-  margin: 0 0 0.3rem;
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+  margin: 0 0 4px;
+  border: 0;
+  padding: 0;
 }
 
 .bestsellers__note {
   margin: 0;
-  font-size: 0.82rem;
-  color: var(--tb-ink-soft);
-  line-height: 1.5;
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
+  line-height: 1.6;
   max-width: 60ch;
 }
 
 .bestsellers__grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 0.9rem;
+  gap: 22px;
 }
 
 @media (min-width: 768px) {
@@ -3453,15 +3579,16 @@ a.trend-bar:hover .trend-bar__fill {
 }
 
 .bestsellers__list {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: 0.6rem 0.8rem;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 
 .bestsellers__list-h {
   font-family: var(--tb-font-display);
-  font-size: 0.95rem;
-  margin: 0 0 0.4rem;
+  font-size: 16px;
+  font-weight: var(--tb-weight-regular);
+  margin: 0 0 8px;
 }
 
 .bestsellers__list-unit {
@@ -3523,9 +3650,14 @@ a.trend-bar:hover .trend-bar__fill {
   grid-area: name;
   justify-self: start;
   margin-left: 0.35rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  color: var(--tb-tango);
+  font-size: 9px;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  color: var(--tb-tangerine-ink);
+  border: var(--tb-keyline-thin) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
   text-transform: uppercase;
 }
 
@@ -3862,5 +3994,635 @@ svg .chart__bar:hover {
   .review.coverage,
   .review.audit {
     max-width: 960px;
+  }
+}
+
+/* --- Warm Four #127: Reports screens (Variant A "Counter") -----------------
+   Period / Month / Trends / Profit implement Today's dialect: mobile-first
+   single column with 18px gaps; the desktop 12-col grid (7/5 card spans)
+   lands in the 768px block at the end. The Loyverse export/diff pages get
+   the FULL treatment (cards, dropzone, pill CTAs, status chips). All test
+   anchors and behaviour hooks are untouched — presentation only. */
+
+.review.reports {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 100%;
+  padding: 18px 18px 24px;
+}
+
+.reports section {
+  margin-bottom: 0;
+}
+
+.reports #review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.reports .breadcrumb__list,
+.reports .mode-switcher,
+.reports .range-nav--arrows,
+.reports .trend-picker,
+.reports .headline--card,
+.reports .trend-chart,
+.reports .pnl-block,
+.reports .bestsellers,
+.reports .tiles,
+.reports .report-header,
+.reports .report-banner {
+  margin-bottom: 0;
+}
+
+/* Breadcrumb joins the uppercase-kicker register. */
+.reports .breadcrumb__list {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.reports .breadcrumb__link {
+  color: var(--tb-tangerine-ink);
+  font-weight: var(--tb-weight-bold);
+  text-decoration: none;
+}
+
+/* Title row: screen name + kicker left, the tab tray right. */
+.reports__titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 18px;
+}
+
+.reports__titlebar .report-header {
+  margin: 0;
+}
+
+.reports h1 {
+  margin: 0;
+  font-size: var(--tb-size-h1);
+  line-height: 1.08;
+}
+
+.reports__kicker {
+  margin: 2px 0 0;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Card headings inside the reports scope drop the base h2 underline. */
+.reports h2 {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* Trends: metric chips left, span chips right, one row where they fit. */
+.reports__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 18px;
+}
+
+.reports__chips .trend-picker {
+  margin-bottom: 0;
+}
+
+/* Segment cards stretch to split the hero card's height on desktop. */
+.reports .segment-cm {
+  display: flex;
+  flex-direction: column;
+}
+
+.reports .segment-cm__cards {
+  flex: 1 1 auto;
+}
+
+/* The fixed-costs card: row-link header, entity note, dashed line items. */
+.reports__fixed-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
+}
+
+.reports__fixed-card .row-link-card {
+  margin: 0;
+  padding: 0 0 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+}
+
+.reports__fixed-card .row-link-card:hover {
+  background: transparent;
+}
+
+.reports__fixed-card .row-link-card__meta {
+  color: var(--tb-tangerine-ink);
+  font-weight: var(--tb-weight-bold);
+  font-size: var(--tb-size-kicker);
+}
+
+.reports__fixed-card .segment-cm__note {
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.reports .fixed-costs-block {
+  margin: 0;
+}
+
+.reports .fixed-costs-block__line {
+  padding: 8px 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+  font-size: var(--tb-size-small);
+}
+
+.reports .fixed-costs-block__line:last-child {
+  border-bottom: 0;
+}
+
+.reports .fixed-costs-block__total {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding-top: 10px;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  font-size: var(--tb-size-body);
+}
+
+.reports .fixed-costs-block__apportioned,
+.reports .fixed-costs-block__estimate-note,
+.reports .fixed-costs-block__entity-note,
+.reports .fixed-costs-block__empty {
+  margin: 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+}
+
+/* Day-by-day: the wide receipt table lives inside a radius-20 card with
+   dashed internal rules (per the handoff's "Remaining screens" note). */
+.reports .period-days {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
+  overflow-x: auto;
+}
+
+.reports .period-days h2 {
+  margin: 0 0 10px;
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+}
+
+.reports .period-days__table th {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
+  border-bottom: 0;
+  padding: 0 8px 8px 0;
+}
+
+.reports .period-days__table td {
+  border-bottom: 0;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  padding: 8px 8px 8px 0;
+  font-size: var(--tb-size-small);
+}
+
+.reports .period-days__link {
+  font-weight: var(--tb-weight-bold);
+  text-decoration: none;
+}
+
+/* Needs a fix — the card wears the one 3px tangerine keyline (Today's
+   dialect); on Today the wrapper .today__fix-card carries it instead. */
+.reports .needs-attention--card {
+  background: var(--tb-paper-card);
+  border: var(--tb-keyline) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
+}
+
+.reports .needs-attention--card .needs-attention__note {
+  margin: 0 0 8px;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.reports .needs-attention__detail,
+.reports .needs-attention__reason {
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
+}
+
+/* Chart card notes. */
+.reports .trend-chart__note,
+.reports .trend-chart__empty {
+  margin: 12px 0 0;
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.reports .pnl__note {
+  font-size: var(--tb-size-kicker);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --- Loyverse export / diff pages: FULL treatment (#127) ------------------ */
+
+.review.loyverse-export {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 100%;
+  padding: 18px 18px 24px;
+}
+
+.loyverse-export section {
+  margin-bottom: 0;
+}
+
+/* Title row: back link, Hobo title, ADMIN outline chip. */
+.loyverse-export__subhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.loyverse-export__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--tb-tangerine-ink);
+  white-space: nowrap;
+}
+
+.loyverse-export__title {
+  margin: 0;
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h1);
+  font-weight: var(--tb-weight-regular);
+  line-height: 1.08;
+}
+
+.loyverse-export__admin-tag {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-pill);
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.loyverse-export__intro,
+.loyverse-export__summary {
+  margin: 0;
+  font-size: var(--tb-size-small);
+  line-height: 1.6;
+}
+
+/* Drift badge — the paper-warm dot-banner dialect. */
+.loyverse-export__drift-badge {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 12px 18px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-2);
+  font-size: var(--tb-size-small);
+  line-height: 1.5;
+}
+
+.loyverse-export__drift-badge::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tb-tangerine);
+}
+
+.loyverse-export__error {
+  margin: 0;
+  padding: 12px 18px;
+  border: var(--tb-keyline-thin) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-2);
+  background: var(--tb-paper-card);
+  font-size: var(--tb-size-small);
+  line-height: 1.6;
+}
+
+/* Step cards. */
+.loyverse-export__form,
+.loyverse-export__diff,
+.loyverse-export__confirm {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
+}
+
+.loyverse-export__step-label {
+  margin: 0 0 8px;
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 0;
+  padding-bottom: 0;
+}
+
+.loyverse-export__step-copy {
+  margin: 0 0 14px;
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* Upload dropzone — dashed 1.5px border on paper-warm, radius 12. */
+.loyverse-export__upload {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.loyverse-export__dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 34px 18px;
+  border: var(--tb-keyline-thin) dashed var(--tb-ink);
+  border-radius: var(--tb-radius-2);
+  background: var(--tb-paper-warm);
+  text-align: center;
+  cursor: pointer;
+}
+
+.loyverse-export__dropzone:hover {
+  border-color: var(--tb-tangerine);
+}
+
+.loyverse-export__dropzone-prompt {
+  font-size: var(--tb-size-small);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.loyverse-export__dropzone:hover .loyverse-export__dropzone-prompt {
+  color: var(--tb-ink);
+}
+
+.loyverse-export__file-input {
+  font: inherit;
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
+  max-width: 100%;
+}
+
+/* Tangerine pill CTAs — the primary-button dialect. */
+.loyverse-export__btn {
+  display: inline-block;
+  padding: 9px 22px;
+  font: inherit;
+  font-size: var(--tb-size-small);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  border: 0;
+  border-radius: var(--tb-radius-pill);
+  cursor: pointer;
+}
+
+.loyverse-export__btn--primary {
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+}
+
+.loyverse-export__btn--primary:hover {
+  background: var(--tb-tangerine-ink);
+  color: var(--tb-paper-card);
+}
+
+/* Diff table — receipt register with dashed rules and status chips. */
+.loyverse-export__diff {
+  overflow-x: auto;
+}
+
+.loyverse-export__diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--tb-size-small);
+}
+
+.loyverse-export__diff-table th {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
+  text-align: left;
+  padding: 0 8px 8px 0;
+}
+
+.loyverse-export__diff-table td {
+  padding: 9px 8px 9px 0;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  vertical-align: top;
+}
+
+.loyverse-export__diff-table th.loyverse-export__diff-loyverse,
+.loyverse-export__diff-table th.loyverse-export__diff-books,
+.loyverse-export__diff-table td.loyverse-export__diff-loyverse,
+.loyverse-export__diff-table td.loyverse-export__diff-books {
+  text-align: right;
+  padding-right: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.loyverse-export__diff-sku {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.loyverse-export__status-chip {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  border-radius: var(--tb-radius-pill);
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.loyverse-export__status-chip--differs {
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+}
+
+.loyverse-export__status-chip--filled {
+  background: var(--tb-paper-warm);
+  color: var(--tb-ink);
+}
+
+.loyverse-export__status-chip--no-cost {
+  border: var(--tb-keyline-thin) solid var(--muted);
+  color: var(--muted);
+}
+
+.loyverse-export__refile-hint {
+  display: block;
+  margin: 0 0 14px;
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.loyverse-export__refile-hint .loyverse-export__file-input--optional {
+  display: block;
+  margin: 0 0 6px;
+  font: inherit;
+  font-size: var(--tb-size-kicker);
+  color: var(--muted);
+  max-width: 100%;
+}
+
+/* --- Desktop (768px): the Counter grid ------------------------------------ */
+@media (min-width: 768px) {
+  .review.reports {
+    max-width: none;
+    padding: 28px 0 34px;
+  }
+
+  .reports h1 {
+    font-size: 28px;
+  }
+
+  /* The asymmetric 12-col grid — 7/5 card spans, Today's rhythm. Dense
+     flow lets a 5-span slot beside an earlier 7-span regardless of the
+     odd one-out sections between them. */
+  .reports #review-body {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-flow: row dense;
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .reports #review-body > * {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  /* Period / Month: hero (7) beside the segment stack (5); fixed costs (5)
+     beside day-by-day (7); Needs a fix (5) closes the grid. */
+  .reports .headline--card {
+    grid-column: span 7;
+  }
+
+  .reports .segment-cm {
+    grid-column: span 5;
+  }
+
+  .reports__fixed-card {
+    grid-column: span 5;
+    padding: 26px;
+  }
+
+  .reports .period-days {
+    grid-column: span 7;
+    padding: 26px;
+  }
+
+  .reports .needs-attention--card {
+    grid-column: span 5;
+    padding: 26px;
+  }
+
+  .reports .trend-chart,
+  .reports .pnl-block,
+  .reports .bestsellers {
+    padding: 26px;
+  }
+
+  /* Trends: line chart (7) beside BY WEEKDAY (5). */
+  .reports--trends .trend-chart {
+    grid-column: span 7;
+  }
+
+  .reports--trends .trend-chart--weekday {
+    grid-column: span 5;
+  }
+
+  /* Profit: tiles full row; two-lens P&L (7) beside spend-by-category (5);
+     the daily-revenue calendar, Needs a fix, and bestsellers span full. */
+  .reports--profit .tiles {
+    grid-column: 1 / -1;
+  }
+
+  .reports--profit .pnl-block {
+    grid-column: span 7;
+  }
+
+  .reports--profit .trend-chart--spend {
+    grid-column: span 5;
+  }
+
+  .reports--profit .trend-chart--daily,
+  .reports--profit .needs-attention--card,
+  .reports--profit .bestsellers {
+    grid-column: 1 / -1;
+  }
+
+  /* Export / diff pages: a roomier single column. */
+  .review.loyverse-export {
+    max-width: 860px;
+    padding: 28px 0 34px;
+  }
+
+  .loyverse-export__form,
+  .loyverse-export__diff,
+  .loyverse-export__confirm {
+    padding: 26px;
   }
 }

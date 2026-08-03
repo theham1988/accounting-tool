@@ -53,16 +53,10 @@
   --tb-health-yellow: var(--tb-mustard);
   --tb-health-red: var(--tb-tangerine);
 
-  /* Chart-series palette — untouched by this pass; the Reports rework
-     decides its Warm Four fate. Light-mode only; blues never on midnight. */
-  --tb-series-1: #2a78d6;
-  --tb-series-2: #008300;
-  --tb-series-3: #e87ba4;
-  --tb-series-4: #eda100;
-  --tb-series-5: #1baf7a;
-  --tb-series-6: #eb6834;
-  --tb-series-7: #4a3aa7;
-  --tb-series-8: #e34948;
+  /* Chart-series palette: RETIRED (#127, per the approved Reports
+     prototype #126). Charts are monochrome — ink strokes/fills on
+     paper-warm tracks with tangerine as the only accent (goal line,
+     hover, active/peak highlight). No multi-hue series anywhere. */
 
   /* Pure white/black kept as tokens so components never reach past the set */
   --tb-white: #ffffff;

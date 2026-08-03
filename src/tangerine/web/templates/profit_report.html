@@ -21,8 +21,10 @@
 
   <div class="review reports reports--profit">
     {% include "_breadcrumb.html" %}
-    {% include "_reports_tabs.html" %}
 
+    {# Warm Four (#127, Variant A "Counter"): the report header and the
+       Reports tabs share the title row — header left, pill tray right. #}
+    <div class="reports__titlebar">
     <!--section:report-header-->
     <header class="report-header">
       <h1 class="report-header__h1">Tangerine <b>Taps</b>
@@ -31,6 +33,8 @@
       <p class="report-header__sub">Two-lens P&amp;L · recipe-cost beside cash-basis</p>
     </header>
     <!--/section:report-header-->
+    {% include "_reports_tabs.html" %}
+    </div>
 
     <!--section:range-nav-->
     <section class="range-nav range-nav--arrows" aria-label="Report range">
@@ -197,6 +201,41 @@
     </section>
     <!--/section:pnl-->
 
+    {# Spend-by-category chart (#115) — one bar per bucket with non-zero
+       spend in the period, labelled with the bucket's *display name* from
+       the spend-bucket vocabulary (#95) — never the raw ``bucket_id`` slug.
+       Zero-spend buckets are absent (the chart isn't cluttered with empty
+       categories). The bars come from ``bar_row`` over
+       ``cash_spend.by_bucket`` merged against the vocabulary in
+       ``_spend_by_category_chart``; the merge lives in the web layer so the
+       composition module stays free of store imports.
+
+       Unlike the daily chart, the spend bars are not deep-links — a bucket
+       has no single drill-in target (its spend is spread across many
+       supplier bills on many dates), so ``ChartPoint.href`` is empty and
+       ``bar_row`` renders non-clickable ``<span>`` bars.
+
+       Warm Four (#127): this card sits beside the two-lens P&L on the
+       desktop grid (5 beside 7), so it renders directly after it. #}
+    <!--section:spend-by-category-chart-->
+    <section class="trend-chart trend-chart--profit trend-chart--spend">
+      <div class="trend-chart__head">
+        <h2 class="trend-chart__title">{{ spend_chart.title }}</h2>
+        <span class="trend-chart__span">{{ spend_chart.bucket_count }} categor{{ "y" if spend_chart.bucket_count == 1 else "ies" }}</span>
+      </div>
+      {% if spend_chart.has_spend %}
+      {{ spend_chart.bars | safe }}
+      <p class="trend-chart__note">
+        Cash spend net of VAT, by bucket. Buckets with no spend this month
+        are omitted. Labels are the bucket display names from the
+        spend-bucket vocabulary.
+      </p>
+      {% else %}
+      <p class="trend-chart__empty">No cash spend recorded this month.</p>
+      {% endif %}
+    </section>
+    <!--/section:spend-by-category-chart-->
+
     {# Needs-attention card (#114) — the target half of ADR-0008's callout
        pair. Inlined here (not a partial) mirroring ``period_review.html``'s
        card verbatim, so the callout's ``#needs-attention`` link resolves on
@@ -259,38 +298,6 @@
       </p>
     </section>
     <!--/section:daily-revenue-chart-->
-
-    {# Spend-by-category chart (#115) — one bar per bucket with non-zero
-       spend in the period, labelled with the bucket's *display name* from
-       the spend-bucket vocabulary (#95) — never the raw ``bucket_id`` slug.
-       Zero-spend buckets are absent (the chart isn't cluttered with empty
-       categories). The bars come from ``bar_row`` over
-       ``cash_spend.by_bucket`` merged against the vocabulary in
-       ``_spend_by_category_chart``; the merge lives in the web layer so the
-       composition module stays free of store imports.
-
-       Unlike the daily chart, the spend bars are not deep-links — a bucket
-       has no single drill-in target (its spend is spread across many
-       supplier bills on many dates), so ``ChartPoint.href`` is empty and
-       ``bar_row`` renders non-clickable ``<span>`` bars. #}
-    <!--section:spend-by-category-chart-->
-    <section class="trend-chart trend-chart--profit trend-chart--spend">
-      <div class="trend-chart__head">
-        <h2 class="trend-chart__title">{{ spend_chart.title }}</h2>
-        <span class="trend-chart__span">{{ spend_chart.bucket_count }} categor{{ "y" if spend_chart.bucket_count == 1 else "ies" }}</span>
-      </div>
-      {% if spend_chart.has_spend %}
-      {{ spend_chart.bars | safe }}
-      <p class="trend-chart__note">
-        Cash spend net of VAT, by bucket. Buckets with no spend this month
-        are omitted. Labels are the bucket display names from the
-        spend-bucket vocabulary.
-      </p>
-      {% else %}
-      <p class="trend-chart__empty">No cash spend recorded this month.</p>
-      {% endif %}
-    </section>
-    <!--/section:spend-by-category-chart-->
 
     {# Bestseller rankings (#116, parent #112) — two sales-side lists: top-N
        by total sales volume (THB) and top-N by total items (unit count).

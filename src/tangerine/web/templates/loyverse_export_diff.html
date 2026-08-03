@@ -28,7 +28,7 @@
         <span aria-hidden="true">&larr;</span>
         <span class="loyverse-export__back-label">Cost import</span>
       </a>
-      <h1 class="loyverse-export__title">REVIEW COST DIFF</h1>
+      <h1 class="loyverse-export__title">Review cost diff</h1>
       <span class="loyverse-export__admin-tag">ADMIN</span>
     </header>
 
@@ -65,10 +65,15 @@
               {% if row.sku %}<span class="loyverse-export__diff-sku">{{ row.sku }}</span>{% endif %}
             </td>
             <td class="loyverse-export__diff-status">
+              {# Warm Four (#127, FULL treatment): status chips — tangerine
+                 fill = differs, warm fill = filled, outline = no Books cost.
+                 The visible text is unchanged; only the chip wrapper is new. #}
               {% if row.status.value == "differs" %}
-                differs: Loyverse {{ row.loyverse_cost }} → Books {{ row.books_cost }}
+                <span class="loyverse-export__status-chip loyverse-export__status-chip--differs">differs</span>: Loyverse {{ row.loyverse_cost }} → Books {{ row.books_cost }}
+              {% elif row.status.value == "filled" %}
+                <span class="loyverse-export__status-chip loyverse-export__status-chip--filled">{{ row.status.value }}</span>
               {% else %}
-                {{ row.status.value }}
+                <span class="loyverse-export__status-chip loyverse-export__status-chip--no-cost">{{ row.status.value }}</span>
               {% endif %}
             </td>
             <td class="loyverse-export__diff-loyverse">
@@ -109,7 +114,7 @@
           the file you just prepared.
         </label>
         <button type="submit" class="loyverse-export__btn loyverse-export__btn--primary">
-          CONFIRM &amp; DOWNLOAD FILLED CSV
+          Confirm &amp; download filled CSV
         </button>
       </form>
     </section>
