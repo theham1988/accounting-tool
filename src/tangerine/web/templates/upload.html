@@ -6,7 +6,7 @@
   apply. Stateless two-step POST flow is unchanged — the first POST embeds
   ``csv_text`` in the confirm form; confirm re-parses and applies. A
   ``?applied=N`` query param (SKU editor's ``?saved=`` pattern) signals a
-  just-landed apply and renders the teal in-place confirmation.
+  just-landed apply and renders the in-place confirmation.
 
   ``parse_upload`` / ``generate_template_csv`` are untouched (ADR-0006:
   presentation + view layer only).

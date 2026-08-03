@@ -3,9 +3,9 @@
  * Warm Four (v3): Space Mono is the "receipt layer" — everything except
  * display type. Hobo BT is the display face for screen titles, card
  * headings, hero numerals, and the wordmark. TAN Nimbus is retired from
- * layouts (the font file stays only for a possible logo lockup); the accent
- * variable now resolves to the mono so old kickers land on the receipt
- * layer. All faces are self-hosted (fonts.css) — no font CDN (ADR-0006).
+ * layouts (#132 deleted --tb-font-accent); the woff2 stays on disk only
+ * for a possible future logo lockup (see fonts.css). All faces are
+ * self-hosted (fonts.css) — no font CDN (ADR-0006).
  */
 
 :root {
@@ -13,8 +13,6 @@
   --tb-font-body: "Space Mono", ui-monospace, "SFMono-Regular", "Menlo",
     "Consolas", monospace;
   --tb-font-display: "Hobo BT", "Kavoon", "Space Mono", cursive;
-  /* Legacy alias — TAN Nimbus retired; accent text joins the receipt layer. */
-  --tb-font-accent: var(--tb-font-body);
 
   /* Weights */
   --tb-weight-regular: 400;

@@ -165,8 +165,8 @@
     {% endif %}
 
     {# Headline card: gross-margin hero + REVENUE/COGS/MARGIN% row + the
-       7-day-avg-vs-goal progress bar with a status line (tango when short
-       of goal, teal when MET). Computed numbers come from the namespace at
+       7-day-avg-vs-goal progress bar with a status line (tangerine when
+       short of goal, plain ink when MET). Computed numbers come from the
        the top of the block so the bar tracks the same figures the partner
        reads.
 
@@ -404,7 +404,11 @@
     </p>
     <!--/section:last-sync-->
 
+    {# One g-spiral per screen (#132): empty-store already carries the seal
+       as its hero mark, so skip the footer seal in that state. #}
+    {% if not store_empty %}
     <img class="today__seal" src="/static/g-spiral.svg" alt="" width="26" height="26">
+    {% endif %}
     </footer>
   </div>
 {% endblock %}

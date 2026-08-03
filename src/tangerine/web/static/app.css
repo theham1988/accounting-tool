@@ -26,9 +26,12 @@
   --rule: var(--tb-ink);
   --surface: var(--tb-paper-raised);
   --surface-alt: var(--tb-paper-sunk);
-  --flag-red: var(--tb-red);
+  /* Warm Four (#132): attention = tangerine-ink; "good" = plain ink.
+     --flag-green is unused today but kept so a future ported screen that
+     still says flag-green lands on ink, not a missing variable. */
+  --flag-red: var(--tb-tangerine-ink);
   --flag-yellow: var(--tb-mustard);
-  --flag-green: var(--tb-teal);
+  --flag-green: var(--tb-ink);
 }
 
 /* --- 2. Base element look ------------------------------------------------- */
@@ -1031,8 +1034,9 @@ button:active {
   color: var(--tb-moon-muted);
 }
 
-.login__field input:focus {
-  outline: none;
+/* Border deepens on focus; the global :focus-visible rule supplies the
+   3px tangerine ring (do not outline:none — that hid the Warm Four ring). */
+.login__field input:focus-visible {
   border-color: var(--tb-tangerine);
 }
 
@@ -1834,7 +1838,7 @@ button:active {
 .upload-error__message {
   white-space: normal;
   text-align: right;
-  color: var(--tb-red);
+  color: var(--tb-tangerine-ink);
 }
 
 .upload-confirm {
@@ -2790,8 +2794,8 @@ button:active {
   background: var(--tb-paper-card);
 }
 
-.admin-sub__fform input:focus,
-.admin-sub__fform select:focus {
+.admin-sub__fform input:focus-visible,
+.admin-sub__fform select:focus-visible {
   outline: var(--tb-keyline) solid var(--tb-tangerine);
   outline-offset: 2px;
 }
@@ -3483,7 +3487,7 @@ button:active {
 
 .headline__net-profit {
   font-weight: var(--tb-weight-bold);
-  color: var(--tb-teal);
+  color: var(--tb-ink);
 }
 
 /* Drill-down: breadcrumb + day-by-day tables. */
@@ -4461,13 +4465,13 @@ a.trend-bar:hover .trend-bar__fill {
   letter-spacing: 0.01em;
 }
 
-/* Kicker variant drops to body face, uppercase terracotta. */
+/* Kicker variant drops to body face, uppercase tangerine-ink. */
 .report-panel__title--kicker {
   font-family: var(--tb-font-body);
   font-size: var(--tb-size-kicker);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  color: var(--tb-terracotta);
+  color: var(--tb-tangerine-ink);
 }
 
 .report-panel__note {
@@ -4947,11 +4951,21 @@ svg .chart__bar:hover {
   color: var(--muted);
 }
 
-/* Respect reduced-motion / no animations (user story 45). */
+/* Respect reduced-motion / no animations (user story 45). Also kill the
+   1px press-shift transform so active states stay still. */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  button:active,
+  .audit-row__revert:active,
+  .audit-row__revert-session:active {
+    transform: none !important;
   }
 }
 
