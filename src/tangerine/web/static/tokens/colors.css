@@ -47,11 +47,11 @@
   --tb-mustard-wash: var(--tb-paper-warm);
   --tb-midnight-ink: var(--tb-moon);
 
-  /* Health dots — interim recolor; the real Warm Four treatment is decided
-     with the Stock prototype. */
-  --tb-health-green: var(--tb-ink);
-  --tb-health-yellow: var(--tb-mustard);
-  --tb-health-red: var(--tb-tangerine);
+  /* Health indicators: RETIRED as colour tokens (#129, per the approved
+     Stock prototype #128). Severity is shape + how much tangerine the dot
+     carries — red = filled tangerine dot, yellow = hollow tangerine ring,
+     green = a small ink-muted dot (see .health-dot in app.css). No
+     green/yellow/red hue channel anywhere. */
 
   /* Chart-series palette: RETIRED (#127, per the approved Reports
      prototype #126). Charts are monochrome — ink strokes/fills on

@@ -1078,38 +1078,7 @@ button:active {
   color: var(--tb-moon-muted);
 }
 
-/* Coverage tables (SKU view + item coverage). */
-.coverage-table {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.coverage-table table {
-  width: 100%;
-  min-width: 640px;
-  border-collapse: collapse;
-}
-
-.coverage-table th,
-.coverage-table td {
-  text-align: left;
-  padding: var(--tb-space-2);
-  border-bottom: var(--tb-keyline-thin) solid var(--rule);
-  font-size: 0.9rem;
-  white-space: nowrap;
-}
-
-.coverage-table th {
-  color: var(--muted);
-  font-weight: var(--tb-weight-bold);
-  font-size: 0.8rem;
-}
-
-.coverage-table td.sku-row__name,
-.coverage-table td.item-row__name {
-  white-space: normal;
-}
-
+/* Coverage sub-lines (SKU ids under names, editor meta, breakdown ids). */
 .sku-row__id,
 .item-row__id {
   display: block;
@@ -1117,104 +1086,171 @@ button:active {
   font-size: 0.75rem;
 }
 
+/* Health indicators — Warm Four #129 dot ramp (settles #124's interim
+   recolor, per the approved Stock prototype #128): severity is how much
+   tangerine the dot carries. Red = 12px filled tangerine; yellow = 12px
+   hollow tangerine ring (2.5px stroke); green = a quiet 7px ink-muted dot.
+   No green/yellow/red hue channel anywhere. */
 .health-dot {
   display: inline-block;
-  width: 0.6rem;
-  height: 0.6rem;
+  flex: none;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  margin-right: 0.3rem;
-}
-
-.health-dot--green {
-  background: var(--tb-health-green);
-}
-
-.health-dot--yellow {
-  background: var(--tb-health-yellow);
+  vertical-align: -1px;
 }
 
 .health-dot--red {
-  background: var(--tb-health-red);
+  background: var(--tb-tangerine);
 }
 
-.sku-row--green,
-.item-row--green {
-  border-left: var(--tb-keyline) solid var(--flag-green);
+.health-dot--yellow {
+  background: transparent;
+  border: 2.5px solid var(--tb-tangerine);
 }
 
-.sku-row--yellow,
-.item-row--yellow {
-  border-left: var(--tb-keyline) solid var(--flag-yellow);
+.health-dot--green {
+  width: 7px;
+  height: 7px;
+  background: var(--tb-ink-muted);
+  margin: 0 2.5px;
 }
 
-.sku-row--red,
-.item-row--red,
-.item-row--unmapped {
-  border-left: var(--tb-keyline) solid var(--flag-red);
+/* --- Warm Four #129: Stock screens (Variant A "Counter cards") ------------
+   SKU/item coverage extend the Reports Counter dialect (#126/#127):
+   mobile-first single column with 18px gaps; the desktop 7/5 grid lands in
+   the 768px block at the end of this sheet. All test anchors and behaviour
+   hooks are untouched — presentation only. */
+.review.stock {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 100%;
+  padding: 18px 18px 24px;
 }
 
-.item-row__unmapped-label {
-  color: var(--flag-red);
-  font-weight: var(--tb-weight-bold);
-  text-transform: uppercase;
-  font-size: 0.75rem;
+/* Title row: kicker + Hobo h1 left, the pill-tray tabs right. */
+.stock__titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 18px;
 }
 
-.coverage-filter {
-  margin: 0 0 var(--tb-space-4);
-  padding: 0.6rem 0.75rem;
-  background: var(--surface-alt);
-  color: var(--muted);
-}
-
-/* Stock screen (Wave 3 #46). */
 .stock__kicker {
-  margin: 0 0 var(--tb-space-1);
+  margin: 0;
   font-size: var(--tb-size-kicker);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
   color: var(--muted);
 }
 
+.stock__titlebar h1 {
+  margin: 0;
+  font-size: var(--tb-size-h1);
+  line-height: 1.08;
+}
+
+/* Tabs — pills in a paper-warm tray (the segmented-toggle dialect). */
 .stock-tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: var(--tb-space-3);
+  display: inline-flex;
+  max-width: 100%;
+  gap: 4px;
+  padding: 4px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-pill);
 }
 
 .stock-tabs__link {
-  padding: 0.4rem 0.9rem;
-  border: var(--tb-keyline-thin) solid var(--rule);
+  padding: 8px 18px;
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
-  color: inherit;
+  color: var(--muted);
   font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .stock-tabs__link:hover {
-  background: var(--surface-alt);
+  color: var(--tb-ink);
 }
 
 .stock-tabs__link--active {
-  background: var(--tb-tango);
-  color: var(--tb-ink);
-  font-weight: var(--tb-weight-bold);
-  border-color: var(--tb-tango);
+  background: var(--tb-ink);
+  color: var(--tb-paper);
   pointer-events: none;
+}
+
+/* The screen body: a column of cards (the 12-col grid on desktop). */
+.stock__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Needs-work hero card: kicker, Hobo numeral, the summary as its note. */
+.stock-hero {
+  margin-bottom: 0;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
+}
+
+.stock-hero__kicker {
+  margin: 0 0 6px;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stock-hero__numeral {
+  margin: 0;
+  font-family: var(--tb-font-display);
+  font-size: 48px;
+  line-height: 1.1;
+}
+
+.stock-hero__of {
+  font-family: var(--tb-font-body);
+  font-size: var(--tb-size-small);
+  color: var(--muted);
+}
+
+.stock-summary {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: var(--tb-size-small);
+  line-height: 1.6;
+}
+
+/* Filter-chips + CTA card beside the hero. */
+.stock-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  align-items: flex-start;
+  margin-bottom: 0;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
 }
 
 .stock-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: var(--tb-space-3);
+  gap: 6px;
+  align-items: center;
 }
 
-.stock-chips__link,
-.stock-chips__new {
-  padding: 0.25rem 0.7rem;
-  border: var(--tb-keyline-thin) solid var(--rule);
+.stock-chips__link {
+  padding: 6px 15px;
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-pill);
   text-decoration: none;
   color: var(--muted);
   font-size: var(--tb-size-kicker);
@@ -1222,64 +1258,89 @@ button:active {
   text-transform: uppercase;
 }
 
-.stock-chips__link:hover,
-.stock-chips__new:hover {
-  background: var(--surface-alt);
+.stock-chips__link:hover {
+  color: var(--tb-ink);
+  border-color: var(--tb-ink);
 }
 
 .stock-chips__link--active {
-  background: var(--tb-tango);
-  color: var(--tb-ink);
+  background: var(--tb-ink);
+  border-color: var(--tb-ink);
+  color: var(--tb-paper);
   font-weight: var(--tb-weight-bold);
-  border-color: var(--tb-tango);
   pointer-events: none;
 }
 
-.stock-chips__new {
-  margin-left: auto;
-  color: var(--tb-ink);
+.stock-side__ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+/* CTA pills: + NEW SKU filled tangerine; BULK EDIT the outlined ghost. */
+.stock-cta {
+  display: inline-block;
+  padding: 9px 22px;
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+  border: 0;
+  border-radius: var(--tb-radius-pill);
+  font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-.stock-summary,
+.stock-cta:hover {
+  background: var(--tb-tangerine-ink);
+  color: var(--tb-paper-card);
+}
+
+.stock-cta--ghost {
+  background: transparent;
+  color: var(--tb-ink);
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  padding: 7.5px 20.5px;
+}
+
+.stock-cta--ghost:hover {
+  background: transparent;
+  color: var(--tb-ink);
+  border-color: var(--tb-tangerine);
+}
+
+/* Single-item filter line (?item= deep link from the morning review). */
 .stock-item-filter {
-  margin: 0 0 var(--tb-space-4);
+  margin: 0;
+  padding: 12px 18px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-2);
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--tb-size-small);
 }
 
+/* The list: a full-width paper card with dashed rules between rows. */
 .stock-list {
   list-style: none;
-  margin: 0 0 var(--tb-space-4);
-  padding: 0;
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--tb-paper-raised);
+  margin: 0;
+  padding: 8px 20px;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
 }
 
 .stock-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 0.5rem 0.75rem;
+  gap: 4px 12px;
   align-items: center;
-  padding: var(--tb-space-3);
-  border-bottom: var(--tb-keyline-thin) solid var(--rule);
+  padding: 13px 0;
 }
 
-.stock-row:last-child {
-  border-bottom: 0;
-}
-
-.stock-row--green {
-  border-left: var(--tb-keyline) solid var(--flag-green);
-}
-
-.stock-row--yellow {
-  border-left: var(--tb-keyline) solid var(--flag-yellow);
-}
-
-.stock-row--red,
-.stock-row--unmapped {
-  border-left: var(--tb-keyline) solid var(--flag-red);
+.stock-row + .stock-row {
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
 }
 
 .stock-row__main {
@@ -1287,7 +1348,6 @@ button:active {
 }
 
 .stock-row__name {
-  display: block;
   font-weight: var(--tb-weight-bold);
   text-decoration: none;
   color: inherit;
@@ -1300,39 +1360,49 @@ button:active {
 .stock-row__sub {
   display: block;
   color: var(--muted);
-  font-size: 0.85rem;
-  margin-top: 0.15rem;
+  font-size: var(--tb-size-small);
+  margin-top: 2px;
 }
 
+/* Badges (No cost / Dangling / Unmapped) — outlined tangerine chips:
+   attention is tangerine, never a separate hue. */
 .stock-row__badge {
   display: inline-block;
-  margin-top: 0.25rem;
-  padding: 0.05rem 0.35rem;
-  background: var(--surface-alt);
-  border: var(--tb-keyline-thin) solid var(--rule);
-  font-size: 0.7rem;
-  letter-spacing: 0.05em;
+  margin-top: 3px;
+  padding: 1px 8px;
+  border: var(--tb-keyline-thin) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-pill);
+  color: var(--tb-tangerine-ink);
+  font-size: 10px;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .stock-row__figure {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  font-size: 0.9rem;
+  font-size: var(--tb-size-small);
 }
 
 .stock-row__actions {
   grid-column: 2 / -1;
-  font-size: 0.85rem;
+  margin: 0;
+  font-size: var(--tb-size-small);
 }
 
+/* Empty filter state — paper-warm panel. */
 .stock-empty {
-  margin-bottom: var(--tb-space-4);
-  padding: var(--tb-space-4);
-  background: var(--surface-alt);
-  border: var(--tb-keyline-thin) solid var(--rule);
+  margin-bottom: 0;
+  padding: 20px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-2);
   color: var(--muted);
+}
+
+.stock-empty__message {
+  margin: 0 0 8px;
 }
 
 .stock-empty__reset {
@@ -1342,14 +1412,9 @@ button:active {
 .stock-footer {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding-top: var(--tb-space-2);
-  font-size: 0.9rem;
-}
-
-.stock-footer__bulk {
-  font-weight: var(--tb-weight-bold);
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: var(--tb-size-small);
 }
 
 .stock-footer__count {
@@ -1357,28 +1422,81 @@ button:active {
   font-variant-numeric: tabular-nums;
 }
 
-/* Cost editor forms. */
+/* Cost editor forms — Warm Four #129: a fieldset stack (dashed radius-12
+   fieldsets, kicker legends) inside a single paper card; tangerine pill
+   submits. Serves Sold as-is / New SKU (.cost-editor) and the SKU editor's
+   cost column. */
+.cost-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 18px 24px;
+}
+
+.cost-editor h1 {
+  margin: 0;
+  line-height: 1.15;
+}
+
+.cost-editor .day {
+  margin: 0;
+  font-size: var(--tb-size-small);
+  line-height: 1.6;
+}
+
+.cost-editor section {
+  margin-bottom: 0;
+}
+
+.cost-form,
+.cost-current,
+.cost-derived {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
+}
+
 .cost-form form {
   display: flex;
   flex-direction: column;
   gap: var(--tb-space-3);
-  max-width: 420px;
+}
+
+.cost-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-space-3);
+  margin: 0;
+  padding: 14px 16px;
+  border: var(--tb-keyline-thin) dashed var(--tb-ink);
+  border-radius: var(--tb-radius-2);
+}
+
+.cost-form legend {
+  padding: 0 8px;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .cost-form label {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.9rem;
+  font-size: var(--tb-size-small);
   color: var(--muted);
 }
 
 .cost-form input[type="number"],
-.cost-form input[type="text"] {
+.cost-form input[type="text"],
+.cost-form select {
   font: inherit;
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--tb-paper-raised);
+  color: var(--tb-ink);
+  padding: 7px 10px;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-1);
+  background: var(--tb-paper-card);
 }
 
 .cost-form label:has(input[type="checkbox"]) {
@@ -1387,14 +1505,24 @@ button:active {
   gap: 0.5rem;
 }
 
-.cost-form button {
+.cost-form button[type="submit"] {
+  align-self: flex-start;
   font: inherit;
+  font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
-  padding: 0.6rem;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 9px 22px;
   border: 0;
-  background: var(--tb-ink);
-  color: var(--tb-paper);
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
   cursor: pointer;
+}
+
+.cost-form button[type="submit"]:hover {
+  background: var(--tb-tangerine-ink);
+  color: var(--tb-paper-card);
 }
 
 .cost-preview {
@@ -1409,14 +1537,55 @@ button:active {
 
 .cost-form__hint {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--tb-size-small);
+  line-height: 1.6;
 }
 
-/* Bulk upload — progressive three-step detail screen (issue #49). */
+/* Unpriced leaves read as attention — tangerine ink, no red hue. */
+.cost-derived__unpriced {
+  color: var(--tb-tangerine-ink);
+}
+
+.cost-breakdown {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.cost-breakdown th {
+  text-align: left;
+  padding: 0 10px 6px 0;
+  border-bottom: var(--tb-keyline-thin) solid var(--tb-ink);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
+}
+
+.cost-breakdown td {
+  padding: 8px 10px 8px 0;
+  border-bottom: var(--tb-keyline-thin) dashed var(--tb-ink);
+  font-size: var(--tb-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-breakdown tr:last-child td {
+  border-bottom: 0;
+}
+
+.cost-breakdown__row--unpriced td {
+  color: var(--tb-tangerine-ink);
+}
+
+/* Bulk upload — Warm Four #129: three numbered step cards (ink step
+   numerals in circles, Hobo step headings, dashed dropzone on paper-warm,
+   tangerine pill CTAs). Progressive flow and hooks unchanged (issue #49). */
 .upload {
   display: flex;
   flex-direction: column;
-  gap: var(--tb-space-4);
+  gap: 18px;
+  padding: 18px 18px 24px;
 }
 
 .upload__header {
@@ -1426,32 +1595,45 @@ button:active {
 .upload__title {
   margin: 0;
   font-size: var(--tb-size-h1);
-  line-height: var(--tb-leading-tight);
+  line-height: 1.08;
 }
 
 .upload__kicker {
-  margin: 0.25rem 0 0;
+  margin: 4px 0 0;
   font-size: var(--tb-size-kicker);
   letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
   color: var(--muted);
 }
 
+/* APPLIED confirmation — the paper-warm dot-banner dialect. */
 .upload-applied {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--tb-space-3);
-  padding: 0.75rem 0.9rem;
-  border: var(--tb-keyline) solid var(--tb-teal);
-  background: var(--tb-paper-raised);
+  padding: 12px 18px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-2);
 }
 
 .upload-applied__label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
   letter-spacing: 0.1em;
-  color: var(--tb-teal);
+  color: var(--tb-ink);
+}
+
+.upload-applied__label::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tb-tangerine);
 }
 
 .upload-applied__log {
@@ -1460,36 +1642,43 @@ button:active {
 }
 
 .upload-step {
-  background: var(--tb-paper-raised);
-  border: var(--tb-keyline) solid var(--tb-ink);
-  padding: 0.9rem;
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
 }
 
 .upload-step__head {
   display: flex;
-  align-items: baseline;
-  gap: 0.65rem;
-  margin-bottom: 0.4rem;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .upload-step__numeral {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--tb-ink);
+  color: var(--tb-paper);
   font-family: var(--tb-font-display);
-  font-size: 1.65rem;
+  font-size: 18px;
   line-height: 1;
-  color: var(--tb-terracotta);
 }
 
 .upload-step__label {
   margin: 0;
-  font-family: var(--tb-font-body);
-  font-size: var(--tb-size-kicker);
-  font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
+  font-family: var(--tb-font-display);
+  font-size: var(--tb-size-h2);
+  font-weight: var(--tb-weight-regular);
+  letter-spacing: 0.01em;
 }
 
 .upload-step__copy {
-  margin: 0 0 0.75rem;
+  margin: 0 0 14px;
   font-size: var(--tb-size-small);
   color: var(--muted);
   line-height: 1.6;
@@ -1507,13 +1696,19 @@ button:active {
   align-items: center;
   justify-content: center;
   min-height: 5.5rem;
-  padding: 0.75rem;
+  padding: 26px 16px;
   border: var(--tb-keyline-thin) dashed var(--tb-ink);
-  background: var(--tb-paper);
+  border-radius: var(--tb-radius-2);
+  background: var(--tb-paper-warm);
   cursor: pointer;
   text-align: center;
-  font-size: var(--tb-size-small);
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
   color: var(--muted);
+}
+
+.upload-dropzone:hover {
+  border-color: var(--tb-tangerine);
 }
 
 .upload-dropzone__input {
@@ -1533,8 +1728,8 @@ button:active {
 }
 
 .upload-step--gated {
-  border-style: dashed;
   background: transparent;
+  border: var(--tb-keyline-thin) dashed var(--tb-ink);
 }
 
 .upload-step-placeholder__copy {
@@ -1544,46 +1739,57 @@ button:active {
   text-align: center;
 }
 
+/* Pill CTAs — tangerine primary, outlined ghost secondary. */
 .upload-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0.6rem 0.75rem;
+  align-self: flex-start;
+  padding: 9px 22px;
   font: inherit;
   font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
   text-decoration: none;
-  border: var(--tb-keyline) solid var(--tb-ink);
+  border: 0;
+  border-radius: var(--tb-radius-pill);
   cursor: pointer;
-  box-sizing: border-box;
 }
 
 .upload-btn--primary {
-  background: var(--tb-ink);
-  color: var(--tb-paper);
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+}
+
+.upload-btn--primary:hover {
+  background: var(--tb-tangerine-ink);
+  color: var(--tb-paper-card);
 }
 
 .upload-btn--secondary {
-  background: var(--tb-paper-raised);
+  background: transparent;
   color: var(--tb-ink);
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  padding: 7.5px 20.5px;
+}
+
+.upload-btn--secondary:hover {
+  border-color: var(--tb-tangerine);
 }
 
 .upload-section-label {
-  margin: 0.65rem 0 0.25rem;
+  margin: 14px 0 4px;
   font-family: var(--tb-font-body);
-  font-size: 0.7rem;
+  font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
-  letter-spacing: 0.15em;
+  letter-spacing: var(--tb-tracking-kicker);
   text-transform: uppercase;
-  color: var(--tb-teal);
+  color: var(--muted);
 }
 
 .upload-section-label--errors {
-  color: var(--tb-red);
+  color: var(--tb-tangerine-ink);
 }
 
 .upload-diff-list {
@@ -1635,7 +1841,70 @@ button:active {
   margin-top: 0.75rem;
 }
 
-/* Recipe editor. */
+/* SKU editor — Warm Four #129: detail screen; the recipe card (desktop
+   span 7) beside the derived-cost / new-cost column (span 5); the health
+   dot rides the h1; SAVED as a paper-warm banner. */
+.review.sku-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 18px 24px;
+}
+
+.sku-editor__header h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  line-height: 1.15;
+}
+
+.sku-editor__meta {
+  margin: 4px 0 0;
+}
+
+.sku-editor__meta .sku-row__id {
+  display: inline;
+}
+
+.sku-editor__saved {
+  margin: 0;
+  padding: 10px 16px;
+  background: var(--tb-paper-warm);
+  border-radius: var(--tb-radius-2);
+  font-size: var(--tb-size-small);
+}
+
+.sku-editor__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sku-editor__cost {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sku-editor section {
+  margin-bottom: 0;
+}
+
+.recipe-editor {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 20px;
+}
+
+/* Card headings in the Stock detail scopes drop the base h2 underline. */
+.sku-editor h2,
+.cost-editor h2,
+.upload h2 {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .recipe-rows {
   list-style: none;
   margin: 0 0 var(--tb-space-3);
@@ -1658,67 +1927,147 @@ button:active {
 .sku-create input,
 .sku-create select {
   font: inherit;
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--tb-paper-raised);
+  color: var(--tb-ink);
+  padding: 7px 10px;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-1);
+  background: var(--tb-paper-card);
 }
 
 .recipe-row input[name="quantity"] {
   width: 7.5rem;
 }
 
+/* Row controls — quiet outlined round buttons. */
 .recipe-row__up,
 .recipe-row__down,
 .recipe-row__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   font: inherit;
-  padding: 0.35rem 0.6rem;
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--tb-paper-raised);
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
+.recipe-row__up:hover,
+.recipe-row__down:hover,
+.recipe-row__remove:hover {
+  border-color: var(--tb-ink);
+  color: var(--tb-ink);
+}
+
+/* + ADD INGREDIENT ghost pill; SAVE RECIPE tangerine pill. */
 .recipe-row__add {
+  align-self: flex-start;
   font: inherit;
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline-thin) dashed var(--rule);
-  background: var(--tb-paper-raised);
-  color: var(--muted);
+  font-size: var(--tb-size-kicker);
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 7.5px 20.5px;
+  border: var(--tb-keyline-thin) solid var(--tb-ink);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
+  color: var(--tb-ink);
   cursor: pointer;
+}
+
+.recipe-row__add:hover {
+  border-color: var(--tb-tangerine);
 }
 
 .recipe-editor form {
   display: flex;
   flex-direction: column;
   gap: var(--tb-space-3);
-  max-width: 560px;
 }
 
 .recipe-editor label {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  font-size: 0.9rem;
+  font-size: var(--tb-size-small);
   color: var(--muted);
 }
 
+.recipe-editor .prep-field,
+.recipe-editor .yield-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.yield-field__badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border: var(--tb-keyline-thin) solid var(--tb-tangerine);
+  border-radius: var(--tb-radius-pill);
+  color: var(--tb-tangerine-ink);
+  font-size: 10px;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+}
+
 .recipe-editor button[type="submit"] {
+  align-self: flex-start;
   font: inherit;
+  font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
-  padding: 0.6rem;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 9px 22px;
   border: 0;
-  background: var(--tb-ink);
-  color: var(--tb-paper);
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
   cursor: pointer;
 }
 
+.recipe-editor button[type="submit"]:hover {
+  background: var(--tb-tangerine-ink);
+  color: var(--tb-paper-card);
+}
+
+/* Delete recipe — the quiet, outlined destructive affordance. */
+.recipe-delete {
+  margin: 14px 0 0;
+}
+
+.recipe-delete__button {
+  font: inherit;
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 6px 15px;
+  border: var(--tb-keyline-thin) solid var(--muted);
+  border-radius: var(--tb-radius-pill);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.recipe-delete__button:hover {
+  border-color: var(--tb-tangerine-ink);
+  color: var(--tb-tangerine-ink);
+}
+
+/* Inline "Create new SKU…" sub-form — paper-warm sunk panel. */
 .sku-create {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  padding: var(--tb-space-2);
-  border: var(--tb-keyline-thin) solid var(--rule);
-  background: var(--surface-alt);
+  margin-top: 0.4rem;
+  padding: 10px;
+  border-radius: var(--tb-radius-2);
+  background: var(--tb-paper-warm);
 }
 
 .sku-create[hidden] {
@@ -1727,11 +2076,15 @@ button:active {
 
 .sku-create__submit {
   font: inherit;
+  font-size: var(--tb-size-kicker);
   font-weight: var(--tb-weight-bold);
-  padding: 0.4rem 0.75rem;
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  padding: 7px 16px;
   border: 0;
-  background: var(--tb-ink);
-  color: var(--tb-paper);
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
   cursor: pointer;
 }
 
@@ -2433,12 +2786,23 @@ button:active {
   font-weight: var(--tb-weight-bold);
 }
 
+/* Warm Four #129: BELOW TARGET is a filled tangerine chip; on target is
+   plain muted weight — no hue channel. */
 .item-performance__below-target {
-  color: var(--flag-red);
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: var(--tb-radius-pill);
+  background: var(--tb-tangerine);
+  color: var(--tb-midnight);
+  font-size: 10px;
+  font-weight: var(--tb-weight-bold);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .item-performance__on-target {
-  color: var(--flag-green);
+  color: var(--muted);
 }
 
 .edit-recipe__link {
@@ -4623,6 +4987,159 @@ svg .chart__bar:hover {
   .loyverse-export__form,
   .loyverse-export__diff,
   .loyverse-export__confirm {
+    padding: 26px;
+  }
+}
+
+/* --- Warm Four #129: Stock detail + item review, Counter dialect ---------- */
+
+/* Item review joins the Reports Counter grid: the period-performance hero
+   card beside the day-by-day card. Mobile: both are paper cards in the
+   single column. */
+.reports--item .headline,
+.reports--item .item-days {
+  background: var(--tb-paper-card);
+  border-radius: var(--tb-radius-3);
+  padding: 22px;
+}
+
+.reports--item .day {
+  margin: 0;
+  font-size: var(--tb-size-small);
+}
+
+.reports--item .headline dt {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+}
+
+.reports--item .headline dd {
+  font-weight: var(--tb-weight-bold);
+}
+
+.reports--item .item-days__table th {
+  font-size: var(--tb-size-kicker);
+  letter-spacing: var(--tb-tracking-kicker);
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: var(--tb-weight-regular);
+  border-bottom: 0;
+  padding: 0 8px 8px 0;
+}
+
+.reports--item .item-days__table td {
+  border-bottom: 0;
+  border-top: var(--tb-keyline-thin) dashed var(--tb-ink);
+  padding: 8px 8px 8px 0;
+  font-size: var(--tb-size-small);
+}
+
+.reports--item .edit-recipe {
+  margin: 0;
+}
+
+/* --- Desktop (768px): the Stock Counter grids ------------------------------ */
+@media (min-width: 768px) {
+  /* Coverage lists: full 1124 column; hero (7) beside filters/CTAs (5);
+     the list card spans the row. */
+  .review.stock {
+    max-width: none;
+    padding: 28px 0 34px;
+  }
+
+  .stock__titlebar h1 {
+    font-size: 28px;
+  }
+
+  .stock__grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-flow: row dense;
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .stock__grid > * {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .stock-hero {
+    grid-column: span 7;
+    padding: 26px;
+  }
+
+  .stock-side {
+    grid-column: span 5;
+    padding: 26px;
+  }
+
+  .stock-list {
+    padding: 10px 26px;
+  }
+
+  .stock-row {
+    padding: 15px 0;
+  }
+
+  /* SKU editor: recipe card (7) beside the cost column (5). */
+  .review.sku-editor {
+    max-width: none;
+    padding: 28px 0 34px;
+  }
+
+  .sku-editor__header h1 {
+    font-size: 28px;
+  }
+
+  .sku-editor__grid {
+    display: grid;
+    grid-template-columns: 7fr 5fr;
+    gap: 18px;
+    align-items: start;
+  }
+
+  .recipe-editor,
+  .cost-derived,
+  .cost-current,
+  .cost-form {
+    padding: 26px;
+  }
+
+  /* Bulk edit: a roomier single column of step cards. */
+  .review.upload {
+    max-width: 860px;
+    padding: 28px 0 34px;
+  }
+
+  .upload__title {
+    font-size: 28px;
+  }
+
+  .upload-step {
+    padding: 26px;
+  }
+
+  /* Sold as-is / New SKU: the ~560px fieldset-stack column. */
+  .review.cost-editor {
+    max-width: 560px;
+    padding: 28px 0 34px;
+  }
+
+  .cost-editor h1 {
+    font-size: 28px;
+  }
+
+  /* Item review: performance hero (7) beside day-by-day (5); the date
+     line and the Admin escape hatch span the row. */
+  .reports--item .headline {
+    grid-column: span 7;
+    padding: 26px;
+  }
+
+  .reports--item .item-days {
+    grid-column: span 5;
     padding: 26px;
   }
 }

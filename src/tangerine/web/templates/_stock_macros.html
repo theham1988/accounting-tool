@@ -1,51 +1,60 @@
-{# Shared Stock screen chrome (Wave 3 #46). Included by item_coverage.html and
-   sku_coverage.html so tabs, filter chips, and the footer stay in sync. #}
-
-{% macro stock_header(title) %}
-<header class="stock__header">
-  <p class="stock__kicker">Stock</p>
-  <h1>{{ title }}</h1>
-</header>
-{% endmacro %}
+{# Shared Stock screen pieces — Warm Four #129, Variant A "Counter cards".
+   Imported by item_coverage.html and sku_coverage.html so the title-row
+   tabs, hero card, filter/CTA card, footer, and empty state stay in sync.
+   Every <!--section:*--> anchor and class hook the test suite pins is
+   unchanged — presentation only. #}
 
 {% macro stock_tabs(active, tab_urls) %}
 <!--section:stock-tabs-->
 <nav class="stock-tabs" aria-label="Stock view">
   <a class="stock-tabs__link{% if active == 'items' %} stock-tabs__link--active{% endif %}"
-     href="{{ tab_urls.items }}"{% if active == 'items' %} aria-current="page"{% endif %}>Menu items</a>
+     href="{{ tab_urls['items'] }}"{% if active == 'items' %} aria-current="page"{% endif %}>Menu items</a>
   <a class="stock-tabs__link{% if active == 'skus' %} stock-tabs__link--active{% endif %}"
-     href="{{ tab_urls.skus }}"{% if active == 'skus' %} aria-current="page"{% endif %}>Ingredient SKUs</a>
+     href="{{ tab_urls['skus'] }}"{% if active == 'skus' %} aria-current="page"{% endif %}>Ingredient SKUs</a>
 </nav>
 <!--/section:stock-tabs-->
 {% endmacro %}
 
-{% macro stock_chips(active, filter_urls) %}
-<!--section:stock-chips-->
-<nav class="stock-chips" aria-label="Filter stock list">
-  <a class="stock-chips__link{% if active == 'all' %} stock-chips__link--active{% endif %}"
-     href="{{ filter_urls.all }}">All</a>
-  <a class="stock-chips__link{% if active == 'needs-work' %} stock-chips__link--active{% endif %}"
-     href="{{ filter_urls['needs-work'] }}">Needs work</a>
-  <a class="stock-chips__link{% if active == 'red' %} stock-chips__link--active{% endif %}"
-     href="{{ filter_urls.red }}">Red</a>
-  <a class="stock-chips__link{% if active == 'healthy' %} stock-chips__link--active{% endif %}"
-     href="{{ filter_urls.healthy }}">Healthy</a>
-  <a class="stock-chips__new new-sku-button" href="/skus/new">+ New SKU</a>
-</nav>
-<!--/section:stock-chips-->
+{# Needs-work hero card (desktop span 7): kicker, Hobo numeral, and the
+   summary sentence the tests pin, restyled as the hero note. #}
+{% macro stock_hero(stock_tab, uncostable_count, needs_work_count, total_count) %}
+<section class="stock-hero">
+  <p class="stock-hero__kicker">{% if stock_tab == 'items' %}Can&rsquo;t be costed{% else %}Need work{% endif %}</p>
+  <p class="stock-hero__numeral">{{ uncostable_count if stock_tab == 'items' else needs_work_count }}
+    <span class="stock-hero__of">of {{ total_count }}</span></p>
+  <!--section:stock-summary-->
+  <p class="stock-summary">
+    {% if stock_tab == 'items' %}
+    {{ uncostable_count }} of {{ total_count }} menu item{{ "" if total_count == 1 else "s" }} can&rsquo;t be costed
+    {% else %}
+    {{ needs_work_count }} of {{ total_count }} ingredient SKU{{ "" if total_count == 1 else "s" }} need work
+    {% endif %}
+    — broken ones sort to the top.
+  </p>
+  <!--/section:stock-summary-->
+</section>
 {% endmacro %}
 
-{% macro stock_summary(stock_tab, uncostable_count, needs_work_count, total_count) %}
-<!--section:stock-summary-->
-<p class="stock-summary">
-  {% if stock_tab == 'items' %}
-  {{ uncostable_count }} of {{ total_count }} menu item{{ "" if total_count == 1 else "s" }} can&rsquo;t be costed
-  {% else %}
-  {{ needs_work_count }} of {{ total_count }} ingredient SKU{{ "" if total_count == 1 else "s" }} need work
-  {% endif %}
-  — broken ones sort to the top.
-</p>
-<!--/section:stock-summary-->
+{# Filter-chips + CTA card (desktop span 5, beside the hero). #}
+{% macro stock_side(filter, filter_urls) %}
+<section class="stock-side">
+  <!--section:stock-chips-->
+  <nav class="stock-chips" aria-label="Filter list">
+    <a class="stock-chips__link{% if filter == 'all' %} stock-chips__link--active{% endif %}"
+       href="{{ filter_urls['all'] }}">All</a>
+    <a class="stock-chips__link{% if filter == 'needs-work' %} stock-chips__link--active{% endif %}"
+       href="{{ filter_urls['needs-work'] }}">Needs work</a>
+    <a class="stock-chips__link{% if filter == 'red' %} stock-chips__link--active{% endif %}"
+       href="{{ filter_urls['red'] }}">Red</a>
+    <a class="stock-chips__link{% if filter == 'healthy' %} stock-chips__link--active{% endif %}"
+       href="{{ filter_urls['healthy'] }}">Healthy</a>
+  </nav>
+  <!--/section:stock-chips-->
+  <p class="stock-side__ctas">
+    <a class="stock-cta stock-chips__new new-sku-button" href="/skus/new">+ New SKU</a>
+    <a class="stock-cta stock-cta--ghost" href="/upload">Bulk edit by spreadsheet</a>
+  </p>
+</section>
 {% endmacro %}
 
 {% macro stock_item_filter(filtered_item_id) %}
@@ -60,7 +69,6 @@
 {% macro stock_footer(shown_count, total_count) %}
 <!--section:stock-footer-->
 <footer class="stock-footer">
-  <a class="stock-footer__bulk" href="/upload">Bulk edit by spreadsheet &rarr;</a>
   <span class="stock-footer__count">Showing {{ shown_count }} of {{ total_count }}</span>
 </footer>
 <!--/section:stock-footer-->
@@ -72,7 +80,7 @@
   <p class="stock-empty__message">
     Nothing matches this filter — if you were hunting for broken ones, that&rsquo;s good news.
   </p>
-  <a class="stock-empty__reset" href="{{ filter_urls.all }}">Show all</a>
+  <a class="stock-empty__reset" href="{{ filter_urls['all'] }}">Show all</a>
 </section>
 <!--/section:stock-empty-->
 {% endmacro %}
