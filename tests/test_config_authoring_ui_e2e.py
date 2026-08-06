@@ -2635,6 +2635,157 @@ def test_sold_sku_inherits_the_items_segment(tmp_path: Path) -> None:
 
 
 # =============================================================================
+# Regression: sold-as-is must not 500 when the Loyverse item is not in the
+# menu, and skus.segment must stay nullable (issue #139).
+# =============================================================================
+#
+# Production hit a raw 500. Two things compounded: (a) the route silently set
+# the sold SKU's segment to None when the Loyverse item was absent from the
+# in-memory menu, surfacing as an uncaught IntegrityError on deployments with
+# a stricter schema; and (b) an older deployment's schema had
+# `skus.segment TEXT NOT NULL` — a shape the forward-only migrations never
+# relaxed — which made even the *purchasable* write (deliberately segment-
+# NULL) crash. These tests pin both layers of the fix: the route must give a
+# readable error rather than guess when the item's segment is unknown, and a
+# forward migration must relax the column so production matches the code's
+# documented contract (ingredient-only SKUs carry no segment).
+
+
+def test_sold_as_is_returns_readable_error_when_item_not_in_menu(
+    tmp_path: Path,
+) -> None:
+    """When the Loyverse item is not in the current menu (stale menu, direct-
+    URL access, sync lag), the sold-as-is stroke must return a readable 400
+    naming the problem — not crash or silently create a segment-less sold SKU.
+
+    A segment-less sold SKU would mis-attribute its sales in the segment-CM
+    view (the one fact the form cannot carry), so when the menu cannot supply
+    that fact the route must refuse rather than guess.
+    """
+    app = _recipe_app(tmp_path)
+    # Note: no _seed_menu — the item is not in the menu (mirrors the live
+    # trigger where item 10222 was not loaded at submit time).
+    client = _authed_client(app)
+
+    response = client.post(
+        "/items/i-unsynced/sold-as-is",
+        data={
+            "sku_id": "thing", "name": "Thing", "unit": "g",
+            "pack_price": "100", "pack_quantity": "500", "vat_inclusive": "1",
+            "serving_size": "60",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 400, (
+        f"expected 400, got {response.status_code}: {response.text!r}"
+    )
+    # The message must name the problem (item not synced) so a partner knows
+    # the fix is to sync — not "try again later" or a bare error.
+    body = response.text.lower()
+    assert "sync" in body or "menu" in body, (
+        f"error should explain the item isn't synced: {response.text!r}"
+    )
+    # And nothing landed: no SKU was created.
+    assert "thing:served" not in client.get("/skus").text
+
+
+def test_migration_relaxes_legacy_not_null_segment(tmp_path: Path) -> None:
+    """The forward migration relaxing `skus.segment` to nullable lands cleanly
+    on a legacy database whose schema left the column NOT NULL — the shape
+    that triggered issue #139 in production.
+
+    Builds the legacy shape by hand, records all prior migrations as applied,
+    then runs the runner and asserts the column is nullable afterwards. This
+    is the schema half of the fix: the code creates ingredient-only SKUs
+    (and sold-as-is purchasables) with segment NULL, so the column must
+    accept NULL on every deployment.
+    """
+    import sqlite3
+
+    from tangerine.storage.schema import apply_migrations
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_path))
+    # Stand up the legacy NOT-NULL shape directly, then mark every migration
+    # that predates the relaxation as already applied so the runner only
+    # applies the new one.
+    conn.executescript(
+        """
+        CREATE TABLE schema_migrations (
+            id INTEGER PRIMARY KEY, applied_at TEXT NOT NULL
+        );
+        CREATE TABLE skus (
+            sku_id  TEXT NOT NULL PRIMARY KEY,
+            name    TEXT NOT NULL,
+            segment TEXT NOT NULL,
+            unit    TEXT,
+            target_gross_margin_pct TEXT,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            yield_qty TEXT,
+            yield_estimated INTEGER
+        );
+        """
+    )
+    # Mark all current migration ids as applied; the runner will apply only
+    # the new relaxation migration.
+    existing_ids = [
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    ]
+    for mid in existing_ids:
+        conn.execute(
+            "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (mid, "2026-08-06T00:00:00.000Z"),
+        )
+    conn.commit()
+
+    notnull_before = {
+        row[1]: row[3] for row in conn.execute("PRAGMA table_info(skus)")
+    }["segment"]
+    assert notnull_before == 1, "test setup: segment should start NOT NULL"
+    conn.close()
+
+    # Re-open through the runner so the new migration applies.
+    conn = sqlite3.connect(str(db_path))
+    apply_migrations(conn)
+    notnull_after = {
+        row[1]: row[3] for row in conn.execute("PRAGMA table_info(skus)")
+    }["segment"]
+    conn.close()
+
+    assert notnull_after == 0, (
+        "skus.segment must be nullable after the relaxation migration; got "
+        f"notnull={notnull_after!r}"
+    )
+
+
+def test_skus_segment_is_nullable_after_migrations(tmp_path: Path) -> None:
+    """A fresh DB built from the migrations must have `skus.segment` nullable.
+
+    Companion to test_migration_relaxes_legacy_not_null_segment: that test
+    pins the upgrade path for a legacy deployment, this one pins the
+    fresh-build contract so a future migration cannot re-tighten the column
+    without breaking ingredient-SKU creation.
+    """
+    import sqlite3
+
+    from tangerine.storage.schema import apply_migrations
+
+    db_path = tmp_path / "fresh.db"
+    conn = sqlite3.connect(str(db_path))
+    apply_migrations(conn)
+    columns = {
+        row[1]: row[3] for row in conn.execute("PRAGMA table_info(skus)")
+    }
+    conn.close()
+    assert columns["segment"] == 0, (
+        f"skus.segment must be nullable after migrations; got notnull="
+        f"{columns['segment']!r}"
+    )
+
+
+# =============================================================================
 # Produced SKUs are never priced directly: read-only derived cost (issue 37)
 # =============================================================================
 
