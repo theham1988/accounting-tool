@@ -2078,11 +2078,20 @@ def create_app(
         cfg: SqliteConfigStore = app.state.config_store
         store: SqliteLoyverseStore = app.state.store
         item = store.current_menu().get(item_id)
-        # The sold SKU inherits the item's segment so the segment-CM view
-        # attributes the sale correctly; the purchasable stays segment-NULL
-        # (an ingredient may feed both cafe and bar).
-        sold_segment = item.segment if item is not None else None
         try:
+            # The sold SKU inherits the Loyverse item's segment — the one fact
+            # the form cannot carry — so the segment-CM view attributes the
+            # sale correctly. When the item is not currently in the synced
+            # menu (stale menu, direct-URL access, sync lag) we refuse rather
+            # than guess: a wrong segment silently corrupts the segment-CM
+            # view, and on a deployment whose schema still has
+            # ``skus.segment NOT NULL`` (issue #139) a None segment also
+            # crashes the purchasable write with an uncaught IntegrityError.
+            if item is None:
+                raise SkuAuthoringError(
+                    "This Loyverse item is not in the synced menu. Run Sync"
+                    " first so its segment is known, then create & map."
+                )
             sold_sku_id = create_serving_recipe_setup(
                 cfg,
                 item_id=item_id,
@@ -2094,7 +2103,7 @@ def create_app(
                     pack_quantity=pack_quantity,
                     vat_inclusive=bool(vat_inclusive),
                     serving_qty=serving_size,
-                    sold_segment=sold_segment,
+                    sold_segment=item.segment,
                 ),
                 actor=request.state.assignee_id,
                 session_id=request.state.session_id,
