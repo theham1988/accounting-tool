@@ -23,7 +23,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -337,6 +337,15 @@ class SqliteConfigStore:
         (see :func:`_change_effective_date`), not the UTC date of the audit
         timestamp — the venue runs at UTC+7, so those disagree for
         early-morning edits.
+
+        **Re-datings fold** (``backdate_cost``): an entry whose old/new
+        prices are equal marks a correction pushed back to its receipt
+        date. Reconstructing, such an entry doesn't append a change of its
+        own — it moves the *preceding* price change for that SKU to the
+        backdated date, so the change-log reads as if the corrected price
+        had landed on the receipt date all along. The fold is what makes
+        history restate; the audit row itself remains the honest paper
+        trail of the re-dating act.
         """
         current = self.cost_book()
         changes: list[PriceChange] = []
@@ -344,6 +353,9 @@ class SqliteConfigStore:
         # order so same-day edits resolve to the last one saved.
         for entry in reversed(self.audit_entries()):
             if entry.table_name != "costs":
+                continue
+            if _is_re_dating(entry):
+                _fold_re_dating(changes, entry)
                 continue
             changes.append(
                 PriceChange(
@@ -497,6 +509,84 @@ class SqliteConfigStore:
             new=new,
             changed_by=updated_by,
             session_id=session_id,
+        )
+
+    def backdate_cost(
+        self,
+        sku_id: str,
+        *,
+        effective_on: date,
+        changed_by: str,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Re-date the SKU's *current* net price back to ``effective_on``.
+
+        The retroactive-correction affordance (issue: "how do we get history
+        right after the fact"). A backdate does not change any price: the
+        cost row keeps its current ``price_per_unit_net`` and only its
+        ``updated_at`` moves to ``effective_on``. The audit entry the write
+        records therefore carries **equal old/new prices** — the marker
+        :func:`_change_effective_date` and ``price_history`` use to tell a
+        re-dating apart from a repricing (a repricing always moves the price;
+        a revert moves it backward to a *different* value).
+
+        Downstream, :meth:`price_history` folds this entry into the preceding
+        price change for the SKU, so the change-log reads as if the correction
+        had landed on the receipt date all along — while the audit trail
+        itself stays honest: the marker entry is visible on ``/audit`` and
+        surgically revertable (reverting it restores the prior effective
+        date, since only the date field differs).
+
+        Batch-aware like every audited write: inside a :meth:`batch` block it
+        joins the open transaction.
+        """
+        if self._in_batch:
+            self._backdate_cost_impl(
+                sku_id,
+                effective_on=effective_on,
+                changed_by=changed_by,
+                session_id=session_id,
+                reason=reason,
+            )
+        else:
+            with self._lock, self._conn:
+                self._backdate_cost_impl(
+                    sku_id,
+                    effective_on=effective_on,
+                    changed_by=changed_by,
+                    session_id=session_id,
+                    reason=reason,
+                )
+
+    def _backdate_cost_impl(
+        self,
+        sku_id: str,
+        *,
+        effective_on: date,
+        changed_by: str,
+        session_id: str | None,
+        reason: str | None,
+    ) -> None:
+        """The re-dating write + audit, assuming the lock + transaction held."""
+        old = self._row_snapshot("costs", "sku_id", sku_id)
+        if old is None:
+            raise ValueError(
+                f"cannot backdate {sku_id!r}: no cost row to re-date"
+            )
+        self._conn.execute(
+            "UPDATE costs SET updated_at = ? WHERE sku_id = ?",
+            (effective_on.isoformat(), sku_id),
+        )
+        new = self._row_snapshot("costs", "sku_id", sku_id)
+        self._record_audit(
+            "costs",
+            sku_id,
+            old=old,
+            new=new,
+            changed_by=changed_by,
+            session_id=session_id,
+            reason=reason,
         )
 
     def audit_entries(self) -> list[AuditEntry]:
@@ -2689,12 +2779,36 @@ def _change_effective_date(entry: AuditEntry) -> date:
     a local effective date, so both fall back to the UTC date of
     ``changed_at``: an undo takes effect the day it was performed, not the
     day of the change it undoes.
+
+    A **re-dating** (``backdate_cost``): old and new prices are *equal*
+    and only the date moved — the new date governs wherever it points,
+    including backward, so the correction's price applies from the receipt
+    date. This is the discriminator that keeps re-datings from falling
+    into the revert branch: a revert always moves the *price* back to a
+    different value; a re-dating never touches it.
     """
     new_date = _snapshot_updated_at(entry.new_value)
     old_date = _snapshot_updated_at(entry.old_value)
-    if new_date is not None and (old_date is None or new_date >= old_date):
+    if new_date is None:
+        return datetime.fromisoformat(entry.changed_at).date()
+    if _is_re_dating(entry):
+        return new_date
+    if old_date is None or new_date >= old_date:
         return new_date
     return datetime.fromisoformat(entry.changed_at).date()
+
+
+def _is_re_dating(entry: AuditEntry) -> bool:
+    """True when the entry re-dated a price without changing it.
+
+    The ``backdate_cost`` marker: both snapshots exist and carry the same
+    ``price_per_unit_net``. A repricing always changes the price; a revert
+    moves it to a different (older) value. Equal prices mean the only
+    thing that changed is *when* it took effect.
+    """
+    if entry.old_value is None or entry.new_value is None:
+        return False
+    return _snapshot_price(entry.old_value) == _snapshot_price(entry.new_value)
 
 
 def _snapshot_updated_at(snapshot: dict[str, Any] | None) -> date | None:
@@ -2705,6 +2819,27 @@ def _snapshot_updated_at(snapshot: dict[str, Any] | None) -> date | None:
     if value is None:
         return None
     return date.fromisoformat(value)
+
+
+def _fold_re_dating(changes: list[PriceChange], entry: AuditEntry) -> None:
+    """Move the SKU's latest reconstructed change to the backdated date.
+
+    ``changes`` is the chronological (insertion-ordered) list built so far;
+    the re-dating entry ``entry`` carries the new effective date in its new
+    snapshot's ``updated_at``. The fold re-dates the most recent change for
+    the same SKU — the one whose price it marks — leaving older changes
+    (the seed price, earlier repricings) untouched. A re-dating with no
+    preceding change for the SKU (the row was seeded, never audited) has
+    nothing to move; the seed fallback in ``PriceHistory`` covers those
+    days instead.
+    """
+    backdated_to = _snapshot_updated_at(entry.new_value)
+    if backdated_to is None:
+        return
+    for index in range(len(changes) - 1, -1, -1):
+        if changes[index].sku_id == entry.pk:
+            changes[index] = replace(changes[index], changed_on=backdated_to)
+            return
 
 
 __all__ = [

@@ -663,3 +663,251 @@ costs:
     # 200 ml x 0.045 THB/ml = 9 THB.
     assert healed.cogs == D("9")
     assert healed.gross_margin == D("111")
+
+
+# --- backdated corrections (backdate_cost) ------------------------------------
+
+
+def test_backdated_correction_restates_history_from_the_receipt_date(
+    tmp_path: Path,
+) -> None:
+    """The retroactive fix: a correction pushed back to its receipt date.
+
+    Butter was seeded at 0.50 THB/g (wrong — gross-of-VAT era). On 15 Jul
+    the partner corrects it to 0.60, then backdates that correction to the
+    receipt date, 1 Jul. Days from 1 Jul onward now cost at 0.60; only
+    the days before the receipt keep the seed 0.50. Without the backdate,
+    the correction would be forward-only (everything before 15 Jul stuck
+    at the wrong seed price).
+    """
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }  # wrong seed
+""",
+        clock,
+    )
+
+    store.save_cost(
+        "butter",
+        pack_price=D("600"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 15),
+    )
+
+    # Without the backdate: forward-only.
+    history = store.price_history()
+    assert history.price_as_of("butter", date(2026, 7, 3)) == D("0.50")
+
+    store.backdate_cost(
+        "butter",
+        effective_on=date(2026, 7, 1),
+        changed_by="daniel",
+        reason="receipt says the new price applied from 1 Jul",
+    )
+
+    history = store.price_history()
+    # Seed price before the receipt date...
+    assert history.price_as_of("butter", date(2026, 6, 30)) == D("0.50")
+    # ...corrected price from the receipt date onward — including days
+    # between the receipt and the day the correction was typed.
+    assert history.price_as_of("butter", date(2026, 7, 1)) == D("0.600000")
+    assert history.price_as_of("butter", date(2026, 7, 3)) == D("0.600000")
+    assert history.price_as_of("butter", date(2026, 7, 20)) == D("0.600000")
+
+
+def test_backdating_leaves_a_revertible_audit_entry_and_folds_cleanly(
+    tmp_path: Path,
+) -> None:
+    """The re-dating is its own audit entry; reverting it undoes the restatement.
+
+    The backdate writes a marker entry (equal old/new prices, only the
+    date moved). Reverting that entry — the surgical revert only touches
+    the fields the entry changed — restores the prior effective date, so
+    history returns to forward-only. The paper trail keeps both acts.
+    """
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }  # wrong seed
+""",
+        clock,
+    )
+
+    store.save_cost(
+        "butter",
+        pack_price=D("600"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 15),
+    )
+    store.backdate_cost(
+        "butter", effective_on=date(2026, 7, 1), changed_by="daniel"
+    )
+
+    entry = store.audit_entries()[0]
+    assert entry.reason == "" or entry.reason is None
+    # The marker is identifiable by its predicate (equal prices), not its
+    # position in the newest-first list.
+    marker = next(
+        e
+        for e in store.audit_entries()
+        if e.table_name == "costs"
+        and e.old_value is not None
+        and e.new_value is not None
+        and e.old_value["price_per_unit_net"] == e.new_value["price_per_unit_net"]
+    )
+    assert (
+        marker.new_value is not None
+        and marker.old_value is not None
+        and marker.new_value["price_per_unit_net"]
+        == marker.old_value["price_per_unit_net"]
+    )
+
+    assert store.revert_entry(
+        marker.entry_id, changed_by="daniel", reason="wrong receipt date"
+    )
+
+    history = store.price_history()
+    assert history.price_as_of("butter", date(2026, 7, 3)) == D("0.50")
+    assert history.price_as_of("butter", date(2026, 7, 20)) == D("0.600000")
+
+
+def test_backdate_composes_with_a_later_repricing(tmp_path: Path) -> None:
+    """Backdate then reprice: three eras, each priced honestly.
+
+    Seed 0.50 to 1 Jul; corrected price 0.60 from its backdated receipt
+    date 1 Jul; a genuine repricing to 0.80 on 20 Jul (forward-only, not
+    backdated). The three eras resolve cleanly: the fold moved only the
+    correction, and the repricing governs from its own day.
+    """
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }
+""",
+        clock,
+    )
+
+    store.save_cost(
+        "butter",
+        pack_price=D("600"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 15),
+    )
+    store.backdate_cost(
+        "butter", effective_on=date(2026, 7, 1), changed_by="daniel"
+    )
+    store.save_cost(
+        "butter",
+        pack_price=D("800"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 20),
+    )
+
+    history = store.price_history()
+    assert history.price_as_of("butter", date(2026, 6, 30)) == D("0.50")
+    assert history.price_as_of("butter", date(2026, 7, 1)) == D("0.600000")
+    assert history.price_as_of("butter", date(2026, 7, 19)) == D("0.600000")
+    assert history.price_as_of("butter", date(2026, 7, 20)) == D("0.800000")
+
+
+def test_backdating_a_first_ever_price_keeps_the_reach_back_semantics(
+    tmp_path: Path,
+) -> None:
+    """A creation backdated to its receipt date: reach-back follows it.
+
+    Oat milk had no seed. Its first-ever price (12 Jul) reached back over
+    all earlier days. Backdating that creation to 8 Jul — the day the
+    venue actually started buying it — the reach-back now costs every day
+    before 8 Jul at the first-ever price and days 8-11 July at the same
+    price too (it was the only price the SKU ever had until then). The
+    point: the fold composes with reach-back, not against it.
+    """
+    clock = {"now": "2026-07-12T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }
+""",
+        clock,
+    )
+    store.create_sku("oat-milk", name="Oat milk", unit="ml", created_by="daniel")
+    store.save_cost(
+        "oat-milk",
+        pack_price=D("45"),
+        pack_quantity=D("1000"),
+        vat_inclusive=False,
+        updated_by="daniel",
+        updated_on=date(2026, 7, 12),
+    )
+    store.backdate_cost(
+        "oat-milk", effective_on=date(2026, 7, 8), changed_by="daniel"
+    )
+
+    history = store.price_history()
+    assert history.price_as_of("oat-milk", date(2026, 7, 5)) == D("0.045")
+    assert history.price_as_of("oat-milk", date(2026, 7, 8)) == D("0.045")
+    assert history.price_as_of("oat-milk", date(2026, 7, 20)) == D("0.045")
+
+
+def test_backdating_a_sku_with_no_audit_history_is_a_noop_fallback(
+    tmp_path: Path,
+) -> None:
+    """A seeded SKU never edited: the backdate still restates via the row.
+
+    The cost row's ``updated_at`` moves; with no prior audit entries the
+    fold has nothing to re-date, but the *row itself* now says the price
+    landed on the receipt date — and PriceHistory's no-changes fallback
+    costs every day at the current (seed) price anyway, so the backdate is
+    accepted without corrupting anything.
+    """
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }
+""",
+        clock,
+    )
+    store.backdate_cost(
+        "butter", effective_on=date(2026, 5, 1), changed_by="daniel"
+    )
+    history = store.price_history()
+    assert history.price_as_of("butter", date(2026, 4, 1)) == D("0.50")
+    assert history.price_as_of("butter", date(2026, 8, 1)) == D("0.50")
+
+
+def test_backdating_an_unknown_sku_raises(tmp_path: Path) -> None:
+    """No cost row, nothing to re-date — loud failure, nothing written."""
+    clock = {"now": "2026-07-15T02:00:00+00:00"}
+    store = _seeded_store(
+        tmp_path,
+        """
+costs:
+  butter: { price: "0.50", updated_at: "2026-06-01" }
+""",
+        clock,
+    )
+    try:
+        store.backdate_cost(
+            "never-heard-of-it", effective_on=date(2026, 7, 1), changed_by="daniel"
+        )
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass

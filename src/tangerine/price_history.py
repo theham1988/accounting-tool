@@ -58,6 +58,15 @@ class PriceHistory:
     ) -> None:
         self._current = current
         self._changes_by_sku: dict[str, list[PriceChange]] = {}
+        # The first *recorded* change per SKU, in insertion order — the one
+        # whose before-value is the seed price and whose creation (if any)
+        # governs reach-back. Kept separately from the date-sorted lists
+        # because a backdated correction can move a later change *before*
+        # the first-recorded one; "what the tool first observed" is a fact
+        # about recording order, not effective dates.
+        self._first_change_by_sku: dict[str, PriceChange] = {}
+        for change in changes:
+            self._first_change_by_sku.setdefault(change.sku_id, change)
         # Sort is stable, so same-day changes keep their recorded (audit
         # entry) order and the last write of a day wins, as it should.
         for change in sorted(changes, key=lambda c: c.changed_on):
@@ -69,25 +78,30 @@ class PriceHistory:
         The latest recorded change on or before ``on_date`` governs; a
         change made on a day applies to that day's sales (the partner
         repriced that morning). A date before every recorded change takes
-        the first change's before-value — the seed price. When the first
-        change *created* the cost row (no seed), the SKU's first-ever price
-        reaches back over those days instead: history there was unknown,
-        not different, and the first known price is the only honest number
-        available for it — this is what lets a past day heal once an
-        always-unmapped item is finally authored. A creation later reverted
-        away (no current price) does not reach back; the row was declared a
-        mistake. A SKU with no recorded changes costs at its current (seed)
-        price. ``None`` when the SKU had no price on that date.
+        the first-recorded change's before-value — the seed price. When the
+        first-recorded change *created* the cost row (no seed), the SKU's
+        first-ever price reaches back over those days instead: history
+        there was unknown, not different, and the first known price is the
+        only honest number available for it — this is what lets a past day
+        heal once an always-unmapped item is finally authored. A creation
+        later reverted away (no current price) does not reach back; the row
+        was declared a mistake. A SKU with no recorded changes costs at its
+        current (seed) price. ``None`` when the SKU had no price on that
+        date.
+
+        "First-recorded" — not first-by-effective-date — so a backdated
+        correction (which re-dates a change to its receipt date) cannot
+        displace which entry holds the seed price.
         """
-        changes = self._changes_by_sku.get(sku_id, [])
         governing = self._governing_change(sku_id, on_date)
         if governing is not None:
             return governing.new_price
-        if changes:
-            if changes[0].old_price is not None:
-                return changes[0].old_price
+        first = self._first_change_by_sku.get(sku_id)
+        if first is not None:
+            if first.old_price is not None:
+                return first.old_price
             if self._current.price(sku_id) is not None:
-                return changes[0].new_price
+                return first.new_price
             return None
         entry = self._current.price(sku_id)
         if entry is None:
@@ -129,10 +143,10 @@ class PriceHistory:
         governing = self._governing_change(sku_id, on_date)
         if governing is not None:
             return governing.changed_on
-        changes = self._changes_by_sku.get(sku_id, [])
-        if changes and changes[0].old_price is None:
+        first = self._first_change_by_sku.get(sku_id)
+        if first is not None and first.old_price is None:
             # Reach-back days cost at the first-ever price; it landed here.
-            return changes[0].changed_on
+            return first.changed_on
         entry = self._current.price(sku_id)
         if entry is not None:
             return entry.updated_at
