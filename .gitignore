@@ -27,6 +27,12 @@ Thumbs.db
 # output, not source of truth.
 /menu.tsv
 
+# Local SQLite database + import backups -- live state (the real DB lives
+# on the VPS, snapshotted there), never source.
+/tangerine.db
+/tangerine.db.*.bak
+
+
 # Static UI preview mock -- a hand-filled snapshot of the daily review
 # template, used for offline design iteration. Not part of the app.
 /dashboard_preview.html
