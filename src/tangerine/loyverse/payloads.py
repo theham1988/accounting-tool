@@ -31,6 +31,38 @@ class LoyverseLineItem(TypedDict, total=False):
     cost_total: float
 
 
+class LoyversePayment(TypedDict, total=False):
+    """One tender on a receipt (``payments[]``, issue #147).
+
+    ``payment_type_id`` is an opaque account UUID (like the cafe category
+    ids, ADR-0009) — Loyverse's built-ins ("Cash", "Card") and the venue's
+    custom types (the till-QR tender named "Transfer") all surface as
+    UUIDs, and the id→channel routing lives in env configuration, never
+    the repo. ``name`` is documentation only; the derivation never routes
+    money by it. ``money_amount`` is signed: negative on REFUND receipts.
+    """
+
+    payment_type_id: str
+    name: str
+    money_amount: float
+
+
+class LoyverseDiscount(TypedDict, total=False):
+    """One discount applied to a receipt (``total_discounts[]``, #147).
+
+    Loyverse folds both scopes (RECEIPT and LINE_ITEM) into
+    ``total_discounts``; summing ``line_discounts`` too would
+    double-count, so this is the only discount family the derivation
+    reads. Amounts are positive as exported; REFUND receipts never carry
+    discounts (Loyverse refunds the discounted amount actually paid).
+    """
+
+    id: str
+    name: str
+    scope: str  # "RECEIPT" | "LINE_ITEM"
+    money_amount: float
+
+
 class LoyverseReceipt(TypedDict, total=False):
     receipt_number: str
     receipt_type: str  # "SALE" | "REFUND"
@@ -40,6 +72,8 @@ class LoyverseReceipt(TypedDict, total=False):
     total_money: float
     total_tax: float
     line_items: list[LoyverseLineItem]
+    payments: list[LoyversePayment]
+    total_discounts: list[LoyverseDiscount]
 
 
 class ReceiptsResponse(TypedDict, total=False):

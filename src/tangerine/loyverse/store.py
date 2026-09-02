@@ -15,7 +15,7 @@ accepted as stale, not silently overwritten.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Protocol
 
@@ -69,6 +69,38 @@ class SaleRecord:
         return (self.receipt_number, self.line_id)
 
 
+@dataclass(frozen=True)
+class ReceiptFact:
+    """One receipt's payment/discount facts, at receipt grain (issue #147).
+
+    The raw material of the IN-01 five-number derivation (semantics locked in
+    the #142 resolution, decision 6b): payments and discounts are receipt-
+    grain facts — folding them per-line into the line-grain ``sales`` table
+    would denormalize (a split tender has no single per-line home). One row
+    per receipt, keyed by ``receipt_number`` for idempotent storage.
+
+    Both SALE and REFUND receipts become facts; a REFUND carries its signed
+    splits (negatives) on its own day and channel (P-11). Channel splits come
+    from routing ``payments[].money_amount`` through the env-configured
+    payment-type map; ``discount`` is Σ ``total_discounts[].money_amount``
+    (both scopes — Loyverse folds line-scope up into ``total_discounts``).
+    ``total_money`` is kept for audit though the derivation itself doesn't
+    read it; the parser already asserted ``Σ payments == total_money``.
+
+    ``local_date`` is the venue-local (Asia/Bangkok) calendar day of
+    ``created_at`` — the trading-day bucket (issue #66 convention).
+    """
+
+    receipt_number: str
+    receipt_type: str  # "SALE" | "REFUND"
+    local_date: date
+    cash: Money
+    qr: Money
+    card: Money
+    discount: Money
+    total_money: Money
+
+
 class MenuChangeKind(str, Enum):
     """How an item changed between two consecutive menu snapshots."""
 
@@ -88,10 +120,14 @@ class MenuChange:
 
 
 class LoyverseStore(Protocol):
-    """Read+write storage for synced sales and menu history."""
+    """Read+write storage for synced sales, menu history, and receipt facts."""
 
     def record_sales(self, records: list[SaleRecord]) -> None:
         """Persist sales. Idempotent on each record's ``source_ref``."""
+        ...
+
+    def record_receipt_facts(self, facts: list[ReceiptFact]) -> None:
+        """Persist receipt-grain facts. Idempotent on ``receipt_number``."""
         ...
 
     def record_menu_snapshot(
@@ -101,6 +137,9 @@ class LoyverseStore(Protocol):
         ...
 
     def sales(self) -> list[Sale]:
+        ...
+
+    def receipt_facts(self) -> list[ReceiptFact]:
         ...
 
     def current_menu(self) -> dict[str, MenuItem]:
@@ -197,6 +236,7 @@ class InMemoryLoyverseStore:
     def __init__(self) -> None:
         self._sales: list[Sale] = []
         self._seen_refs: set[tuple[str, str]] = set()
+        self._facts: dict[str, ReceiptFact] = {}
         self._menu: dict[str, MenuItem] = {}
         self._history: list[MenuChange] = []
 
@@ -207,6 +247,13 @@ class InMemoryLoyverseStore:
                 continue
             self._seen_refs.add(ref)
             self._sales.append(rec.sale)
+
+    def record_receipt_facts(self, facts: list[ReceiptFact]) -> None:
+        for fact in facts:
+            self._facts.setdefault(fact.receipt_number, fact)
+
+    def receipt_facts(self) -> list[ReceiptFact]:
+        return list(self._facts.values())
 
     def record_menu_snapshot(self, snapshot: MenuSnapshot, at: datetime) -> None:
         incoming = {mi.item_id: mi for mi in snapshot.items}

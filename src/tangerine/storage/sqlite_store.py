@@ -22,6 +22,7 @@ from ..loyverse.store import (
     MenuChangeKind,
     MenuItem,
     MenuSnapshot,
+    ReceiptFact,
     SaleRecord,
     diff_menu,
 )
@@ -124,6 +125,60 @@ class SqliteLoyverseStore:
                 " FROM sales ORDER BY rowid"
             ).fetchall()
         return [self._row_to_sale(r) for r in rows]
+
+    # --- LoyverseStore: receipt facts ------------------------------------------
+
+    def record_receipt_facts(self, facts: list[ReceiptFact]) -> None:
+        """Persist receipt facts, idempotent on ``receipt_number``.
+
+        ``INSERT OR IGNORE`` against the primary key, mirroring
+        :meth:`record_sales`: a replayed sync page never double-counts a
+        receipt. Money columns store exact ``Decimal`` strings (two places)
+        — never floats — per the parser-boundary rule.
+        """
+        with self._lock, self._conn:
+            for fact in facts:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO receipt_facts"
+                    " (receipt_number, receipt_type, local_date,"
+                    "  cash, qr, card, discount, total_money)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        fact.receipt_number,
+                        fact.receipt_type,
+                        fact.local_date.isoformat(),
+                        str(fact.cash),
+                        str(fact.qr),
+                        str(fact.card),
+                        str(fact.discount),
+                        str(fact.total_money),
+                    ),
+                )
+
+    def receipt_facts(self) -> list[ReceiptFact]:
+        """All stored receipt facts, ordered by local date then receipt number.
+
+        Deterministic ordering so the five-number aggregation over the table
+        and any debugging diff are stable run to run.
+        """
+        rows = self._execute_locked(
+            "SELECT receipt_number, receipt_type, local_date,"
+            " cash, qr, card, discount, total_money"
+            " FROM receipt_facts ORDER BY local_date, receipt_number"
+        ).fetchall()
+        return [
+            ReceiptFact(
+                receipt_number=row[0],
+                receipt_type=row[1],
+                local_date=date.fromisoformat(row[2]),
+                cash=Money(row[3]),
+                qr=Money(row[4]),
+                card=Money(row[5]),
+                discount=Money(row[6]),
+                total_money=Money(row[7]),
+            )
+            for row in rows
+        ]
 
     @staticmethod
     def _row_to_sale(row: tuple[str, str, str, int, str | None]) -> Sale:

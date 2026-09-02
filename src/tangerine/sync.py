@@ -19,7 +19,12 @@ import os
 from datetime import date
 from typing import Any
 
-from .loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
+from .loyverse.config import (
+    LoyverseCredentials,
+    PaymentChannelMap,
+    cafe_category_ids_from_env,
+    payment_channels_from_env,
+)
 from .loyverse.sync import SyncResult, run_sync
 from .storage.sqlite_store import SqliteLoyverseStore
 
@@ -43,6 +48,7 @@ def main(
     urlopen: Any = None,
     today: date | None = None,
     cafe_category_ids: frozenset[str] | None = None,
+    payment_channels: "PaymentChannelMap | None" = None,
 ) -> None:
     """Run one Loyverse sync and print a one-line summary.
 
@@ -50,10 +56,14 @@ def main(
     Credentials default to ``$LOYVERSE_ACCESS_TOKEN`` / ``$LOYVERSE_STORE_ID``.
     ``cafe_category_ids`` defaults to ``$LOYVERSE_CAFE_CATEGORY_IDS`` parsed
     into a set (ADR-0009); pass it explicitly to drive the script in-process
-    without env mutation. ``urlopen`` is injectable so tests stub Loyverse's
-    HTTP boundary without env mutation. All parameters are explicit so tests
-    drive the script in-process; the real ``python -m tangerine.sync``
-    entrypoint reads env defaults.
+    without env mutation. ``payment_channels`` defaults to
+    ``$LOYVERSE_PAYMENT_TYPE_CHANNELS`` parsed into a channel map (issue
+    #147) — the receipt-facts path runs only when the map is configured
+    (a non-empty value); unset/blank skips the facts path, so the sync stays
+    green until the venue provides its payment-type UUIDs. ``urlopen`` is
+    injectable so tests stub Loyverse's HTTP boundary without env mutation.
+    All parameters are explicit so tests drive the script in-process; the
+    real ``python -m tangerine.sync`` entrypoint reads env defaults.
 
     Recipes and costs are deliberately not loaded here: the sync only writes
     sales and menu snapshots into the store, so config validity is the
@@ -74,6 +84,15 @@ def main(
         if cafe_category_ids is not None
         else cafe_category_ids_from_env()
     )
+    if payment_channels is None:
+        env_map = payment_channels_from_env()
+        # Unset/blank env reads as "derivation not configured yet" — skip the
+        # facts path. A configured-but-empty map is indistinguishable here and
+        # also skips: the venue hasn't mapped ids yet either way, and a sync
+        # that recorded facts would fail on every receipt (correctly, but
+        # pointlessly until the UUIDs arrive).
+        if env_map.channels:
+            payment_channels = env_map
 
     if token is None:
         print(
@@ -91,6 +110,7 @@ def main(
             urlopen=urlopen,
             today=today,
             cafe_category_ids=cafe_ids,
+            payment_channels=payment_channels,
         )
     finally:
         store.close()

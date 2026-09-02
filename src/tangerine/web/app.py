@@ -71,7 +71,13 @@ from ..profit_report import (
     rank_bestsellers,
 )
 from ..trends import WeekdayAggregate, build_trends
-from ..loyverse.config import LoyverseCredentials, cafe_category_ids_from_env
+from ..loyverse.config import (
+    PAYMENT_TYPE_CHANNELS_ENV,
+    LoyverseCredentials,
+    PaymentChannelMap,
+    cafe_category_ids_from_env,
+    payment_channels_from_env,
+)
 from ..loyverse.parser import VENUE_TIMEZONE
 from ..loyverse.source import StoreSource
 from ..loyverse.sync import SyncResult, run_sync
@@ -150,6 +156,21 @@ def _truthy_env(name: str) -> bool:
     """Read a bool from env: ``1``/``true``/``yes`` (case-insensitive) -> True."""
     raw = os.environ.get(name, "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def payment_channels_from_env_or_none() -> PaymentChannelMap | None:
+    """The payment-type channel map, or ``None`` when the env var is unset/blank.
+
+    Unset or blank ``LOYVERSE_PAYMENT_TYPE_CHANNELS`` reads as "derivation
+    not configured yet" — the sync's facts path is skipped rather than
+    failing on every receipt. (A non-empty value with a valid pair list
+    always yields a map; a syntactically bad value still raises at startup
+    from ``parse_payment_channels``.)
+    """
+    raw = os.environ.get(PAYMENT_TYPE_CHANNELS_ENV, "").strip()
+    if not raw:
+        return None
+    return payment_channels_from_env()
 
 #: How old the most recent successful sync may be before the review shows a
 #: stale-data banner (slice 5). 24 hours: the nightly cron runs once a day, so
@@ -292,6 +313,7 @@ def create_app(
     loyverse_access_token: str | None = None,
     loyverse_store_id: str | None = None,
     loyverse_cafe_category_ids: frozenset[str] | None = None,
+    loyverse_payment_channels: PaymentChannelMap | None = None,
     passphrase: str | None = None,
     signing_secret: str | None = None,
     cookie_secure: bool | None = None,
@@ -322,7 +344,11 @@ def create_app(
     ``loyverse_cafe_category_ids`` defaults to
     ``$LOYVERSE_CAFE_CATEGORY_IDS`` parsed into a set (ADR-0009); the venue's
     cafe category UUID is opaque, so it lives in the environment, never the
-    repo.
+    repo. ``loyverse_payment_channels`` defaults to
+    ``$LOYVERSE_PAYMENT_TYPE_CHANNELS`` parsed into a payment-type → channel
+    map (issue #147); unset/blank skips the receipt-facts path until the
+    venue maps its payment-type UUIDs, a configured-but-empty map makes the
+    facts path a hard error per receipt (filing-grade refusal to guess).
 
     The store is opened once and held for the app's lifetime (closed on
     shutdown). Config is loaded once at construction — a malformed config
@@ -344,6 +370,11 @@ def create_app(
         loyverse_cafe_category_ids
         if loyverse_cafe_category_ids is not None
         else cafe_category_ids_from_env()
+    )
+    payment_channels = (
+        loyverse_payment_channels
+        if loyverse_payment_channels is not None
+        else payment_channels_from_env_or_none()
     )
     loyverse_urlopen_param = loyverse_urlopen
 
@@ -463,6 +494,7 @@ def create_app(
         else None
     )
     app.state.cafe_category_ids = cafe_category_ids
+    app.state.payment_channels = payment_channels
     app.state.assignees = assignees
     app.state.auth_config = auth_config
     app.state.authenticator = authenticator
@@ -3074,6 +3106,7 @@ def create_app(
                 urlopen=app.state.loyverse_urlopen,
                 today=today_date,
                 cafe_category_ids=app.state.cafe_category_ids,
+                payment_channels=app.state.payment_channels,
             )
 
         # Refresh yesterday's headline numbers so the partner sees fresh data

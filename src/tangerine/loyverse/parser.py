@@ -1,9 +1,9 @@
 """Pure parsers from raw Loyverse JSON to domain types (slice 02).
 
-These functions are pure: raw payload in, ``Sale`` / ``MenuSnapshot`` out. They
-are the single place money crosses from ``float`` (Loyverse JSON numbers) to
-``Decimal`` (the rest of the codebase), so float drift is confined to this
-boundary.
+These functions are pure: raw payload in, ``Sale`` / ``MenuSnapshot`` /
+``ReceiptFact`` out. They are the single place money crosses from ``float``
+(Loyverse JSON numbers) to ``Decimal`` (the rest of the codebase), so float
+drift is confined to this boundary.
 
 Conventions mirrored from the Loyverse API:
 
@@ -16,21 +16,26 @@ Conventions mirrored from the Loyverse API:
   else bar) is stamped from the same local timestamp.
 - A line item's identity is its ``sku`` (falling back to ``item_id``) — that is
   the value recipes map onto in slice 04.
-- REFUND receipts are excluded from sales for now (refund handling is a later
-  slice); polling must not count a refund as fresh revenue.
+- The **line-grain** path (:func:`parse_receipts_to_sales`, the margin
+  engine's input) skips REFUND receipts — refund handling is a later slice;
+  polling must not count a refund as fresh revenue. The **receipt-grain**
+  path (:func:`parse_receipt_facts`, the IN-01 derivation's input, issue
+  #147) handles both SALE and REFUND: refunds contribute their signed
+  payments (negatives) on their own day and channel (P-11).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from ..types import Money, Sale, Segment
+from ..types import Channel, Money, Sale, Segment
 from ..segments import segment_for_timestamp
+from .config import PaymentChannelMap
 from .payloads import LoyverseItem, LoyverseLineItem, LoyverseVariant
-from .store import DEFAULT_CAFE_CATEGORY_IDS, MenuItem, MenuSnapshot, SaleRecord
+from .store import DEFAULT_CAFE_CATEGORY_IDS, MenuItem, MenuSnapshot, ReceiptFact, SaleRecord
 
 #: The venue's local timezone. Loyverse ``created_at`` is always UTC; every
 #: venue-facing decision (which day a sale belongs to, which shift it falls in)
@@ -155,6 +160,103 @@ def parse_receipts_to_sales(payload: dict[str, Any]) -> list[SaleRecord]:
     return records
 
 
+#: The receipt types the receipt-grain path accepts. Anything else is a hard
+#: error (#142 decision 7): an unknown type means Loyverse grew a kind the
+#: derivation hasn't been taught, and guessing its sign or channel could
+#: corrupt the books.
+VALID_RECEIPT_TYPES: frozenset[str] = frozenset({"SALE", "REFUND"})
+
+
+def parse_receipt_facts(
+    payload: dict[str, Any],
+    channel_map: PaymentChannelMap,
+) -> list[ReceiptFact]:
+    """Turn a ``/receipts`` response into receipt-grain ``ReceiptFact``s.
+
+    The IN-01 derivation's raw-JSON boundary (issue #147, semantics locked in
+    the #142 resolution). One fact per receipt, both SALE and REFUND, carrying
+    everything the five-number aggregation needs: receipt type, the venue-
+    local calendar day (``created_at`` → Asia/Bangkok, issue #66), the
+    per-channel money splits, the discount total, and ``total_money`` for
+    audit. This path **replaces** the old REFUND-skip for receipt-grain
+    purposes — refunds are first-class facts here, contributing their signed
+    payments (negatives) on their own day and channel (P-11).
+
+    Fails loudly (``LoyverseParseError``, the same family as the quantity
+    check) on exactly the conditions the #142 resolution made hard errors:
+
+    - a payment whose ``payment_type_id`` is not in ``channel_map`` — the
+      map is env-configured (``LOYVERSE_PAYMENT_TYPE_CHANNELS``); an
+      unmapped id means money landed somewhere the tool can't route, and
+      filing-grade books never guess;
+    - ``Σ payments[].money_amount != total_money`` — the per-receipt
+      integrity assert (decision 4); today equality holds for every real
+      receipt, so a mismatch means drifted fields or a new tip/surcharge
+      field the derivation must be taught before it silently corrupts books;
+    - ``receipt_type`` not in {SALE, REFUND} (decision 7).
+
+    Facts are returned in payload order; storage is idempotent on
+    ``receipt_number`` (``INSERT OR IGNORE``), so replayed pages never
+    double-count.
+    """
+    facts: list[ReceiptFact] = []
+    for receipt in payload.get("receipts", []):
+        receipt_number = receipt.get("receipt_number", "")
+        receipt_type = receipt.get("receipt_type", "")
+        if receipt_type not in VALID_RECEIPT_TYPES:
+            raise LoyverseParseError(
+                f"receipt {receipt_number!r}: unknown receipt_type "
+                f"{receipt_type!r} (expected SALE or REFUND)"
+            )
+        local_date = _parse_created_at(receipt["created_at"]).astimezone(
+            VENUE_TIMEZONE
+        ).date()
+
+        channel_sums = {ch: Decimal("0") for ch in Channel}
+        for payment in receipt.get("payments", []):
+            payment_type_id = payment.get("payment_type_id", "")
+            channel = channel_map.channel_for(payment_type_id)
+            if channel is None:
+                raise LoyverseParseError(
+                    f"receipt {receipt_number!r}: payment type "
+                    f"{payment_type_id!r} is not mapped to a channel — add it "
+                    "to $LOYVERSE_PAYMENT_TYPE_CHANNELS"
+                )
+            channel_sums[Channel(channel)] += _money(
+                payment.get("money_amount", 0)
+            )
+
+        total_money = _money(receipt.get("total_money", 0))
+        payments_sum = sum(channel_sums.values(), Decimal("0"))
+        if payments_sum != total_money:
+            raise LoyverseParseError(
+                f"receipt {receipt_number!r}: payments sum {payments_sum} "
+                f"!= total_money {total_money}"
+            )
+
+        discount = sum(
+            (
+                _money(d.get("money_amount", 0))
+                for d in receipt.get("total_discounts", [])
+            ),
+            Decimal("0"),
+        )
+
+        facts.append(
+            ReceiptFact(
+                receipt_number=receipt_number,
+                receipt_type=receipt_type,
+                local_date=local_date,
+                cash=channel_sums[Channel.CASH],
+                qr=channel_sums[Channel.QR],
+                card=channel_sums[Channel.CARD],
+                discount=discount,
+                total_money=total_money,
+            )
+        )
+    return facts
+
+
 def variant_price(variant: LoyverseVariant, *, store_id: str | None = None) -> Decimal | None:
     """Resolve one Loyverse variant's price, or ``None`` if it has none on record.
 
@@ -260,6 +362,7 @@ def items_cursor(payload: dict[str, Any]) -> str | None:
 # Re-exported for callers that build payloads by hand in tests.
 __all__ = [
     "parse_receipts_to_sales",
+    "parse_receipt_facts",
     "parse_items_snapshot",
     "variant_price",
     "receipts_cursor",
