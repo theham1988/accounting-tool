@@ -20,6 +20,20 @@ class Segment(str, Enum):
     BAR = "bar"
 
 
+class Channel(StrEnum):
+    """One of the three takings buckets the POS collects through (IN-01).
+
+    The five-number derivation routes every Loyverse payment to exactly one
+    channel (issue #147, semantics locked in #142). **QR** is the venue's
+    till-QR tender — named "Transfer" in Loyverse, never a bank transfer
+    (CONTEXT.md "Channel"). Three channels, no fourth.
+    """
+
+    CASH = "cash"
+    QR = "qr"
+    CARD = "card"
+
+
 # Money is represented as Decimal throughout to avoid float rounding in THB.
 Money = Decimal
 

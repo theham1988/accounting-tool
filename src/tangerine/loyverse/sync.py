@@ -26,10 +26,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from .config import LoyverseCredentials
+from .config import LoyverseCredentials, PaymentChannelMap
 from .http import LoyverseApiError, LoyverseHttpClient
 from .parser import (
+    LoyverseParseError,
     parse_items_snapshot,
+    parse_receipt_facts,
     parse_receipts_to_sales,
 )
 from .store import DEFAULT_CAFE_CATEGORY_IDS, LoyverseStore
@@ -59,7 +61,7 @@ class SyncResult:
 
 
 class SyncOrchestrator:
-    """Drives a sales+menu sync from the Loyverse client into the store."""
+    """Drives a sales+menu+facts sync from the Loyverse client into the store."""
 
     def __init__(
         self,
@@ -67,10 +69,12 @@ class SyncOrchestrator:
         store: LoyverseStore,
         *,
         cafe_category_ids: frozenset[str] = DEFAULT_CAFE_CATEGORY_IDS,
+        payment_channels: PaymentChannelMap | None = None,
     ) -> None:
         self._client = client
         self._store = store
         self._cafe_category_ids = cafe_category_ids
+        self._payment_channels = payment_channels
 
     def sync_sales_and_menu(
         self,
@@ -88,6 +92,13 @@ class SyncOrchestrator:
         first-run backfill sets this to ``today - BACKFILL_DAYS`` so the 7-day
         rolling average has data immediately.
 
+        The one flattened receipts list feeds both grains (issue #147): the
+        line-grain path (sales for the margin engine, refunds still skipped)
+        and the receipt-grain path (facts for the IN-01 derivation, refunds
+        included with signed splits). A ``LoyverseParseError`` from the facts
+        path (unmapped payment type, payments≠total, unknown receipt type)
+        fails the sync loudly — the same refusal family as a bad quantity.
+
         Menu items are tagged cafe/bar from the configured ``cafe_category_ids``
         (ADR-0009). Under pure-clock segmentation (#65) this segment no longer
         drives revenue splitting, but it still feeds menu-shape views and the
@@ -104,6 +115,11 @@ class SyncOrchestrator:
             all_receipts.extend(page.get("receipts", []))
         records = parse_receipts_to_sales({"receipts": all_receipts})
         self._store.record_sales(records)
+        if self._payment_channels is not None:
+            facts = parse_receipt_facts(
+                {"receipts": all_receipts}, self._payment_channels
+            )
+            self._store.record_receipt_facts(facts)
 
         # Items: one snapshot from all pages.
         all_items: list[dict[str, Any]] = []
@@ -125,8 +141,9 @@ def run_sync(
     today: date | None = None,
     backfill_days: int = BACKFILL_DAYS,
     cafe_category_ids: frozenset[str] = DEFAULT_CAFE_CATEGORY_IDS,
+    payment_channels: PaymentChannelMap | None = None,
 ) -> SyncResult:
-    """Run one Loyverse sales+menu sync and return its result.
+    """Run one Loyverse sales+menu+facts sync and return its result.
 
     Shared by the ``POST /sync`` route and ``python -m tangerine.sync`` — the
     two callers differ only in how they surface the result (an HTML fragment
@@ -143,10 +160,21 @@ def run_sync(
     that hasn't configured the real UUIDs yet stays correct rather than
     silently mis-tagging half the menu.
 
-    A Loyverse HTTP failure (auth, transport, other API error) is caught and
-    surfaced as a readable entry in ``SyncResult.errors`` rather than raising;
-    the route renders that string verbatim and the script prints it. Either
-    way the app stays up — a 9:01am recovery must not crash the page.
+    ``payment_channels`` (issue #147) routes receipt payments to channels for
+    the IN-01 derivation. When given, the orchestrator also records receipt
+    facts; ``None`` skips the facts path entirely (the derivation isn't
+    configured — its data is simply absent until the venue provides its
+    payment-type UUIDs). The **empty** map is different: it is given, routes
+    nothing, and makes every receipt with a payment a hard parse error —
+    correct for a deployment that wants the derivation but hasn't mapped any
+    ids yet.
+
+    A Loyverse HTTP failure (auth, transport, other API error) or a receipt
+    parse failure (unmapped payment type, payments≠total, unknown receipt
+    type) is caught and surfaced as a readable entry in ``SyncResult.errors``
+    rather than raising; the route renders that string verbatim and the
+    script prints it. Either way the app stays up — a 9:01am recovery must
+    not crash the page.
     """
     today_date = today or date.today()
     first_sync = len(store.sales()) == 0
@@ -160,10 +188,11 @@ def run_sync(
         client=client,
         store=store,
         cafe_category_ids=cafe_category_ids,
+        payment_channels=payment_channels,
     )
     try:
         orchestrator.sync_sales_and_menu(since=since)
-    except LoyverseApiError as exc:
+    except (LoyverseApiError, LoyverseParseError) as exc:
         return SyncResult(
             rows_ingested=0,
             menu_changes=0,

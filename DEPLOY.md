@@ -87,6 +87,21 @@ sudo -u tangerine bash -c 'set -a; . /etc/tangerine/env; set +a; \
 # LOYVERSE_CAFE_CATEGORY_IDS in /etc/tangerine/env and restart.
 ```
 
+`LOYVERSE_PAYMENT_TYPE_CHANNELS` is the second non-secret Loyverse value: the
+payment-type → channel map the IN-01 five-number derivation routes receipts
+through (`<uuid>:cash,<uuid>:qr,<uuid>:card` — the till-QR tender is named
+"Transfer" in Loyverse and routes to `qr`). Leaving it blank skips the
+derivation's facts path; once set, an unknown payment type on any receipt
+fails that sync loudly (by design — books never guess where money landed).
+To find the UUIDs:
+
+```bash
+sudo -u tangerine bash -c 'set -a; . /etc/tangerine/env; set +a; \
+    cd /opt/tangerine/app && .venv/bin/python scripts/dump_payment_types.py'
+# Route Cash→cash, Card→card, Transfer→qr; paste into
+# LOYVERSE_PAYMENT_TYPE_CHANNELS in /etc/tangerine/env and restart.
+```
+
 > The systemd unit and the cron jobs both read this one file. It is the only
 > place credentials exist — never in the repo, never in the database.
 

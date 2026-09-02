@@ -388,6 +388,38 @@ its own table rather than as a new `fixed_costs` kind. Edits write to
 the same `audit_log` (`table='cash_spend'`) and revert the same way as
 every other config edit (ADR-0010).
 
+## IN-01 derivation
+
+The tool's Loyverse-sync side of Contract A — the vocabulary behind
+the five numbers (`date, cash, QR, card, discount`) that feed the
+books' IN-01 entry.
+
+- **Trading day** — a venue-local calendar day (Asia/Bangkok) on which
+  at least one Loyverse receipt exists, of either kind (SALE or
+  REFUND). A closed day with no receipts is not a trading day and
+  produces nothing — no row, not zeros. A day with only a refund *is*
+  a trading day, even if its channels go negative.
+- **Channel** — one of the three takings buckets the POS collects
+  through: **cash**, **QR** (the venue's till-QR, named "Transfer" in
+  Loyverse), **card**. A receipt's payments route to exactly one
+  channel each; a payment the tool cannot route is an error, never a
+  guess. _Avoid_: calling till-QR "transfer" or "bank transfer" — the
+  books' QR channel is the POS QR tender, not arbitrary bank
+  transfers.
+- **Net-collected** — the measurement method a channel's number uses:
+  what that tender actually collected that day, with refunds counted
+  as negatives on *their own* day and channel (the books' locked P-11
+  deviation; the gross figure answers "collected", not "rung"). A
+  refund never lands in **discount**, and never moves to the original
+  sale's day or channel.
+- **Discount** — the promotional reductions the POS applied:
+  per-receipt discount totals over both scopes (whole-receipt and
+  per-line). Comps and voids ride here today; refunds do not.
+
+_Avoid_: treating the five numbers as stored facts of a day — they are
+derived from receipts; a late-arriving receipt legitimately changes a
+day's numbers.
+
 ## Reporting periods and modes
 
 The reporting surface is one page rendered in four **modes** — **Day,

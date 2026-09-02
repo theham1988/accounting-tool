@@ -57,6 +57,91 @@ def cafe_category_ids_from_env(
     return parse_cafe_category_ids(source.get(CAFE_CATEGORY_IDS_ENV))
 
 
+#: Environment variable holding the payment-type → channel map for the IN-01
+#: derivation (issue #147, per the #142 resolution): comma-separated
+#: ``payment_type_id:channel`` pairs, e.g.
+#: ``"abc...:cash,def...:card,ghi...:qr"``. The ids are opaque account UUIDs
+#: (like the cafe category ids, ADR-0009) — Loyverse's "Cash"/"Card" tenders
+#: and the venue's custom till-QR tender named "Transfer" all surface as
+#: UUIDs, so the production map cannot ship in the repo. The payment ``name``
+#: is documentation only; the derivation routes strictly by id.
+#:
+#: Unset or empty → empty map → every receipt with a payment is a hard
+#: derivation error. That is correct today: the venue has not yet provided
+#: its three UUIDs (a one-line back-office/API lookup records them here).
+#: Until then the derivation must fail loudly rather than guess where money
+#: landed — filing-grade books never guess.
+PAYMENT_TYPE_CHANNELS_ENV = "LOYVERSE_PAYMENT_TYPE_CHANNELS"
+
+
+@dataclass(frozen=True)
+class PaymentChannelMap:
+    """Immutable payment-type-id → channel routing for the IN-01 derivation.
+
+    Three channels, no fourth (CONTEXT.md "Channel"): cash, qr, card. Built
+    from env (``LOYVERSE_PAYMENT_TYPE_CHANNELS``) via :func:`parse_payment_channels`;
+    the empty map routes nothing, and any payment hitting it is the
+    derivation's hard "unknown payment type" error — never a best-guess.
+    """
+
+    channels: dict[str, str]
+
+    def channel_for(self, payment_type_id: str) -> str | None:
+        """The channel a payment type routes to, or ``None`` when unmapped.
+
+        ``None`` is the error signal the parser turns into a
+        ``LoyverseParseError`` — the caller never substitutes a default.
+        """
+        return self.channels.get(payment_type_id)
+
+
+def parse_payment_channels(raw: str | None) -> dict[str, str]:
+    """Parse ``LOYVERSE_PAYMENT_TYPE_CHANNELS`` into an id → channel dict.
+
+    Comma-separated ``id:channel`` pairs. Whitespace around each part is
+    dropped; empty entries are skipped. A pair with a missing colon or an
+    unknown channel name is a hard ``ValueError`` — a typo'd env line must
+    stop the derivation at configuration time, not corrupt books silently
+    at sync time. Pure so tests pin the parsing rules.
+    """
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(
+                f"bad payment-type channel entry {part!r}: expected "
+                "<payment_type_id>:<channel>"
+            )
+        payment_type_id, _, channel = part.partition(":")
+        payment_type_id = payment_type_id.strip()
+        channel = channel.strip()
+        if channel not in ("cash", "qr", "card"):
+            raise ValueError(
+                f"bad payment-type channel entry {part!r}: channel must be "
+                "one of cash, qr, card"
+            )
+        result[payment_type_id] = channel
+    return result
+
+
+def payment_channels_from_env(
+    env: dict[str, str] | None = None,
+) -> PaymentChannelMap:
+    """Read ``LOYVERSE_PAYMENT_TYPE_CHANNELS`` from ``env`` (defaults to ``os.environ``).
+
+    Mirrors ``cafe_category_ids_from_env``'s shape: injectable env for
+    tests, live environment for production callers.
+    """
+    source = env if env is not None else os.environ
+    return PaymentChannelMap(
+        channels=parse_payment_channels(source.get(PAYMENT_TYPE_CHANNELS_ENV))
+    )
+
+
 @dataclass(frozen=True)
 class LoyverseCredentials:
     """Stored Loyverse access token plus optional store scoping.
